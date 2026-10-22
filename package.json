@@ -1,0 +1,26 @@
+{
+  "name": "@allrounder/crum",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Conversational CRM workbench on Mastra with governance plane",
+  "scripts": {
+    "dev": "mastra dev",
+    "build": "mastra build",
+    "test": "vitest run",
+    "lint": "eslint src --ext .ts"
+  },
+  "dependencies": {
+    "@mastra/core": "^1.76.0",
+    "@mastra/pg": "^1.25.0",
+    "@mastra/memory": "^1.30.0",
+    "@mastra/mcp": "^2.3.0",
+    "@mastra/evals": "^1.10.6",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0",
+    "eslint": "^9.0.0"
+  }
+}
