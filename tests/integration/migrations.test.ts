@@ -50,7 +50,7 @@ describe.skipIf(url === '')('migrations against a real database', () => {
       NODE_ENV: 'development',
       DATABASE_URL: url,
       MASTRA_DB_DISABLE_INIT: 'true',
-    } as NodeJS.ProcessEnv)
+    })
 
     expect(result.applied).toContain('0002_crum_spine.sql')
 
@@ -93,8 +93,8 @@ describe.skipIf(url === '')('migrations against a real database', () => {
     const client = await pool.connect()
     try {
       await client.query('BEGIN')
-      const tenant = (await client.query(`SELECT gen_random_uuid() AS id`)).rows[0]?.id as string
-      const requester = (await client.query(`SELECT gen_random_uuid() AS id`)).rows[0]?.id as string
+      const tenant = (await client.query<{ id: string }>(`SELECT gen_random_uuid() AS id`)).rows[0]?.id as string
+      const requester = (await client.query<{ id: string }>(`SELECT gen_random_uuid() AS id`)).rows[0]?.id as string
       const draft = await client.query<{ id: string }>(
         `INSERT INTO pending_writes
            (tenant_id, run_id, object_type, operation, payload, risk_score, gate, requested_by, expires_at)
@@ -154,7 +154,7 @@ describe.skipIf(url === '')('migrations against a real database', () => {
 
 describe('without a database', () => {
   it('main() refuses to migrate in-memory storage', async () => {
-    await expect(main({ NODE_ENV: 'development' } as NodeJS.ProcessEnv)).rejects.toThrow(
+    await expect(main({ NODE_ENV: 'development' })).rejects.toThrow(
       /DATABASE_URL is required to migrate/,
     )
   })
