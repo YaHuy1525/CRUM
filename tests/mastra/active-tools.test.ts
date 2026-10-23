@@ -20,33 +20,45 @@ const READ_ONLY_TOOLS = [
   'knowledge.retrieve',
 ]
 
-const MUTATING_TOOLS = [
+const AUTO_TOOLS = [
+  'crm.log_followup',
+  'crm.create_task',
+  'mail.draft',
+]
+
+const APPROVAL_TOOLS = [
   'crm.create_customer',
   'crm.update_customer',
   'crm.delete_customer',
   'crm.create_contact',
   'crm.create_schedule',
   'crm.transfer_owner',
-  'crm.create_task',
-  'crm.log_followup',
-  'mail.draft',
   'mail.send',
-  'crm.bulk_import',
   'run.side-effect',
 ]
 
+const REFUSE_TOOLS = [
+  'crm.bulk_import',
+]
+
 describe('resolveActiveTools', () => {
-  it('returns all 9 read-only tool names', () => {
+  it('returns all 20 active tool names (read-only + auto + approval)', () => {
     const active = resolveActiveTools(baseContext)
-    expect(active).toHaveLength(9)
+    expect(active).toHaveLength(20)
     for (const name of READ_ONLY_TOOLS) {
+      expect(active).toContain(name)
+    }
+    for (const name of AUTO_TOOLS) {
+      expect(active).toContain(name)
+    }
+    for (const name of APPROVAL_TOOLS) {
       expect(active).toContain(name)
     }
   })
 
-  it('does not include mutating tools', () => {
+  it('does not include refuse-class tools', () => {
     const active = resolveActiveTools(baseContext)
-    for (const name of MUTATING_TOOLS) {
+    for (const name of REFUSE_TOOLS) {
       expect(active).not.toContain(name)
     }
   })
@@ -57,8 +69,9 @@ describe('resolveActiveTools', () => {
     expect(userTools).toEqual(adminTools)
   })
 
-  it('tool names match policy/tools.yaml', () => {
+  it('tool names match policy classes read-only + auto + approval', () => {
     const active = resolveActiveTools(baseContext)
-    expect(active.sort()).toEqual(READ_ONLY_TOOLS.slice().sort())
+    const expected = [...READ_ONLY_TOOLS, ...AUTO_TOOLS, ...APPROVAL_TOOLS]
+    expect(active.sort()).toEqual(expected.sort())
   })
 })

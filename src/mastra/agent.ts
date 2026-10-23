@@ -12,10 +12,15 @@ import { listTasksTool, myOpenItemsTool } from './tools/tasks'
 import { listSchedulesTool } from './tools/schedules'
 import { searchTool } from './tools/search'
 import { knowledgeRetrieveTool } from './tools/knowledge'
+import { logFollowupTool, createTaskTool, draftMailTool } from './tools/auto-writes'
+import { createCustomerTool, updateCustomerTool, deleteCustomerTool } from './tools/customer-writes'
+import { createContactTool, createScheduleTool, transferOwnerTool, sendMailTool } from './tools/approval-writes'
+import { approvalFlow } from './workflows/approval-flow'
 import { resolveActiveTools } from './active-tools'
 import type { TenantRequestContext } from './tenant-context'
 
 const crumToolRegistry = {
+  // read-only (9)
   'crm.list_customers': listCustomersTool,
   'crm.get_customer': getCustomerTool,
   'crm.find_contacts': findContactsTool,
@@ -25,6 +30,18 @@ const crumToolRegistry = {
   'crm.my_open_items': myOpenItemsTool,
   'crm.search': searchTool,
   'knowledge.retrieve': knowledgeRetrieveTool,
+  // auto (3)
+  'crm.log_followup': logFollowupTool,
+  'crm.create_task': createTaskTool,
+  'mail.draft': draftMailTool,
+  // approval (7)
+  'crm.create_customer': createCustomerTool,
+  'crm.update_customer': updateCustomerTool,
+  'crm.delete_customer': deleteCustomerTool,
+  'crm.create_contact': createContactTool,
+  'crm.create_schedule': createScheduleTool,
+  'crm.transfer_owner': transferOwnerTool,
+  'mail.send': sendMailTool,
 }
 
 // §4.3.1 — CRUM's main agent. Phase 2 wires tools, defaultOptions, and activeTools resolution.
@@ -40,6 +57,10 @@ export const crmAssistant = new Agent({
   model: 'anthropic/claude-sonnet-5-5',
 
   tools: crumToolRegistry,
+
+  workflows: {
+    'approval-flow': approvalFlow,
+  },
 
   // Step retries are DISABLED unless this is set. The abort-and-retry path
   // in WriteClaimGuardProcessor (Phase 3) depends on it. §4.3.

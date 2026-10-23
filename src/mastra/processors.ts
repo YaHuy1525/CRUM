@@ -5,6 +5,7 @@ import {
 } from '@mastra/core/processors'
 import { ObjectBindingProcessor } from './processors/object-binding'
 import { EnsureFinalResponseProcessor } from './processors/ensure-final-response'
+import { WriteClaimGuardProcessor } from './processors/write-claim-guard'
 
 // §4.3 — processor pipeline. TokenLimiter goes LAST (§4.3 rule 1).
 // Phase 1 wires the minimum viable set; Phase 2 adds the rest.
@@ -26,6 +27,7 @@ export const crumInputProcessors: Processor[] = [
 ]
 
 export const crumOutputProcessors: Processor[] = [
+  new WriteClaimGuardProcessor(),
   new ModerationProcessor({
     model: GUARDRAIL_MODEL,
     strategy: 'block',
