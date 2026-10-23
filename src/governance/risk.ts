@@ -19,6 +19,11 @@ export interface RiskAssessment {
  * Tokens are lowercased alphanumeric runs that may contain internal hyphens.
  * Underscores and dots split, so `crm.delete_customer` yields crm, delete,
  * customer, while `team-wide` stays one token.
+ *
+ * The `g` flag is safe here only because the sole consumer is
+ * `String.prototype.match`, which resets `lastIndex` before scanning.
+ * Switching that call site to `.test()` or `.exec()` would leak `lastIndex`
+ * between `scoreRisk` calls and silently break the determinism guarantee.
  */
 const TOKEN_PATTERN = /[a-z0-9]+(?:-[a-z0-9]+)*/g
 

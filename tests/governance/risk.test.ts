@@ -162,13 +162,14 @@ describe('gateFor monotonicity', () => {
 
   it('treats every registered tool as gated at or above its declared class', () => {
     // Walks the whole policy file. No tool may resolve to `auto` when it is
-    // declared `approval` or `refuse`.
+    // declared `approval` or `refuse`, and a benign draft must leave every
+    // `read-only` or `auto` tool at exactly `auto`.
     for (const tool of policy.tools.tools) {
       const gate = policy.gateFor(tool.name, benign)
       if (tool.class === 'approval') expect(gate, tool.name).toBe('approval')
       if (tool.class === 'refuse') expect(gate, tool.name).toBe('refuse')
       if (tool.class === 'read-only' || tool.class === 'auto') {
-        expect(['auto', 'approval', 'refuse'], tool.name).toContain(gate)
+        expect(gate, tool.name).toBe('auto')
       }
     }
   })
