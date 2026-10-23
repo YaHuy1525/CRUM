@@ -1,4 +1,5 @@
 import { Mastra } from '@mastra/core/mastra'
+import { AgentController } from '@mastra/core/agent-controller'
 import type { CrumEnv } from '../config/env'
 import { buildObservability } from './observability'
 import { assertMcpRequestStateKey } from './mcp-guard'
@@ -36,6 +37,16 @@ export function createCrumMastra(env: CrumEnv, options: CrumMastraOptions = {}):
   const storage = options.storage ?? buildMastraStorage(env)
   const memory = buildCrumMemory(storage)
 
+  // §4.2 — Agent Controller for session orchestration. Phase 1 registers a
+  // single controller backed by crmAssistant with one default mode. The
+  // controller inherits the parent Mastra's storage via __registerMastra,
+  // called internally when the controller is passed in agentControllers.
+  const crmController = new AgentController({
+    id: 'crm-assistant',
+    modes: [{ id: 'default', name: 'Default' }],
+    agent: crmAssistant,
+  })
+
   return new Mastra({
     agents: {
       'crm-assistant': crmAssistant,
@@ -46,6 +57,9 @@ export function createCrumMastra(env: CrumEnv, options: CrumMastraOptions = {}):
       coreMemory: memory,
     },
     observability: buildObservability(env),
+    agentControllers: {
+      'crm-assistant': crmController,
+    },
   })
 }
 
@@ -55,3 +69,5 @@ export type { CrumStorage } from './storage'
 export { assertMcpRequestStateKey, resolveMcpRequestState } from './mcp-guard'
 export { crmAssistant } from './agent'
 export { buildCrumMemory } from './memory'
+export { createSession, listSessions, queryThreads } from './sessions'
+export type { CreateSessionOptions, ListSessionsOptions } from './sessions'
