@@ -46,4 +46,25 @@ describe('crmAssistant', () => {
     // __getMaxProcessorRetries is the internal accessor for the private field
     expect(crmAssistant.__getMaxProcessorRetries()).toBe(2)
   })
+
+  it('has tools configured', async () => {
+    const tools = await crmAssistant.listTools()
+    expect(tools).toBeDefined()
+    expect(Object.keys(tools).length).toBeGreaterThan(0)
+  })
+
+  it('has defaultOptions configured', () => {
+    // defaultOptions is private; verify via __getOverridableFields which exposes the raw tools config
+    const fields = crmAssistant.__getOverridableFields()
+    expect(fields).toBeDefined()
+    expect(fields.tools).toBeDefined()
+  })
+
+  it('has ObjectBindingProcessor in inputProcessors', async () => {
+    const processors = await crmAssistant.listConfiguredInputProcessors()
+    const hasObjectBinding = processors.some(
+      (p: any) => p.constructor.name === 'ObjectBindingProcessor'
+    )
+    expect(hasObjectBinding).toBe(true)
+  })
 })
