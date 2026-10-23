@@ -160,3 +160,19 @@ export declare class PostgresStoreVNext extends PostgresStore {
 The doc comment is explicit: "The `observability` connection is **required**: every caller has to
 make an explicit decision about where observability data goes." The scaffold also pins
 `@mastra/core` at `^1.76.0` and `zod` at `^3.24.0`, both below what the spec requires.
+
+## After Phase 7
+
+[`99-later-backlog.md`](./99-later-backlog.md) holds nine candidate capabilities inferred from
+**Cedar (cedarcopilot.com)**, a production go-to-market agent workspace, each carrying a spec status
+checked against [`docs/TECHNICAL_PLAN.md`](../../TECHNICAL_PLAN.md) before it was written. The backlog
+attributes every idea to its source page and marks which observations are marketing copy rather than
+verified behaviour, so an implementer re-checks them before building. Two items turned out to be
+already designed and are demoted to policy amendments, one lost a mechanism claim that did not hold,
+and none carry a size estimate. Nothing there is in scope for Phases 0 through 7.
+
+Two of those items are schema decisions rather than features, and they must be settled **while Phase 3
+is being built**, not after: the fields a tool declares about what a human reviews, and the evidence
+reference carried by each staged field. Both change record shapes that receipts, the queue and the
+audit store all read, and a tool added in Phases 4 or 5 makes retrofitting them progressively more
+expensive. The interfaces can ship later; the shapes cannot be deferred without cost.
