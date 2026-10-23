@@ -231,3 +231,92 @@ describe('tenant isolation on child tables', () => {
     expect(mockQuery).toHaveBeenCalledOnce()
   })
 })
+
+describe('querySearch', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    mockQuery.mockReset()
+    mockEnd.mockReset()
+  })
+
+  it('admin role: omits owner predicate on contacts and tasks sub-queries', async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        { type: 'customer', id: 'c1', label: 'Acme', tenant_id: 't1' },
+        { type: 'contact', id: 'ct1', label: 'Alice', tenant_id: 't1' },
+        { type: 'task', id: 'tk1', label: 'Follow up', tenant_id: 't1' },
+      ],
+    })
+    const { querySearch } = await import('../../src/db/queries')
+    const context = { tenantId: 't1', userId: 'u1', userRole: 'admin' as const }
+    const result = await querySearch(context, 'test')
+
+    expect(result).toHaveLength(3)
+    expect(mockQuery).toHaveBeenCalledOnce()
+
+    const sql = mockQuery.mock.calls[0]![0] as string
+    const params = mockQuery.mock.calls[0]![1] as unknown[]
+
+    // Admin should NOT have owner_id predicate anywhere in the UNION query
+    expect(sql).not.toContain('owner_id')
+
+    // Params should be [tenantId, pattern, limit] — no userId
+    expect(params).toEqual(['t1', '%test%', 20])
+
+    // Verify tenant_id filter is present
+    expect(sql).toContain('tenant_id = $1')
+    // Verify ILIKE pattern uses $2
+    expect(sql).toContain('ILIKE $2')
+    // Verify limit uses $3
+    expect(sql).toContain('LIMIT $3')
+  })
+
+  it('user role: includes owner predicate with correct param index on all sub-queries', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] })
+    const { querySearch } = await import('../../src/db/queries')
+    const context = { tenantId: 't1', userId: 'u1', userRole: 'user' as const }
+    await querySearch(context, 'test')
+
+    const sql = mockQuery.mock.calls[0]![0] as string
+    const params = mockQuery.mock.calls[0]![1] as unknown[]
+
+    // User role should have owner_id predicate with $2
+    expect(sql).toContain('owner_id = $2')
+    expect(sql).toContain('ANY(team_member_ids)')
+
+    // Params should be [tenantId, userId, pattern, limit]
+    expect(params).toEqual(['t1', 'u1', '%test%', 20])
+
+    // Verify ILIKE pattern uses $3 (not $2)
+    expect(sql).toContain('ILIKE $3')
+    // Verify limit uses $4
+    expect(sql).toContain('LIMIT $4')
+  })
+
+  it('admin role: returns contacts and tasks for matching query', async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        { type: 'contact', id: 'ct1', label: 'Bob', tenant_id: 't1' },
+        { type: 'task', id: 'tk1', label: 'Call Bob', tenant_id: 't1' },
+      ],
+    })
+    const { querySearch } = await import('../../src/db/queries')
+    const context = { tenantId: 't1', userId: 'admin-u', userRole: 'admin' as const }
+    const result = await querySearch(context, 'Bob')
+
+    // Admin should get both contact and task results (not blocked by owner predicate)
+    expect(result).toHaveLength(2)
+    expect(result[0]!.type).toBe('contact')
+    expect(result[1]!.type).toBe('task')
+  })
+
+  it('respects custom limit parameter', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] })
+    const { querySearch } = await import('../../src/db/queries')
+    const context = { tenantId: 't1', userId: 'u1', userRole: 'admin' as const }
+    await querySearch(context, 'x', 5)
+
+    const params = mockQuery.mock.calls[0]![1] as unknown[]
+    expect(params[2]).toBe(5)
+  })
+})

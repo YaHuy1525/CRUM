@@ -204,25 +204,44 @@ export interface SearchResult {
 
 /**
  * Searches customers, contacts and tasks by name/title ILIKE match, scoped by tenant visibility.
+ *
+ * For admin role the contacts/tasks sub-queries omit the owner predicate
+ * (admin sees all rows in the tenant). For user role the owner predicate
+ * is included with the correct parameter index for userId.
  */
 export async function querySearch(
   context: TenantRequestContext,
   query: string,
   limit = 20,
 ): Promise<SearchResult[]> {
-  const vis = visibilityPredicate(context)
   const pattern = `%${query}%`
+
+  if (context.userRole === 'admin') {
+    // Admin: no owner predicate on contacts/tasks. Params: [tenantId, pattern, limit]
+    const sql = `
+      SELECT 'customer' AS type, id, name AS label, tenant_id FROM customers WHERE tenant_id = $1 AND name ILIKE $2
+      UNION ALL
+      SELECT 'contact' AS type, id, name AS label, tenant_id FROM contacts WHERE tenant_id = $1 AND name ILIKE $2
+      UNION ALL
+      SELECT 'task' AS type, id, COALESCE(title, description) AS label, tenant_id FROM tasks WHERE tenant_id = $1 AND (title ILIKE $2 OR description ILIKE $2)
+      ORDER BY label ASC
+      LIMIT $3
+    `
+    const result = await getDbClient().query(sql, [context.tenantId, pattern, limit])
+    return result.rows
+  }
+
+  // User role: include owner predicate. Params: [tenantId, userId, pattern, limit]
   const sql = `
-    SELECT 'customer' AS type, id, name AS label, tenant_id FROM customers WHERE ${vis.sql} AND name ILIKE $${vis.params.length + 1}
+    SELECT 'customer' AS type, id, name AS label, tenant_id FROM customers WHERE tenant_id = $1 AND (owner_id = $2 OR $2 = ANY(team_member_ids)) AND name ILIKE $3
     UNION ALL
-    SELECT 'contact' AS type, id, name AS label, tenant_id FROM contacts WHERE tenant_id = $1 AND ($2 = '' OR owner_id = $2 OR $2 = ANY(team_member_ids)) AND name ILIKE $${vis.params.length + 1}
+    SELECT 'contact' AS type, id, name AS label, tenant_id FROM contacts WHERE tenant_id = $1 AND (owner_id = $2 OR $2 = ANY(team_member_ids)) AND name ILIKE $3
     UNION ALL
-    SELECT 'task' AS type, id, COALESCE(title, description) AS label, tenant_id FROM tasks WHERE tenant_id = $1 AND ($2 = '' OR owner_id = $2 OR $2 = ANY(team_member_ids)) AND (title ILIKE $${vis.params.length + 1} OR description ILIKE $${vis.params.length + 1})
+    SELECT 'task' AS type, id, COALESCE(title, description) AS label, tenant_id FROM tasks WHERE tenant_id = $1 AND (owner_id = $2 OR $2 = ANY(team_member_ids)) AND (title ILIKE $3 OR description ILIKE $3)
     ORDER BY label ASC
-    LIMIT $${vis.params.length + 2}
+    LIMIT $4
   `
-  const params = [...vis.params, pattern, limit]
-  const result = await getDbClient().query(sql, params)
+  const result = await getDbClient().query(sql, [context.tenantId, context.userId, pattern, limit])
   return result.rows
 }
 
