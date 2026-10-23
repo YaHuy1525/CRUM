@@ -81,9 +81,10 @@ describe('class invariants', () => {
     // rejects a non-read-only, non-refuse tool with no `idempotent`, and :41
     // rejects `idempotent: true` with no key — so a tool that reaches this file
     // through `policy` cannot violate it, and asserting against the singleton
-    // could never fail. The spec constant is the one copy no schema validates:
-    // an editor who adds `['crm.foo', 'approval', null]` below is caught here
-    // and nowhere else.
+    // could never fail. The spec constant is the one copy no schema validates,
+    // and this is the only assertion in the file that reads its key column:
+    // nulling the key on an existing auto or approval row drops that row out of
+    // the `gives %s idempotency key %s` walk above, so it is caught here alone.
     //
     // `refuse` is excluded per Ruling A4, recorded in
     // docs/verification/phase-0.md: §4.6.2 assigns crm.bulk_import `—` for the
@@ -162,14 +163,14 @@ describe('scope discipline', () => {
   })
 
   it('uses distinct scopes for distinct permission boundaries', () => {
-    // crm-read is shared by all nine read tools, which is intended: they are one
-    // boundary, so nine tools still yield exactly one class. What must not happen
-    // is one scope carrying two classes at all — a read grant covering a write,
-    // or the colon/hyphen pair crm:write (approval) and crm-write (auto) being
-    // silently normalised into each other, which policy/tools.yaml:21-28 warns
-    // about by name. Asserting exactly one class per concrete scope catches every
-    // such merge; the weaker read-only-only condition this replaced caught none
-    // of the auto/approval ones.
+    // crm-read is shared by eight read tools and knowledge-domains by the ninth,
+    // which is intended: each is a single boundary, so each still yields exactly
+    // one class. What must not happen is one scope carrying two classes at all —
+    // a read grant covering a write, or the colon/hyphen pair crm:write
+    // (approval) and crm-write (auto) being silently normalised into each other,
+    // which policy/tools.yaml:13-28 warns about by name. Asserting exactly one
+    // class per concrete scope catches every such merge; the weaker read-only-
+    // only condition this replaced caught none of the auto/approval ones.
     const scopeToClasses = new Map<string, Set<string>>()
     for (const tool of policy.tools.tools) {
       if (tool.scope.includes('{')) continue
