@@ -14,7 +14,7 @@ vi.mock('pg', () => ({
 }))
 
 // Mock env to provide DATABASE_URL
-vi.mock('@/config/env.js', () => ({
+vi.mock('../../src/config/env', () => ({
   parseEnv: () => ({
     DATABASE_URL: 'postgres://test:test@localhost:5432/testdb',
     NODE_ENV: 'test',
@@ -29,14 +29,14 @@ describe('getDbClient', () => {
   })
 
   it('returns a Pool instance', async () => {
-    const { getDbClient } = await import('@/db/client.js')
+    const { getDbClient } = await import('../../src/db/client')
     const client = getDbClient()
     expect(client).toBeDefined()
     expect(client).toBe(mockPool)
   })
 
   it('returns the same singleton on subsequent calls', async () => {
-    const { getDbClient } = await import('@/db/client.js')
+    const { getDbClient } = await import('../../src/db/client')
     const a = getDbClient()
     const b = getDbClient()
     expect(a).toBe(b)
@@ -52,7 +52,7 @@ describe('queryCustomers', () => {
 
   it('queries customers with tenant scope for admin', async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ id: 'c1', name: 'Alice' }] })
-    const { queryCustomers } = await import('@/db/queries.js')
+    const { queryCustomers } = await import('../../src/db/queries')
     const context = { tenantId: 't1', userId: 'u1', userRole: 'admin' as const }
     const result = await queryCustomers(context, { city: 'Berlin' })
     expect(result).toHaveLength(1)
@@ -66,7 +66,7 @@ describe('queryCustomers', () => {
 
   it('queries customers with owner predicate for user role', async () => {
     mockQuery.mockResolvedValueOnce({ rows: [] })
-    const { queryCustomers } = await import('@/db/queries.js')
+    const { queryCustomers } = await import('../../src/db/queries')
     const context = { tenantId: 't1', userId: 'u1', userRole: 'user' as const }
     await queryCustomers(context, { name: 'Bob', tags: ['vip'] })
     const sql = mockQuery.mock.calls[0]![0] as string
@@ -86,7 +86,7 @@ describe('queryCustomer', () => {
 
   it('returns null when customer is not visible', async () => {
     mockQuery.mockResolvedValueOnce({ rows: [] })
-    const { queryCustomer } = await import('@/db/queries.js')
+    const { queryCustomer } = await import('../../src/db/queries')
     const context = { tenantId: 't1', userId: 'u1', userRole: 'user' as const }
     const result = await queryCustomer(context, 'nonexistent-id')
     expect(result).toBeNull()
@@ -95,7 +95,7 @@ describe('queryCustomer', () => {
   it('returns the customer row when visible', async () => {
     const row = { id: 'c1', name: 'Alice', tenant_id: 't1' }
     mockQuery.mockResolvedValueOnce({ rows: [row] })
-    const { queryCustomer } = await import('@/db/queries.js')
+    const { queryCustomer } = await import('../../src/db/queries')
     const context = { tenantId: 't1', userId: 'u1', userRole: 'admin' as const }
     const result = await queryCustomer(context, 'c1')
     expect(result).toEqual(row)
@@ -113,7 +113,7 @@ describe('child table queries', () => {
     // First call: queryCustomer check
     mockQuery.mockResolvedValueOnce({ rows: [{ id: 'c1' }] })
     mockQuery.mockResolvedValueOnce({ rows: [{ id: 'ct1', name: 'Contact' }] })
-    const { queryContacts } = await import('@/db/queries.js')
+    const { queryContacts } = await import('../../src/db/queries')
     const context = { tenantId: 't1', userId: 'u1', userRole: 'admin' as const }
     const result = await queryContacts(context, 'c1')
     expect(Array.isArray(result)).toBe(true)
@@ -123,7 +123,7 @@ describe('child table queries', () => {
   it('queryFollowups returns array', async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ id: 'c1' }] })
     mockQuery.mockResolvedValueOnce({ rows: [{ id: 'f1' }] })
-    const { queryFollowups } = await import('@/db/queries.js')
+    const { queryFollowups } = await import('../../src/db/queries')
     const context = { tenantId: 't1', userId: 'u1', userRole: 'admin' as const }
     const result = await queryFollowups(context, 'c1')
     expect(Array.isArray(result)).toBe(true)
@@ -132,7 +132,7 @@ describe('child table queries', () => {
   it('queryTasks returns array', async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ id: 'c1' }] })
     mockQuery.mockResolvedValueOnce({ rows: [{ id: 'tk1' }] })
-    const { queryTasks } = await import('@/db/queries.js')
+    const { queryTasks } = await import('../../src/db/queries')
     const context = { tenantId: 't1', userId: 'u1', userRole: 'admin' as const }
     const result = await queryTasks(context, 'c1')
     expect(Array.isArray(result)).toBe(true)
@@ -141,7 +141,7 @@ describe('child table queries', () => {
   it('querySchedules returns array', async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ id: 'c1' }] })
     mockQuery.mockResolvedValueOnce({ rows: [{ id: 's1' }] })
-    const { querySchedules } = await import('@/db/queries.js')
+    const { querySchedules } = await import('../../src/db/queries')
     const context = { tenantId: 't1', userId: 'u1', userRole: 'admin' as const }
     const result = await querySchedules(context, 'c1')
     expect(Array.isArray(result)).toBe(true)
@@ -149,9 +149,84 @@ describe('child table queries', () => {
 
   it('child queries return empty array when customer not visible', async () => {
     mockQuery.mockResolvedValueOnce({ rows: [] })
-    const { queryContacts } = await import('@/db/queries.js')
+    const { queryContacts } = await import('../../src/db/queries')
     const context = { tenantId: 't1', userId: 'u1', userRole: 'user' as const }
     const result = await queryContacts(context, 'hidden-id')
+    expect(result).toEqual([])
+    expect(mockQuery).toHaveBeenCalledOnce()
+  })
+})
+
+describe('tenant isolation on child tables', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    mockQuery.mockReset()
+    mockEnd.mockReset()
+  })
+
+  it('queryContacts SQL contains tenant_id filter', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'c1' }] })
+    mockQuery.mockResolvedValueOnce({ rows: [] })
+    const { queryContacts } = await import('../../src/db/queries')
+    const context = { tenantId: 't1', userId: 'u1', userRole: 'admin' as const }
+    await queryContacts(context, 'c1')
+    // Second call is the child query
+    const sql = mockQuery.mock.calls[1]![0] as string
+    expect(sql).toContain('tenant_id = $2')
+    expect(sql).toContain('customer_id = $1')
+  })
+
+  it('queryFollowups SQL contains tenant_id filter', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'c1' }] })
+    mockQuery.mockResolvedValueOnce({ rows: [] })
+    const { queryFollowups } = await import('../../src/db/queries')
+    const context = { tenantId: 't1', userId: 'u1', userRole: 'admin' as const }
+    await queryFollowups(context, 'c1')
+    const sql = mockQuery.mock.calls[1]![0] as string
+    expect(sql).toContain('tenant_id = $2')
+    expect(sql).toContain('customer_id = $1')
+  })
+
+  it('queryTasks SQL contains tenant_id filter', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'c1' }] })
+    mockQuery.mockResolvedValueOnce({ rows: [] })
+    const { queryTasks } = await import('../../src/db/queries')
+    const context = { tenantId: 't1', userId: 'u1', userRole: 'admin' as const }
+    await queryTasks(context, 'c1')
+    const sql = mockQuery.mock.calls[1]![0] as string
+    expect(sql).toContain('tenant_id = $2')
+    expect(sql).toContain('customer_id = $1')
+  })
+
+  it('querySchedules SQL contains tenant_id filter', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'c1' }] })
+    mockQuery.mockResolvedValueOnce({ rows: [] })
+    const { querySchedules } = await import('../../src/db/queries')
+    const context = { tenantId: 't1', userId: 'u1', userRole: 'admin' as const }
+    await querySchedules(context, 'c1')
+    const sql = mockQuery.mock.calls[1]![0] as string
+    expect(sql).toContain('tenant_id = $2')
+    expect(sql).toContain('customer_id = $1')
+  })
+
+  it('child queries enforce tenant isolation for user role', async () => {
+    // Customer visible to user
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'c1', owner_id: 'u1' }] })
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'ct1' }] })
+    const { queryContacts } = await import('../../src/db/queries')
+    const context = { tenantId: 't1', userId: 'u1', userRole: 'user' as const }
+    const result = await queryContacts(context, 'c1')
+    expect(result).toHaveLength(1)
+    // Verify the child query was called with tenant_id param
+    const childParams = mockQuery.mock.calls[1]![1] as unknown[]
+    expect(childParams).toContain('t1')
+  })
+
+  it('child queries return empty when customer not visible for user role', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] })
+    const { queryFollowups } = await import('../../src/db/queries')
+    const context = { tenantId: 't1', userId: 'u1', userRole: 'user' as const }
+    const result = await queryFollowups(context, 'other-tenant-customer')
     expect(result).toEqual([])
     expect(mockQuery).toHaveBeenCalledOnce()
   })

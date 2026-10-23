@@ -1,5 +1,5 @@
 import { Pool } from 'pg'
-import { parseEnv } from '@/config/env.js'
+import { parseEnv } from '../config/env'
 
 let pool: Pool | null = null
 

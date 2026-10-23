@@ -1,7 +1,65 @@
 import type { PoolClient } from 'pg'
-import { getDbClient } from '@/db/client.js'
-import type { TenantRequestContext } from '@/mastra/tenant-context.js'
-import { tenantScope } from '@/mastra/tenant-context.js'
+import { getDbClient } from './client'
+import type { TenantRequestContext } from '../mastra/tenant-context'
+
+export interface Customer {
+  id: string
+  tenant_id: string
+  name: string
+  city?: string
+  tags?: string[]
+  owner_id: string
+  team_member_ids: string[]
+  created_at: string
+  updated_at: string
+}
+
+export interface Contact {
+  id: string
+  tenant_id: string
+  customer_id: string
+  name: string
+  email?: string
+  phone?: string
+  owner_id: string
+  team_member_ids: string[]
+  created_at: string
+  updated_at: string
+}
+
+export interface Followup {
+  id: string
+  tenant_id: string
+  customer_id: string
+  note?: string
+  owner_id: string
+  team_member_ids: string[]
+  created_at: string
+  updated_at: string
+}
+
+export interface Task {
+  id: string
+  tenant_id: string
+  customer_id: string
+  title?: string
+  description?: string
+  owner_id: string
+  team_member_ids: string[]
+  created_at: string
+  updated_at: string
+}
+
+export interface Schedule {
+  id: string
+  tenant_id: string
+  customer_id: string
+  scheduled_at?: string
+  owner_id: string
+  team_member_ids: string[]
+  created_at: string
+  updated_at: string
+}
 
 /**
  * Builds the WHERE clause fragments for tenant-scoped visibility.
@@ -9,7 +67,6 @@ import { tenantScope } from '@/mastra/tenant-context.js'
  * For user role: tenant_id + (owner_id = userId OR userId = ANY(team_member_ids)).
  */
 function visibilityPredicate(context: TenantRequestContext): { sql: string; params: unknown[] } {
-  const scope = tenantScope(context)
   if (context.userRole === 'admin') {
     return { sql: 'tenant_id = $1', params: [context.tenantId] }
   }
@@ -32,7 +89,7 @@ export interface CustomerFilters {
 export async function queryCustomers(
   context: TenantRequestContext,
   filters: CustomerFilters = {},
-): Promise<unknown[]> {
+): Promise<Customer[]> {
   const vis = visibilityPredicate(context)
   const conditions: string[] = [vis.sql]
   const params: unknown[] = [...vis.params]
@@ -65,7 +122,7 @@ export async function queryCustomers(
 export async function queryCustomer(
   context: TenantRequestContext,
   id: string,
-): Promise<unknown | null> {
+): Promise<Customer | null> {
   const vis = visibilityPredicate(context)
   const params: unknown[] = [...vis.params, id]
   const idx = params.length
@@ -80,15 +137,7 @@ export async function queryCustomer(
 export async function queryContacts(
   context: TenantRequestContext,
   customerId: string,
-): Promise<unknown[]> {
-  const vis = visibilityPredicate(context)
-  const params: unknown[] = [...vis.params, customerId]
-  const idx = params.length
-  const sql = `SELECT c.* FROM contacts c
-    INNER JOIN customers cu ON cu.id = c.customer_id
-    WHERE c.customer_id = $${idx} AND ${vis.sql.replace(/customers/g, 'cu')}
-    ORDER BY c.created_at DESC`
-  // Simpler: just check customer visibility first
+): Promise<Contact[]> {
   const customer = await queryCustomer(context, customerId)
   if (!customer) return []
   const result = await getDbClient().query(
@@ -104,7 +153,7 @@ export async function queryContacts(
 export async function queryFollowups(
   context: TenantRequestContext,
   customerId: string,
-): Promise<unknown[]> {
+): Promise<Followup[]> {
   const customer = await queryCustomer(context, customerId)
   if (!customer) return []
   const result = await getDbClient().query(
@@ -120,7 +169,7 @@ export async function queryFollowups(
 export async function queryTasks(
   context: TenantRequestContext,
   customerId: string,
-): Promise<unknown[]> {
+): Promise<Task[]> {
   const customer = await queryCustomer(context, customerId)
   if (!customer) return []
   const result = await getDbClient().query(
@@ -136,7 +185,7 @@ export async function queryTasks(
 export async function querySchedules(
   context: TenantRequestContext,
   customerId: string,
-): Promise<unknown[]> {
+): Promise<Schedule[]> {
   const customer = await queryCustomer(context, customerId)
   if (!customer) return []
   const result = await getDbClient().query(
