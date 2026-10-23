@@ -8,7 +8,7 @@ One agent, scoped by context, not fixed lanes. The chat entry point streams answ
 
 ## Tech Stack
 
-- **Backend**: Mastra (@mastra/core 1.76.0), TypeScript ES modules
+- **Backend**: Mastra (@mastra/core 1.79.0, pinned exactly), TypeScript ES modules on Node 22.18.0+
 - **Frontend**: Next.js console (shared with AllRounderAgent)
 - **Database**: PostgreSQL with PgVector for RAG
 - **Storage**: Supabase PostgresStoreVNext
@@ -16,7 +16,9 @@ One agent, scoped by context, not fixed lanes. The chat entry point streams answ
 
 ## Phases
 
-See `docs/72CRM_Reverse_Engineering_Plan_20261023.md` in the parent AllRounderAgent repo for the full build plan. This project implements:
+See [`docs/TECHNICAL_PLAN.md`](./docs/TECHNICAL_PLAN.md) for the full design and
+[`docs/superpowers/plans/00-ROADMAP.md`](./docs/superpowers/plans/00-ROADMAP.md) for the phase map.
+This project implements Phases 0 through 7 as listed in the roadmap.
 
 1. Phase 0: Spine schema and product definition
 2. Phase 1: Chat workbench skeleton with streaming and threads
@@ -32,12 +34,18 @@ Concept-level study of Wukong AICRM only. No copying of code, schemas, prompts o
 
 ## Getting Started
 
-This is a sub-project of AllRounderAgent. Development happens in the shared monorepo context.
+CRUM is a standalone repository. It inherits AllRounderAgent's environment variable *names* but not
+its code, and it is not a workspace inside it.
 
 ```bash
-cd D:/Code/AllRounderAgent
+cd D:/Code/CRUM
 npm install
-npm run dev
+npm run typecheck && npm run test:unit
+npm run dev            # Mastra server :4111 plus Studio :4112
 ```
 
-The CRUM-specific agents and workflows will live under `src/mastra/crum/`.
+`npm run dev` needs the Mastra CLI, which arrives in Phase 1 with the console. During Phase 0 the
+verification command is the `typecheck && test:unit` line above.
+
+Without `DATABASE_URL` the whole stack boots in-memory, which is what makes contribution and CI
+cheap. Agents, tools and workflows live under `src/mastra/`.
