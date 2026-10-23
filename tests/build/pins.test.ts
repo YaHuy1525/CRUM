@@ -3,8 +3,6 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 interface PackageJson {
-  name: string
-  version: string
   type: string
   engines: { node: string }
   dependencies: Record<string, string>
@@ -58,7 +56,7 @@ describe('package.json pins', () => {
 
   it('rejects every range operator in the dependency set', () => {
     const ranged = [...Object.entries(pkg.dependencies), ...Object.entries(pkg.devDependencies)]
-      .filter(([, v]) => /[\^~><*]/.test(String(v)))
+      .filter(([, v]) => /[\^~><*]/.test(v))
       .map(([k, v]) => `${k}@${v}`)
     expect(ranged).toEqual([])
   })
