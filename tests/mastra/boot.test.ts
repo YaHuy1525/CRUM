@@ -115,9 +115,9 @@ describe('createCrumMastra', () => {
     expect(mastra).toBeInstanceOf(Mastra)
   })
 
-  it('mounts no agent yet', () => {
+  it('registers the crmAssistant agent', () => {
     const mastra = createCrumMastra(envWith())
-    expect(Object.keys(mastra.listAgents())).toEqual([])
+    expect(Object.keys(mastra.listAgents())).toEqual(['crm-assistant'])
   })
 })
 

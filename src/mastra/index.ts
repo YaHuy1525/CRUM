@@ -4,6 +4,8 @@ import { buildObservability } from './observability'
 import { assertMcpRequestStateKey } from './mcp-guard'
 import { buildMastraStorage } from './storage'
 import type { CrumStorage } from './storage'
+import { crmAssistant } from './agent'
+import { buildCrumMemory } from './memory'
 
 export interface CrumMastraOptions {
   /**
@@ -23,21 +25,26 @@ export interface CrumMastraOptions {
  * and constructs the singleton there, where the process environment is the right
  * thing to read.
  *
- * Phase 0 mounts no agents and no workflows. §16's Phase 0 acceptance criterion
- * is that the instance constructs both with and without DATABASE_URL and refuses
- * to boot in production without MCP_REQUEST_STATE_KEY, which is what this
- * function does and what tests/mastra/boot.test.ts asserts.
+ * Phase 1 registers the crmAssistant agent and coreMemory. The agent carries
+ * instructions, processors, and model configuration; memory uses
+ * messageHistory.maxTokens (24_000), not lastMessages.
  */
 export function createCrumMastra(env: CrumEnv, options: CrumMastraOptions = {}): Mastra {
   // Fail closed at boot, five phases before the MCP server exists. §13.8.
   assertMcpRequestStateKey(env)
 
   const storage = options.storage ?? buildMastraStorage(env)
+  const memory = buildCrumMemory(storage)
 
   return new Mastra({
-    agents: {},
+    agents: {
+      'crm-assistant': crmAssistant,
+    },
     workflows: {},
     storage,
+    memory: {
+      coreMemory: memory,
+    },
     observability: buildObservability(env),
   })
 }
@@ -46,3 +53,5 @@ export { OBSERVABILITY_INSTANCE, OBSERVABILITY_SERVICE_NAME } from './observabil
 export { buildMastraStorage, isPostgresStorage, STORAGE_ID } from './storage'
 export type { CrumStorage } from './storage'
 export { assertMcpRequestStateKey, resolveMcpRequestState } from './mcp-guard'
+export { crmAssistant } from './agent'
+export { buildCrumMemory } from './memory'
