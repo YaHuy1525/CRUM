@@ -1,0 +1,23 @@
+{
+  "name": "crum",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:22",
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "installZsh": "false",
+      "username": "node",
+      "upgradePackages": false
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": ["dbaeumer.vscode-eslint"],
+      "settings": {
+        "editor.formatOnSave": false,
+        "eslint.validate": ["typescript"]
+      }
+    }
+  },
+  "forwardPorts": [5432],
+  "postCreateCommand": "npm ci && npm run typecheck",
+  "remoteUser": "node"
+}

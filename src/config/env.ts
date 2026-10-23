@@ -58,15 +58,24 @@ const booleanish = z
  * so PostgresStoreVNext holds 2 pools: primary and observability. 2 x 7 = 14 is
  * the highest safe per-pool cap. §9.1 and §14.3.
  */
-const POOL_COUNT = 2
-const SUPABASE_POOL_SIZE = 15
-const MAX_POOL_PER_CONN = Math.floor(SUPABASE_POOL_SIZE / POOL_COUNT)
+export const POOL_COUNT = 2
+export const SUPABASE_POOL_SIZE = 15
+export const MAX_POOL_PER_CONN = Math.floor(SUPABASE_POOL_SIZE / POOL_COUNT)
 
 export const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
 
   // Required in production, optional elsewhere so the stack boots in-memory.
   DATABASE_URL: optionalString,
+  /**
+   * Where observability spans, logs, metrics, scores and feedback are written.
+   * PostgresStoreVNext requires an observability connection and will not
+   * implicitly share the primary one (@mastra/pg dist/storage/index.d.ts:104).
+   * Unset falls back to DATABASE_URL and accepts the runtime warning the
+   * adapter logs on every construction. Point this at a separate database
+   * before enabling MASTRA_OBSERVABILITY in production. §9.1, §14.3.
+   */
+  OBSERVABILITY_DATABASE_URL: optionalString,
   OPENROUTER_API_KEY: optionalString,
   APPROVAL_HMAC_SECRET: hmacSecret,
   MCP_REQUEST_STATE_KEY: hmacSecret,

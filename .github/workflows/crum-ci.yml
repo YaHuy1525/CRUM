@@ -1,0 +1,119 @@
+name: crum-ci
+
+on:
+  pull_request:
+  push:
+    branches: [main, 'phase/**']
+
+# A force-push to a phase branch cancels the run it supersedes instead of
+# queueing behind it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Phase 0 reads the repository and nothing else. No issues, no deployments, no
+# id-token. Widening this later should be a reviewed change to one line.
+permissions:
+  contents: read
+
+env:
+  # One definition of the CI database. Every step that needs it references this.
+  CI_DATABASE_URL: postgresql://postgres:changeme@localhost:5432/postgres
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        # pg17, not the pg16 named in TECHNICAL_PLAN.md §14.2. gen_random_uuid()
+        # needs 13+, the vector extension Phase 4 requires ships in both, and
+        # running one image from Phase 0 removes a second version bump later.
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_PASSWORD: changeme
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Credential shapes
+        # Portable form of the local .git/hooks/pre-commit guard, which is not
+        # version-controlled and does not travel with the repo. Same shapes, same
+        # allowlist, over every tracked file: a commit that lands without a local
+        # hook still cannot enter history quietly.
+        run: |
+          scan() {
+            if git grep -I -hE -e "$2" -- . \
+              | grep -vE 'user:password@|postgres:postgres@|sk-or-v1-placeholder|your_|changeme|replace_|\$\{|<[A-Z_]+>|example\.com|xxx' \
+              > /dev/null; then
+              echo "credential shape found: $1" >&2
+              exit 1
+            fi
+          }
+          scan 'OpenRouter/API key'        'sk-or-v1-[0-9a-fA-F]{16,}'
+          scan 'Generic long API key'      'sk-[A-Za-z0-9_-]{32,}'
+          scan 'JWT'                       'eyJ[A-Za-z0-9_-]{15,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'
+          scan 'Supabase secret key'       'sb_secret_[A-Za-z0-9_-]{16,}'
+          scan 'AWS access key id'         'AKIA[0-9A-Z]{16}'
+          scan 'Slack token'               'xox[baprs]-[A-Za-z0-9-]{10,}'
+          scan 'Private key block'         '-----BEGIN [A-Z ]*PRIVATE KEY-----'
+          scan 'GitHub token'              'gh[pousr]_[A-Za-z0-9]{20,}'
+          scan 'DB URL with real password' 'postgres(ql)?://[^:/@[:space:]]+:([^@[:space:]]{8,})@'
+
+      - uses: actions/setup-node@v4
+        # Mastra requires Node 22.18.0 or newer. A Node 20 pin here would let CI
+        # pass against a runtime production cannot use (§16 Phase 0).
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        # Doubles as the alarm for every @ts-expect-error directive in tests/smoke
+        # and tests/mastra. An unused directive is a compile error, so a Mastra
+        # release that starts accepting a signature CRUM assumed it would reject
+        # turns this job red instead of silently invalidating a plan assumption.
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      - name: Policy conformance
+        # Walks policy/tools.yaml against the §4.6.2 tool surface and asserts the
+        # class invariants. No model call, no network, no clock.
+        run: npm run test:policy
+
+      - name: Regenerate the Mastra schema snapshot
+        run: npm run db:export-schema
+
+      - name: Assert no schema drift
+        # A Mastra upgrade that changes the DDL fails here until somebody
+        # regenerates migrations/0001_mastra_core.sql and reads the diff. A
+        # schema change invisible in the pull request is a schema change nobody
+        # reviewed (§14.2, migration discipline reason 2).
+        run: git diff --exit-code migrations/
+
+      - name: Migrate
+        # scripts/db-migrate.ts forces MASTRA_DB_DISABLE_INIT off for its own
+        # process. Nothing else in this pipeline may set it, so an application
+        # process can never CREATE TABLE (§14.2, migration discipline reason 1).
+        run: npm run db:migrate
+        env:
+          DATABASE_URL: ${{ env.CI_DATABASE_URL }}
+
+      - name: Integration tests
+        run: npm run test:integration
+        env:
+          DATABASE_URL: ${{ env.CI_DATABASE_URL }}
+          CRUM_INTEGRATION_DATABASE_URL: ${{ env.CI_DATABASE_URL }}
