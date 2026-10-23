@@ -1,0 +1,169 @@
+# CRUM tool permission classes. TECHNICAL_PLAN.md §4.6.2 and §12.2.
+#
+# Classes:
+#   read-only  cannot mutate anything; no idempotency needed
+#   auto       deterministic, idempotent, no human receipt needed
+#   approval   acts only with a signed receipt bound to scope + action hash
+#   refuse     never auto-runs; a human task is created instead
+#
+# This file is the source of truth for the tool registry AND the session
+# permission map. Both are generated from it so the two cannot drift (§4.6.1).
+version: 1
+
+# crm-write and crm:write are two distinct permission boundaries, not one
+# boundary spelled two ways. The punctuation is load-bearing.
+#   crm-write  (hyphen)  auto class: low-blast-radius write, no human receipt
+#   crm:write  (colon)   approval class: staged write behind a signed receipt
+#                        bound to scope + action hash
+# These are internal tool scopes, a different namespace from the MCP token
+# scopes, where the read scope is spelled crm:read with a colon while the
+# internal tool scope is crm-read with a hyphen. Do not normalise one spelling
+# to the other: doing so silently moves tools across a gate boundary.
+tools:
+  # ── read-only (9) ──────────────────────────────────────────
+  - name: crm.list_customers
+    description: List customers visible to the caller.
+    scope: crm-read
+    class: read-only
+
+  - name: crm.get_customer
+    description: Read one customer with related counts.
+    scope: crm-read
+    class: read-only
+
+  - name: crm.find_contacts
+    description: Find contacts by customer, name or email.
+    scope: crm-read
+    class: read-only
+
+  - name: crm.list_followups
+    description: List followups filtered by status or date range.
+    scope: crm-read
+    class: read-only
+
+  - name: crm.list_tasks
+    description: List tasks filtered by assignee, priority or status.
+    scope: crm-read
+    class: read-only
+
+  - name: crm.list_schedules
+    description: List schedules by date range and attendee.
+    scope: crm-read
+    class: read-only
+
+  - name: crm.my_open_items
+    description: Today-view aggregation of open items for the caller.
+    scope: crm-read
+    class: read-only
+
+  - name: crm.search
+    description: Unified search across CRM objects.
+    scope: crm-read
+    class: read-only
+
+  - name: knowledge.retrieve
+    description: Reranked retrieval over the tenant knowledge index, citations returned.
+    scope: knowledge-domains
+    class: read-only
+
+  # ── auto (3) ───────────────────────────────────────────────
+  - name: crm.log_followup
+    description: Record a completed contact attempt.
+    scope: crm-write
+    class: auto
+    idempotent: true
+    idempotency_key: correlationId
+
+  - name: crm.create_task
+    description: Create a deadline-only task.
+    scope: crm-write
+    class: auto
+    idempotent: true
+    idempotency_key: correlationId
+
+  - name: mail.draft
+    description: Compose an email draft. Draft only, nothing is sent.
+    scope: mail-write
+    class: auto
+    idempotent: true
+    idempotency_key: draftHash
+
+  # ── approval (7) ───────────────────────────────────────────
+  - name: crm.create_customer
+    description: Stage a new customer record.
+    scope: crm:write
+    class: approval
+    idempotent: true
+    idempotency_key: draftHash
+
+  - name: crm.update_customer
+    description: Stage a change to an existing customer.
+    scope: crm:write
+    class: approval
+    idempotent: true
+    idempotency_key: draftHash
+
+  - name: crm.delete_customer
+    description: Stage a soft delete. Risk floor 70.
+    scope: crm:delete
+    class: approval
+    idempotent: true
+    idempotency_key: draftHash
+
+  - name: crm.create_contact
+    description: Stage a new contact on an existing customer.
+    scope: crm:write
+    class: approval
+    idempotent: true
+    idempotency_key: draftHash
+
+  - name: crm.create_schedule
+    description: Stage a schedule. Notifies attendees on commit.
+    scope: crm:schedule
+    class: approval
+    idempotent: true
+    idempotency_key: draftHash
+
+  - name: crm.transfer_owner
+    description: Change record ownership; alters who can see the record.
+    scope: crm:transfer
+    class: approval
+    idempotent: true
+    idempotency_key: draftHash
+
+  - name: mail.send
+    description: Send an approved email draft.
+    scope: mail:send
+    class: approval
+    idempotent: true
+    idempotency_key: draftHash
+
+  # ── workflow side effects (1) ──────────────────────────────
+  - name: run.side-effect
+    description: Any workflow side effect (scope template `{workflow}:{step}`).
+    scope: "{workflow}:{step}"
+    class: approval
+    idempotent: true
+    idempotency_key: actionHash
+
+  # ── refuse (1) ─────────────────────────────────────────────
+  - name: crm.bulk_import
+    description: Multi-record import. Never auto-runs; always a human task.
+    scope: crm:bulk
+    class: refuse
+
+connectors:
+  - provider: smtp
+    description: Sends approved mail behind the mail:send receipt.
+    scope: mail:send
+    class: approval
+
+  - provider: calendar
+    description: Writes approved schedules behind the crm:schedule receipt.
+    scope: crm:schedule
+    class: approval
+
+  - provider: slack
+    description: Approver notifications only. Never a workflow action.
+    scope: approver-notify
+    class: approval

@@ -1,0 +1,55 @@
+# CRUM risk policy. Versioned, loaded at boot, asserted by tests.
+# TECHNICAL_PLAN.md §12.2.
+#
+# Scoring is deterministic. No model call, no network, no clock. The same draft
+# scores the same way in CI and in production, which is what makes the gate
+# auditable after the fact.
+version: 1
+
+preflight:
+  # Terms that mark an action as not undoable.
+  irreversible_terms: [delete, drop, merge, transfer, export, send, publish]
+
+  # Terms that mark an action as touching more than one record or one environment.
+  high_blast_terms: [bulk, all, every, production, team-wide]
+
+  scores:
+    irreversible_high_blast: 90
+    single_risk: 55
+    benign: 10
+
+  gates:
+    refuse_at: 80
+    approval_at: 40
+
+  # Per-object terms that force approval even when the global terms do not fire.
+  # The domain is inferred from the tool name (crm.delete_customer -> customer)
+  # and can be overridden explicitly for generic tools like run.side-effect.
+  domains:
+    customer:
+      require_approval_terms: [delete, transfer, merge, export]
+    contact:
+      require_approval_terms: [delete]
+    schedule:
+      require_approval_terms: [send, cancel, reschedule]   # notifies attendees
+    mail:
+      require_approval_terms: [send, reply, forward]
+    knowledge:
+      require_approval_terms: [delete, reindex]
+
+sensitive:
+  clause: sensitive/personal-data
+  markers:
+    - bank account
+    - payment card
+    - date of birth
+    - national id
+    - home address
+    - personal email
+    - salary
+    - health
+  required_gate: approval
+
+# A draft touching a sensitive marker can never be auto-gated, whatever its
+# computed score. Floors only raise the gate; they never lower a refuse. That
+# asymmetry is asserted by tests/governance/risk.test.ts.
