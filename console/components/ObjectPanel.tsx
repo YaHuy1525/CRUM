@@ -1,14 +1,38 @@
 'use client'
 
-export function ObjectPanel() {
-  // Phase 1: empty. Phase 2: show bound object and context.
+export interface Customer {
+  id: string
+  tenant_id: string
+  name: string
+  city?: string
+  tags?: string[]
+  owner_id: string
+  team_member_ids: string[]
+  created_at: string
+  updated_at: string
+}
+
+interface ObjectPanelProps {
+  customer: Customer | null
+}
+
+export function ObjectPanel({ customer }: ObjectPanelProps) {
+  if (!customer) {
+    return (
+      <div className="object-panel empty">
+        <p>No customer selected</p>
+      </div>
+    )
+  }
+
   return (
     <div className="object-panel">
-      <h3>Active Object</h3>
-      <div className="empty-state">No object bound</div>
-
-      <h3 style={{ marginTop: '24px' }}>Working Memory</h3>
-      <div className="empty-state">No facts noted</div>
+      <h3>{customer.name}</h3>
+      {customer.city && <p className="city">{customer.city}</p>}
+      {customer.tags && customer.tags.length > 0 && (
+        <p className="tags">{customer.tags.join(', ')}</p>
+      )}
+      <p className="id">{customer.id}</p>
     </div>
   )
 }
