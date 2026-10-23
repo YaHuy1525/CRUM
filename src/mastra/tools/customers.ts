@@ -1,0 +1,61 @@
+import { createTool } from '@mastra/core/tools'
+import { z } from 'zod'
+import { TenantRequestContextSchema } from '../tenant-context'
+import { queryCustomers, queryCustomer } from '../../db/queries'
+
+const CustomerSchema = z.object({
+  id: z.string(),
+  tenant_id: z.string(),
+  name: z.string(),
+  city: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+  owner_id: z.string(),
+  team_member_ids: z.array(z.string()),
+  created_at: z.string(),
+  updated_at: z.string(),
+})
+
+export const listCustomersTool = createTool({
+  id: 'crm.list_customers',
+  title: 'List Customers',
+  description: 'List customers with optional filters for city, name, and tags. Returns an array of customer records scoped to the current tenant.',
+  requestContextSchema: TenantRequestContextSchema,
+  inputSchema: z.object({
+    city: z.string().optional(),
+    name: z.string().optional(),
+    tags: z.array(z.string()).optional(),
+    limit: z.number().int().positive().optional(),
+    offset: z.number().int().nonnegative().optional(),
+  }),
+  outputSchema: z.array(CustomerSchema),
+  execute: async (input, context) => {
+    return context.observe.span('crm.list_customers', async () => {
+      const rc = context.requestContext.all
+      const customers = await queryCustomers(rc, {
+        city: input.city,
+        name: input.name,
+        tags: input.tags,
+      })
+      const offset = input.offset ?? 0
+      const limit = input.limit ?? customers.length
+      return customers.slice(offset, offset + limit)
+    })
+  },
+})
+
+export const getCustomerTool = createTool({
+  id: 'crm.get_customer',
+  title: 'Get Customer',
+  description: 'Retrieve a single customer by ID. Returns the customer record or null if not found or not visible.',
+  requestContextSchema: TenantRequestContextSchema,
+  inputSchema: z.object({
+    id: z.string().uuid(),
+  }),
+  outputSchema: CustomerSchema.nullable(),
+  execute: async (input, context) => {
+    return context.observe.span('crm.get_customer', async () => {
+      const rc = context.requestContext.all
+      return queryCustomer(rc, input.id)
+    })
+  },
+})

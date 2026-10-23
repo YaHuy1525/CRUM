@@ -194,3 +194,83 @@ export async function querySchedules(
   )
   return result.rows
 }
+
+export interface SearchResult {
+  type: 'customer' | 'contact' | 'task'
+  id: string
+  label: string
+  tenant_id: string
+}
+
+/**
+ * Searches customers, contacts and tasks by name/title ILIKE match, scoped by tenant visibility.
+ */
+export async function querySearch(
+  context: TenantRequestContext,
+  query: string,
+  limit = 20,
+): Promise<SearchResult[]> {
+  const vis = visibilityPredicate(context)
+  const pattern = `%${query}%`
+  const sql = `
+    SELECT 'customer' AS type, id, name AS label, tenant_id FROM customers WHERE ${vis.sql} AND name ILIKE $${vis.params.length + 1}
+    UNION ALL
+    SELECT 'contact' AS type, id, name AS label, tenant_id FROM contacts WHERE tenant_id = $1 AND ($2 = '' OR owner_id = $2 OR $2 = ANY(team_member_ids)) AND name ILIKE $${vis.params.length + 1}
+    UNION ALL
+    SELECT 'task' AS type, id, COALESCE(title, description) AS label, tenant_id FROM tasks WHERE tenant_id = $1 AND ($2 = '' OR owner_id = $2 OR $2 = ANY(team_member_ids)) AND (title ILIKE $${vis.params.length + 1} OR description ILIKE $${vis.params.length + 1})
+    ORDER BY label ASC
+    LIMIT $${vis.params.length + 2}
+  `
+  const params = [...vis.params, pattern, limit]
+  const result = await getDbClient().query(sql, params)
+  return result.rows
+}
+
+export interface KnowledgeDocument {
+  id: string
+  tenant_id: string
+  title: string
+  content?: string
+  created_at: string
+  updated_at: string
+}
+
+/**
+ * Searches knowledge_documents by title/content ILIKE match, scoped by tenant.
+ */
+export async function queryKnowledgeDocuments(
+  context: TenantRequestContext,
+  query: string,
+  limit = 20,
+): Promise<KnowledgeDocument[]> {
+  const pattern = `%${query}%`
+  const sql = `SELECT * FROM knowledge_documents WHERE tenant_id = $1 AND (title ILIKE $2 OR content ILIKE $2) ORDER BY updated_at DESC LIMIT $3`
+  const result = await getDbClient().query(sql, [context.tenantId, pattern, limit])
+  return result.rows
+}
+
+/**
+ * Returns tasks assigned to the user across all customers, scoped by tenant visibility.
+ */
+export async function queryMyTasks(
+  context: TenantRequestContext,
+): Promise<Task[]> {
+  const vis = visibilityPredicate(context)
+  const sql = `SELECT * FROM tasks WHERE ${vis.sql} AND (owner_id = $${vis.params.length + 1} OR $${vis.params.length + 1} = ANY(team_member_ids)) ORDER BY created_at DESC`
+  const params = [...vis.params, context.userId]
+  const result = await getDbClient().query(sql, params)
+  return result.rows
+}
+
+/**
+ * Returns followups assigned to the user across all customers, scoped by tenant visibility.
+ */
+export async function queryMyFollowups(
+  context: TenantRequestContext,
+): Promise<Followup[]> {
+  const vis = visibilityPredicate(context)
+  const sql = `SELECT * FROM followups WHERE ${vis.sql} AND (owner_id = $${vis.params.length + 1} OR $${vis.params.length + 1} = ANY(team_member_ids)) ORDER BY created_at DESC`
+  const params = [...vis.params, context.userId]
+  const result = await getDbClient().query(sql, params)
+  return result.rows
+}
