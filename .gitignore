@@ -8,3 +8,4 @@ tmp/
 .superpowers/
 coverage/
 .DS_Store
+.qoder
