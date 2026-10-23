@@ -23,12 +23,15 @@ export default tseslint.config(
   },
   {
     // Smoke tests assert that wrong code does not compile. They carry
-    // @ts-expect-error directives and intentionally unused bindings.
+    // @ts-expect-error directives and intentionally unused bindings. The fixtures
+    // are async only because Mastra's execute signatures return a Promise, so
+    // there is never anything to await.
     files: ['tests/smoke/**/*.ts'],
     rules: {
       '@typescript-eslint/no-unused-vars': 'off',
       '@typescript-eslint/no-unsafe-assignment': 'off',
       '@typescript-eslint/no-unsafe-return': 'off',
+      '@typescript-eslint/require-await': 'off',
     },
   },
 )
