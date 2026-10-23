@@ -9,7 +9,10 @@
   },
   "scripts": {
     "dev": "mastra dev",
+    "dev:mastra": "mastra dev",
+    "dev:console": "cd console && npm run dev",
     "build": "mastra build",
+    "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
