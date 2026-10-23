@@ -2,10 +2,12 @@ import { SamplingStrategyType, type SamplingStrategy } from '@mastra/observabili
 import type { ScoringSamplingConfig } from '@mastra/core/evals'
 import { describe, expect, it } from 'vitest'
 
-// TECHNICAL_PLAN.md §7.2.1 and §8.1. Two look-alike sampling declarations that
-// are not interchangeable in either direction. Getting them backwards is the
-// single most likely error in this codebase because both are spelled
-// { type: 'ratio', ... }.
+// TECHNICAL_PLAN.md §7.2.1 and §8.1. Two look-alike sampling declarations whose
+// object types are not interchangeable in either direction. Getting them
+// backwards is the single most likely error in this codebase because both are
+// spelled { type: 'ratio', ... }. The `type` tag alone is asymmetric rather than
+// symmetric, which `accepts the enum member` below demonstrates and which
+// §7.2.1 currently claims otherwise.
 //
 //   @mastra/observability  SamplingStrategyType   a real enum, field `probability`
 //   @mastra/core/evals     ScoringSamplingConfig  a literal union, field `rate`

@@ -93,7 +93,10 @@ describe('RequestContext', () => {
     // keys it never declared, so this test needs the open form — the
     // declaration's own doc comment sends runtime-only keys to `getRaw` for
     // exactly that reason, and `Values = unknown` keeps `get` accepting any
-    // string. `as const` stays because the entries must be tuples, not arrays.
+    // string. `as const` is not needed inline, where contextual typing already
+    // supplies the tuple shape, but it keeps these entries tuples if they are
+    // ever lifted into a variable — inference would widen them to `string[][]`
+    // there and the constructor would reject them.
     const rc = new RequestContext<unknown>([['tenantSlug', 'acme'], ['userId', 'u1']] as const)
     expect(rc.get('tenantSlug')).toBe('acme')
     expect(rc.get('missing')).toBeUndefined()
