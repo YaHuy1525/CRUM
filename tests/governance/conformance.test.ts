@@ -76,16 +76,38 @@ describe('tools.yaml conforms to §4.6.2', () => {
 
 describe('class invariants', () => {
   it('gives every mutating tool an idempotency key', () => {
-    // Ruling A4: `refuse` is excluded because a refuse-class tool never
-    // executes — §4.6.2 assigns crm.bulk_import `—` for the idempotency key,
-    // and there is no duplicate write to deduplicate. This filter must stay in
-    // step with the loader's own rule at src/governance/schema.ts:34; the same
-    // predicate now lives in two places, and an editor who changes one must
-    // change the other.
-    const offenders = policy.tools.tools
-      .filter((t) => t.class !== 'read-only' && t.class !== 'refuse' && t.idempotency_key === undefined)
-      .map((t) => t.name)
+    // Walks SPEC_TOOL_SURFACE, not the loaded policy. The loader already
+    // enforces this rule on policy/tools.yaml — src/governance/schema.ts:34
+    // rejects a non-read-only, non-refuse tool with no `idempotent`, and :41
+    // rejects `idempotent: true` with no key — so a tool that reaches this file
+    // through `policy` cannot violate it, and asserting against the singleton
+    // could never fail. The spec constant is the one copy no schema validates:
+    // an editor who adds `['crm.foo', 'approval', null]` below is caught here
+    // and nowhere else.
+    //
+    // `refuse` is excluded per Ruling A4, recorded in
+    // docs/verification/phase-0.md: §4.6.2 assigns crm.bulk_import `—` for the
+    // idempotency key, because a tool that never executes has no duplicate
+    // write to deduplicate. The same predicate now lives in three places —
+    // schema.ts:34, tests/governance/policy.test.ts:137, and here — and an
+    // editor who changes one must change all three.
+    const offenders = SPEC_TOOL_SURFACE.filter(
+      ([, klass, key]) => (klass === 'auto' || klass === 'approval') && key === null,
+    ).map(([name]) => name)
     expect(offenders).toEqual([])
+  })
+
+  it('declares the workflow template at class approval with an actionHash key', () => {
+    // run.side-effect is in TEMPLATE_TOOLS rather than SPEC_TOOL_SURFACE, so the
+    // it.each walks above never reach it, and the scope-discipline loop skips it
+    // because its scope is templated. Without this test it is the one entry in
+    // policy/tools.yaml that nothing pins: downgrading it to `auto` would leave
+    // the entire suite green.
+    const template = policy.tools.tools.find((t) => t.name === 'run.side-effect')
+    expect(template, 'run.side-effect is missing from policy/tools.yaml').toBeDefined()
+    expect(template?.class).toBe('approval')
+    expect(template?.scope).toBe('{workflow}:{step}')
+    expect(template?.idempotency_key).toBe('actionHash')
   })
 
   it('gives no read-only tool an idempotency key', () => {
@@ -98,6 +120,8 @@ describe('class invariants', () => {
   })
 
   it('gives every tool a non-empty description', () => {
+    // schema.ts:22 enforces `z.string().min(1)`; the only marginal reach of this
+    // test is a whitespace-only description, which min(1) accepts and .trim() catches.
     const offenders = policy.tools.tools.filter((t) => t.description.trim() === '').map((t) => t.name)
     expect(offenders).toEqual([])
   })
@@ -113,7 +137,12 @@ describe('class invariants', () => {
   it('never resolves a refuse tool to a gate below refuse', () => {
     // §12.2: the refuse class is never attached to a tool the agent can reach
     // without a human task being created. The gate is what enforces that.
-    for (const name of policy.toolsByClass('refuse')) {
+    // Walks SPEC_TOOL_SURFACE's refuse rows rather than policy.toolsByClass('refuse'):
+    // iterating the loaded policy goes silently quiet if the refuse class
+    // disappears from tools.yaml, which is the exact drift this test names.
+    const refuseNames = SPEC_TOOL_SURFACE.filter(([, klass]) => klass === 'refuse').map(([name]) => name)
+    expect(refuseNames, 'the spec surface must keep at least one refuse-class tool').not.toHaveLength(0)
+    for (const name of refuseNames) {
       expect(policy.gateFor(name, { score: 0, sensitive: false, reasons: [] }), name).toBe('refuse')
     }
   })
@@ -121,6 +150,8 @@ describe('class invariants', () => {
 
 describe('scope discipline', () => {
   it('gives every tool a non-empty scope', () => {
+    // schema.ts:23 enforces `z.string().min(1)`; the only marginal reach of this
+    // test is a whitespace-only scope, which min(1) accepts and .trim() catches.
     const offenders = policy.tools.tools.filter((t) => t.scope.trim() === '').map((t) => t.name)
     expect(offenders).toEqual([])
   })
@@ -132,8 +163,13 @@ describe('scope discipline', () => {
 
   it('uses distinct scopes for distinct permission boundaries', () => {
     // crm-read is shared by all nine read tools, which is intended: they are one
-    // boundary. What must not happen is an approval tool sharing a scope with a
-    // read-only one, which would let a read grant cover a write.
+    // boundary, so nine tools still yield exactly one class. What must not happen
+    // is one scope carrying two classes at all — a read grant covering a write,
+    // or the colon/hyphen pair crm:write (approval) and crm-write (auto) being
+    // silently normalised into each other, which policy/tools.yaml:21-28 warns
+    // about by name. Asserting exactly one class per concrete scope catches every
+    // such merge; the weaker read-only-only condition this replaced caught none
+    // of the auto/approval ones.
     const scopeToClasses = new Map<string, Set<string>>()
     for (const tool of policy.tools.tools) {
       if (tool.scope.includes('{')) continue
@@ -141,9 +177,9 @@ describe('scope discipline', () => {
       set.add(tool.class)
       scopeToClasses.set(tool.scope, set)
     }
+    expect(scopeToClasses.size, 'policy/tools.yaml declares no concrete scopes').toBeGreaterThan(0)
     for (const [scope, classes] of scopeToClasses) {
-      const mixesReadAndWrite = classes.has('read-only') && classes.size > 1
-      expect(mixesReadAndWrite, `scope ${scope} mixes read-only with ${[...classes].join(',')}`).toBe(false)
+      expect(classes.size, `scope ${scope} carries ${[...classes].join(' and ')}`).toBe(1)
     }
   })
 })
@@ -172,6 +208,15 @@ describe('connectors', () => {
 })
 
 describe('risk policy coherence', () => {
+  // The next two tests restate rules src/governance/schema.ts already enforces
+  // at parse time: `refuse_at > approval_at` at :114, the strict score ordering
+  // at :122, and the 0..100 bound at :15. A drift in policy/risk.yaml therefore
+  // fails at import with a PolicyLoadError naming the file and the field, before
+  // either test can report. They are kept as documentation of the contract at the
+  // conformance layer, not as alarms. The live assertions in this block are
+  // `approval_at > 0` — ScoreBound's min is 0, so no schema rule covers a zero
+  // floor — and the whole of `puts single_risk in the approval band…`, which
+  // cross-relates scores to gates and nothing in the schema does.
   it('orders the gate thresholds so both bands are reachable', () => {
     const { refuse_at, approval_at } = policy.risk.preflight.gates
     expect(approval_at).toBeGreaterThan(0)
