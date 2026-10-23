@@ -1,11 +1,11 @@
 # CRUM Technical Plan
 ## Conversational Relationship and Utility Manager
 
-**Version:** 0.3.0
+**Version:** 0.3.1
 **Date:** 2026-10-23
 **Status:** Planning, verified against shipped type declarations
 **Backbone:** Mastra (`@mastra/core@1.79.0`, `@mastra/mcp@2.5.0`, protocol revision `2026-07-28`)
-**Supersedes:** v0.2.0 (see [Appendix E: Change Log](#appendix-e-change-log))
+**Supersedes:** v0.3.0 (see [Appendix E: Change Log](#appendix-e-change-log))
 
 ---
 
@@ -4020,7 +4020,7 @@ function buildMastraStorage(): MastraCompositeStore {
 
 ### 9.2 Schema
 
-CRM spine, governance and knowledge tables as specified in v0.1 §6.1, unchanged in shape. Highlights:
+CRM spine, governance and knowledge tables. The authoritative listing is the committed `migrations/0002_crum_spine.sql`, which defines the nine tables: `customers`, `contacts`, `followups`, `tasks`, `schedules`, `knowledge_documents`, `pending_writes`, `audit_receipts` and `human_tasks`. v0.3.0 showed three here and deferred the rest to a §6.1 that no longer exists; the six it omitted were derived from the section 5 business objects plus `human_tasks` from §4.6.1's refuse path. Highlights:
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -4753,6 +4753,8 @@ connectors:
     class: approval
 ```
 
+The listing above illustrates the file's shape, not its surface: the committed `policy/tools.yaml` carries all twenty-one entries — nine read-only, three auto, seven approval, the workflow-scoped `run.side-effect`, and one refuse — plus the three connector entries.
+
 **Policy tests.** A test walks `tools.yaml` and asserts: every registered mutating tool appears with a declared class; every `approval`-class tool has a denial-path test that verifies the receipt rather than trusting the caller's claim; every connector carries a reviewed scope and class; and the `refuse` class is never attached to a tool the agent can reach without a human task being created.
 
 ### 12.3 Receipts
@@ -4830,6 +4832,7 @@ CRUM inherits most of AllRounderAgent's `.env` **variable names**, and adds a sm
 | Variable | Source | Purpose |
 |----------|--------|---------|
 | `DATABASE_URL` | AllRounderAgent | Supabase **session-pooler** string. Drives storage, vectors and the CRM spine |
+| `OBSERVABILITY_DATABASE_URL` | **CRUM-new** | Optional. Where Mastra writes spans, logs, metrics, scores and feedback. Defaults to `DATABASE_URL`; `PostgresStoreVNext` requires an observability connection and logs a runtime warning on every construction and every `init()` when the two share one database |
 | `OPENROUTER_API_KEY` | AllRounderAgent | Model router for all agents |
 | `MODEL_API_KEY` | AllRounderAgent | Embedding fallback when `EMBEDDING_API_KEY` is unset |
 | `MODEL_BASE_URL` | AllRounderAgent | OpenAI-compatible base; embedding fallback |
@@ -4932,6 +4935,11 @@ MCP_REQUEST_STATE_KEY=
 TYPESAFE_AI_API_KEY=
 
 # ── Optional ──────────────────────────────────────────────────
+# Where Mastra writes spans, logs, metrics, scores and feedback. Defaults to
+# DATABASE_URL, which PostgresStoreVNext accepts but warns about on every
+# construction and every init(); point it at a separate database in production.
+OBSERVABILITY_DATABASE_URL=
+
 # Mastra Cloud observability export (100k events/month free tier)
 MASTRA_PLATFORM_ENABLED=
 
@@ -5011,14 +5019,14 @@ One caveat, and it is the only piece of cross-instance coordination CRUM has. MC
 name: crum-ci
 on:
   pull_request:
-  push: { branches: [main] }
+  push: { branches: [main, 'phase/**'] }
 
 jobs:
   verify:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: pgvector/pgvector:pg16
+        image: pgvector/pgvector:pg17
         env: { POSTGRES_PASSWORD: postgres }
         ports: ['5432:5432']
         options: >-
@@ -5047,7 +5055,9 @@ jobs:
         env: { DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres }
       - name: Integration
         run: npm run test:integration
-        env: { DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres }
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+          CRUM_INTEGRATION_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
       - name: Eval gate
         run: npm run eval:crum
         env:
@@ -5084,8 +5094,10 @@ The eval gate needs a real database: datasets are a storage domain, so an in-mem
 
 ### 14.4 Local Development
 
+CRUM is a standalone repository, not a subdirectory of AllRounderAgent.
+
 ```bash
-cd D:/Code/AllRounderAgent
+cd D:/Code/CRUM
 npm install
 npm run dev:mastra          # terminal 1: Mastra server :4111 + Studio :4112
 npm run dev:console         # terminal 2: Next.js console
@@ -5158,17 +5170,18 @@ Solo pace, evenings and weekends. Each phase ends in something runnable and demo
 
 - [ ] Pin the verified versions from Appendix B: `@mastra/core@1.79.0`, `@mastra/mcp@2.5.0`, `@mastra/memory@1.39.0`, `@mastra/pg@1.32.0`, `@mastra/rag@2.7.0`, `@mastra/evals@1.10.8`, `@mastra/observability@1.21.0`, `@ai-sdk/typesafe-ai@3.0.24`, `typescript@5.9.3`
 - [ ] Assert Node **22.18.0+** in `engines`, in CI (§14.2), and in the devcontainer. A Node 20 pin passes CI against a runtime production cannot use
-- [ ] Scaffold `"type": "module"`, tsconfig `target: ES2022` / `module: ES2022` / `moduleResolution: bundler` / `strict` / `skipLibCheck` / `types: ["node"]` / `allowImportingTsExtensions`
+- [ ] Scaffold `"type": "module"`, tsconfig `target: ES2022` / `module: ES2022` / `moduleResolution: bundler` / `strict` / `skipLibCheck` / `types: ["node"]`; extensionless relative imports — `moduleResolution: bundler` resolves them
 - [ ] **Signature smoke test.** One workflow step and one tool, both trivial, both typechecked. This is the cheapest possible way to prove the step-is-one-object / tool-is-two-args distinction (§6.3.2) against the installed version rather than against a doc example
 - [ ] **Enum smoke test.** `Sampling { type: SamplingStrategyType.RATIO, probability: 1 }` compiles; `{ type: 'ratio' }` does not (§8.1)
 - [ ] **Approval serialization check.** If durable or stored agents are used, confirm whether a function-valued `requireApproval` survives persistence or falls back to always-approve (§4.6.5). The documented rule is for the agent-level `requireToolApproval` option; the tool-level case is unverified. Fallback plan: always-approve plus a policy check inside `beforeApproval`
 - [ ] **MCP tool-name check.** Confirm target hosts accept dotted tool names (`crm.list_customers`) over the 2026-07-28 wire. If not, rename the ids; the object key and the intrinsic id are kept equal either way (§10.3)
-- [ ] Link the inherited env block; verify `DATABASE_URL`, `OPENROUTER_API_KEY`, `APPROVAL_HMAC_SECRET`, `MCP_REQUEST_STATE_KEY` and (`TYPESAFE_AI_API_KEY` or `JEV_API_KEY`) resolve
+- [ ] Link the inherited env block; verify `DATABASE_URL`, `OPENROUTER_API_KEY`, `APPROVAL_HMAC_SECRET`, `MCP_REQUEST_STATE_KEY` and (`TYPESAFE_AI_API_KEY` or `JEV_API_KEY`) resolve. `TYPESAFE_AI_API_KEY` and `JEV_API_KEY` are declared in `.env.example` and deferred to Phases 5 and 6; no Phase 0 code reads them
 - [ ] Write `policy/risk.yaml` and `policy/tools.yaml` for the CRM domain
 - [ ] Policy loader plus conformance tests
 - [ ] Migrations via `exportSchemas()` into committed SQL; `disableInit: true` on the store and an explicit `storage.init()` in the migrate job only (§14.2)
 - [ ] `buildMastraStorage()` with the pool-clamp and TLS logic
 - [ ] Boot check: instance constructs with and without `DATABASE_URL`, and **refuses** to mount the MCP server without `MCP_REQUEST_STATE_KEY` in production (§13.8)
+- [ ] Record what was checked, what was deferred, and each fallback in `docs/verification/phase-0.md`, so a reader of this section alone knows the two deferred checks (approval serialization under persistence, dotted MCP tool names) were not forgotten
 
 **Acceptance:** migrations apply to a clean Supabase; the policy tests pass; the Mastra instance boots in both persistent and in-memory mode; the two smoke tests fail loudly if either signature is wrong.
 
@@ -5341,7 +5354,16 @@ Versions verified against the npm registry on 2026-10-23 and pinned exactly in P
 | `@ai-sdk/typesafe-ai` | **3.0.24** | The decision model behind every `Classifier`. Decision support is experimental; **language, embedding and image factories are unsupported**, so this package cannot serve chat or embeddings |
 | `ai` | current | `embedMany` |
 | `mastra` (CLI) | 1.35.0 | `mastra dev`, Studio, scaffolding |
-| `zod` | ^4 | Every schema boundary. Zod v3 emits JSON Schema 2019-09 for the 2020-12 target, which `@mastra/mcp` rewrites; staying on v4 avoids the rewrite path entirely (§10.3.7) |
+| `zod` | 4.6.7 | Every schema boundary. Zod v3 emits JSON Schema 2019-09 for the 2020-12 target, which `@mastra/mcp` rewrites; staying on v4 avoids the rewrite path entirely (§10.3.7) |
+| `pg` | 8.23.1 | Postgres client under `PostgresStoreVNext` and the integration tests |
+| `yaml` | 2.9.1 | Parses `policy/risk.yaml` and `policy/tools.yaml` at boot |
+| `tsx` | 4.23.15 | Runs the `db:export-schema` and `db:migrate` scripts |
+| `vitest` | 3.2.7 | Test runner for every suite in the testing pyramid |
+| `@vitest/coverage-v8` | 3.2.7 | Coverage provider behind `npm run coverage` |
+| `eslint` | 9.39.5 | Lint gate in `npm run verify` and CI |
+| `typescript-eslint` | 8.72.0 | TypeScript rules for the lint gate |
+| `@types/node` | 22.20.5 | Node type declarations |
+| `@types/pg` | 8.23.1 | `pg` type declarations |
 | `typescript` | 5.9.3 | |
 | Node | **22.18.0+** | Runtime floor |
 
@@ -5521,7 +5543,8 @@ A consolidated list of things that look right, are plausible from older document
 | 0.1.0 | 2026-10-23 | Initial plan from the reverse-engineering document and AllRounderAgent prior art |
 | 0.2.0 | 2026-10-23 | **Research-validated rewrite.** Added §4 Agent Harness Design (Agent Controller sessions, processor pipeline, context engineering, signals/schedules/goals, performance budget). Added §11 Frontend Design System with the green/black/white token spec, contrast table and component rules. Added §13 Environment and Configuration mapped to the inherited `.env` block. Corrected seven stale assumptions (§2). Added policy-as-data governance (§12.2), ADRs, the testing pyramid, a CI pipeline with a real pgvector service, and twelve risks with mitigations. Phases restructured 0-7 |
 | **0.3.0** | **2026-10-23** | **Declaration-verified correction pass.** Every API claim re-checked against shipped `.d.ts` files from `@mastra/core@1.79.0` and `@mastra/mcp@2.5.0` rather than against documentation examples or AllRounderAgent code, which the author correctly identified as prior art rather than best practice. **Fixed four defects that would have thrown at runtime or failed to compile:** workflow steps written with a tool's two-argument signature (§6.3.2), tools written with the pre-1.x `{ context, runtimeContext }` envelope (§4.6.1), a hand-rolled `createChildSpan` chain where `observe.span` is the documented never-null helper (§8.3), and string-literal sampling that is a TS2322 compile error (§4.10.9). **Restructured approvals onto the native gate** (`requireApproval`, `beforeApproval`, `outputValidation`, `approveToolCall`/`declineToolCall`, `listSuspendedRuns`) in a new §4.6.5, keeping `pending_writes` for the three documented reasons snapshots cannot be the queue of record. **Added §6.5 Classification:** decision models, the three question types and their hard limits, refusal semantics, three entry points and what each gives up, the `question`-does-not-limit-the-request cost trap, and two recorded observability gaps. **Added §4.11 Workflow Semantics:** eleven run statuses, `.branch()` running every true condition, `.foreach()` defaulting to sequential, the advisory lease, and span continuity across suspend. **Rewrote §10.3** on the verified MCP 2.5.0 surface, deleting the false claim that `requireToolApproval` was replaced and adding `requestState`, `legacy`, DNS-rebinding options, OAuth, tracing coverage and a not-exposed table. **Rewrote §11.3** around the two-source queue join and **added §11.4** Feedback Control. **Extended §7** with scorer `filter` predicates (evaluated before sampling, definition-time validated, fail-closed on unresolvable paths) and a third custom scorer whose judge calls read-only tools to verify a write claim against the database rather than grading its plausibility; also recorded that scorer `sampling` and observability `sampling` are different types and only one is an enum. Extended §12.1 with duplicate-write, lost-approval-on-deploy and unauthenticated-MCP threats, and §17 with four new risks. Corrected §13 (eight new variables, two deliberate fail-closed rules) and §14 (Node 22, committed migrations, the shared `requestState` secret). Canonicalized the five workflow names across eight sites. Added §15.3 mock helpers, §15.4, a seventh E2E journey, and Appendices C, D and E |
+| 0.3.1 | 2026-10-23 | **Phase 0 implementation write-back.** No design decision changed. Corrected 14.2 (pgvector:pg17, push triggers on `main` and `phase/**`, `CRUM_INTEGRATION_DATABASE_URL` for the integration step), 14.4 (CRUM is a standalone repository, not a subdirectory of AllRounderAgent), 16 Phase 0 (dropped `allowImportingTsExtensions` in favour of the extensionless convention; noted the deferral of `TYPESAFE_AI_API_KEY` and `JEV_API_KEY`), 9.2 (the six tables the section deferred to a 6.1 that no longer exists are now enumerated), and 12.2 (the committed `tools.yaml` carries all twenty-one entries). Added `OBSERVABILITY_DATABASE_URL` to 13, required by `PostgresStoreVNext`'s constructor, which refuses to share the primary connection implicitly. Recorded the two deferred Phase 0 checks and their fallbacks in `docs/verification/phase-0.md` |
 
 ---
 
-**End of Technical Plan v0.3.0**
+**End of Technical Plan v0.3.1**
