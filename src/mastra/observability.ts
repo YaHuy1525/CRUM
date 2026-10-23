@@ -1,4 +1,5 @@
 import type { ObservabilityExporter } from '@mastra/core/observability'
+import { SpanType } from '@mastra/core/observability'
 import {
   MastraStorageExporter,
   Observability,
@@ -13,10 +14,40 @@ export const OBSERVABILITY_INSTANCE = 'crum'
 /** Service name on every emitted span. One service, one product. */
 export const OBSERVABILITY_SERVICE_NAME = 'crum'
 
+/**
+ * CRM-specific PII fields appended to the SensitiveDataFilter defaults.
+ *
+ * The library defaults cover generic secrets (password, token, apikey …).
+ * CRUM adds the fields a sales assistant touches on every turn: customer
+ * names, phone numbers, email addresses and physical addresses. Matching is
+ * case-insensitive with normalised separators, so `customerName`,
+ * `customer_name` and `customer-name` all collapse to `customername`.
+ */
+export const OBSERVABILITY_CRM_SENSITIVE_FIELDS: readonly string[] = [
+  'customerName',
+  'phone',
+  'email',
+  'address',
+]
+
+/**
+ * RequestContext keys extracted as span metadata for correlation.
+ *
+ * `resourceId` identifies the CRM user or resource that owns the session;
+ * `threadId` identifies the conversation thread. Together they let a trace
+ * viewer group every span from one user's dialogue without scanning attributes.
+ */
+export const OBSERVABILITY_REQUEST_CONTEXT_KEYS: readonly string[] = [
+  'resourceId',
+  'threadId',
+]
+
 export interface CrumObservabilityInstanceConfig {
   serviceName: string
   sampling: SamplingStrategy
   exporters: ObservabilityExporter[]
+  excludeSpanTypes: SpanType[]
+  requestContextKeys: string[]
 }
 
 /**
@@ -59,6 +90,14 @@ export function crumObservabilityInstanceConfig(env: CrumEnv): CrumObservability
     // a type error, and inventing a second store would double the pool budget
     // Task 10 just constrained.
     exporters: [new MastraStorageExporter()],
+    // MODEL_CHUNK fires per streaming token. A single assistant reply can
+    // produce hundreds of chunks; excluding them keeps trace storage proportional
+    // to conversation turns rather than token count.
+    excludeSpanTypes: [SpanType.MODEL_CHUNK],
+    // Correlation keys: resourceId ties spans to a CRM user, threadId ties them
+    // to a conversation. Both are set on the RequestContext by the agent
+    // controller before each turn.
+    requestContextKeys: [...OBSERVABILITY_REQUEST_CONTEXT_KEYS],
   }
 }
 
@@ -67,10 +106,34 @@ export function buildObservabilityConfig(env: CrumEnv): ObservabilityRegistryCon
     configs: {
       [OBSERVABILITY_INSTANCE]: crumObservabilityInstanceConfig(env),
     },
-    // Stated explicitly even though true is the documented default. This is a
-    // privacy control over CRM data, and a control that depends on a library
-    // default is one minor-version bump away from being off.
-    sensitiveDataFilter: true,
+    // Explicit field list rather than `true`. The library defaults cover generic
+    // secrets (password, token, apikey …); CRUM extends them with CRM PII so
+    // customer names, phone numbers, email addresses and physical addresses are
+    // redacted from span attributes before they reach storage. A control that
+    // depends on a library default is one minor-version bump away from being
+    // incomplete, and this is a privacy control over CRM data.
+    sensitiveDataFilter: {
+      sensitiveFields: [
+        // Library defaults — generic secrets and credentials.
+        'password',
+        'token',
+        'secret',
+        'key',
+        'apikey',
+        'auth',
+        'authorization',
+        'bearer',
+        'bearertoken',
+        'jwt',
+        'credential',
+        'clientsecret',
+        'privatekey',
+        'refresh',
+        'ssn',
+        // CRM PII — fields the sales assistant touches on every turn.
+        ...OBSERVABILITY_CRM_SENSITIVE_FIELDS,
+      ],
+    },
   }
 }
 

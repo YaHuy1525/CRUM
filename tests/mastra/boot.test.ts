@@ -184,7 +184,10 @@ describe('buildObservabilityConfig', () => {
   })
 
   it('states the sensitive data filter explicitly rather than relying on a default', () => {
-    expect(buildObservabilityConfig(envWith()).sensitiveDataFilter).toBe(true)
+    const filter = buildObservabilityConfig(envWith()).sensitiveDataFilter
+    expect(filter).toBeDefined()
+    expect(typeof filter).toBe('object')
+    expect(filter).not.toBe(true)
   })
 
   it('does not use the deprecated `default` registry key', () => {
