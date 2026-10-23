@@ -10,14 +10,21 @@
 # permission map. Both are generated from it so the two cannot drift (§4.6.1).
 version: 1
 
-# crm-write and crm:write are two distinct permission boundaries, not one
-# boundary spelled two ways. The punctuation is load-bearing.
-#   crm-write  (hyphen)  auto class: low-blast-radius write, no human receipt
-#   crm:write  (colon)   approval class: staged write behind a signed receipt
-#                        bound to scope + action hash
-# These are internal tool scopes, a different namespace from the MCP token
-# scopes, where the read scope is spelled crm:read with a colon while the
-# internal tool scope is crm-read with a hyphen. Do not normalise one spelling
+# A hyphen and a colon in a scope name mark two distinct permission
+# boundaries, not one boundary spelled two ways. The punctuation is
+# load-bearing in both scope families:
+#   crm-write   (hyphen)  auto class: low-blast-radius write, no human receipt
+#   crm:write   (colon)   approval class: staged write behind a signed receipt
+#                         bound to scope + action hash
+#   mail-write  (hyphen)  auto class: composes a draft, sends nothing
+#   mail:send   (colon)   approval class: sends behind a signed receipt
+# These are internal tool scopes, a different namespace from the MCP OAuth
+# token scopes. The read pair announces itself by differing: the token scope
+# is crm:read, the internal tool scope is crm-read. The write pair does not.
+# crm:write is spelled identically in both namespaces and means a different
+# thing in each: here it scopes three approval-class tools, while at
+# TECHNICAL_PLAN.md:4287 it is one of two scopesSupported on the MCP token.
+# It is the only such collision in this file. Do not normalise one spelling
 # to the other: doing so silently moves tools across a gate boundary.
 tools:
   # ── read-only (9) ──────────────────────────────────────────
