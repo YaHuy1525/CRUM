@@ -17,9 +17,10 @@ describe('buildCrumMemory', () => {
     const storage = buildMastraStorage(env)
     const memory = buildCrumMemory(storage)
 
-    // Access the internal config to verify messageHistory settings
-    // Memory stores config internally; we verify by checking the instance exists
-    expect(memory).toBeDefined()
+    // Access the merged config to verify messageHistory settings
+    // getMergedThreadConfig() returns the instance's configured values
+    const config = memory.getMergedThreadConfig()
+    expect(config.messageHistory?.maxTokens).toBe(24_000)
   })
 
   it('does NOT configure lastMessages (uses messageHistory instead)', () => {
@@ -27,9 +28,9 @@ describe('buildCrumMemory', () => {
     const storage = buildMastraStorage(env)
     const memory = buildCrumMemory(storage)
 
-    // The fact that buildCrumMemory succeeds without throwing proves
-    // it uses messageHistory.maxTokens, not lastMessages.
-    // 4.3.4: messageHistory.maxTokens is preferred over lastMessages
-    expect(memory).toBeDefined()
+    // Verify the config uses messageHistory, not lastMessages
+    const config = memory.getMergedThreadConfig()
+    expect(config.messageHistory).toBeDefined()
+    expect(config.lastMessages).toBeUndefined()
   })
 })

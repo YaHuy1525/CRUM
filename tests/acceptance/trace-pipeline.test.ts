@@ -1,4 +1,14 @@
 // tests/acceptance/trace-pipeline.test.ts
+//
+// Phase 1 scope clarification:
+// This test verifies that the agent is configured with the expected input and
+// output processors (ObjectBindingProcessor, EnsureFinalResponseProcessor,
+// ModerationProcessor, TokenLimiterProcessor). This is the prerequisite for
+// trace emission — processors must be wired before they can fire and produce
+// spans. Phase 2 will add integration tests that actually invoke
+// `agent.generate()` and inspect the emitted OpenTelemetry spans to confirm
+// the processor pipeline fires end-to-end during a real agent run.
+//
 import { describe, it, expect } from 'vitest'
 import { InMemoryStore } from '@mastra/core/storage'
 import { createCrumMastra } from '../../src/mastra'

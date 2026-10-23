@@ -60,9 +60,20 @@ export async function createSession(
 }
 
 /**
- * Lists sessions for a resource by proxying through queryThreads. Each session
- * created via createSession produces a thread; listing threads is the read path
- * that does NOT create a session (important for the console sidebar).
+ * Lists sessions for a resource by recovering live Session objects from stored
+ * threads.
+ *
+ * **Side effects:** For each thread returned by `queryThreads`, this calls
+ * `controller.createSession({ resourceId, threadId })`. Despite the name
+ * "createSession", this is **idempotent** — when a `threadId` is provided,
+ * AgentController.createSession resumes the existing thread rather than
+ * creating a duplicate (verified against AgentController `.d.ts`: "Existing
+ * threads are resumed; missing threads are created with this id"). The result
+ * is a set of live Session objects bound to their respective threads.
+ *
+ * This recovery pattern is necessary because threads are persisted in storage
+ * but Session objects are in-memory; after a restart, the sessions must be
+ * reconstructed from their thread state.
  *
  * Returns Session[] — the live session objects recovered from thread state.
  */
