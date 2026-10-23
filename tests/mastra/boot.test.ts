@@ -6,6 +6,7 @@ import {
   Observability,
   SamplingStrategyType,
 } from '@mastra/observability'
+import { PostgresStoreVNext } from '@mastra/pg'
 import type { MastraStorageExporterConfig } from '@mastra/observability'
 import { parseEnv } from '../../src/config/env'
 import type { CrumEnv } from '../../src/config/env'
@@ -43,10 +44,11 @@ function envWith(overrides: Record<string, string> = {}): CrumEnv {
 }
 
 /**
- * Mastra is always constructed with an injected in-memory store here. Building
- * the real PostgresStoreVNext path is Task 10's job, and exercising
- * storage.init() against a live database is what tests/integration/ and
- * scripts/db-migrate.ts's main() already do. Nothing in this file opens a socket.
+ * Most constructions here inject an in-memory store; the remote-DATABASE_URL
+ * test below builds the real PostgresStoreVNext instead. Its pools are lazy
+ * (§14.4), so nothing in this file opens a socket. Exercising storage.init()
+ * against a live database is what tests/integration/ and
+ * scripts/db-migrate.ts's main() already do.
  */
 function testStore(): InMemoryStore {
   return new InMemoryStore({ id: 'boot-test' })
@@ -67,6 +69,15 @@ describe('createCrumMastra', () => {
   it('builds its own storage when none is injected', () => {
     const mastra = createCrumMastra(envWith())
     expect(mastra.getStorage()).toBeInstanceOf(InMemoryStore)
+  })
+
+  it('builds its own Postgres store when a remote DATABASE_URL is configured', () => {
+    // Pools are lazy, so constructing against a remote-but-unconnected URL is
+    // offline-safe. This is the §16 "boots both ways" half the injected-store
+    // tests above cannot demonstrate.
+    expect(
+      createCrumMastra(envWith({ DATABASE_URL: REMOTE })).getStorage(),
+    ).toBeInstanceOf(PostgresStoreVNext)
   })
 
   it('carries the store id so logs and schema isolation agree', () => {
@@ -235,7 +246,7 @@ describe('resolveMcpRequestState', () => {
     )
   })
 
-  it('never prints a key value in an error message', () => {
+  it('accepts a valid key without throwing', () => {
     const key = 'd'.repeat(32)
     try {
       assertMcpRequestStateKey(

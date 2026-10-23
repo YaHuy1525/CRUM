@@ -106,9 +106,10 @@ describe('every step calls a script that exists', () => {
 
 describe('step order', () => {
   it('checks out before installing', () => {
-    expect(stepIndex('npm ci')).toBeGreaterThan(
-      steps.findIndex((step) => step.uses?.startsWith('actions/checkout')),
-    )
+    const checkout = steps.findIndex((step) => step.uses?.startsWith('actions/checkout'))
+    const install = stepIndex('npm ci')
+    expect(checkout).toBeGreaterThan(-1)
+    expect(install).toBeGreaterThan(checkout)
   })
 
   it('typechecks, which is also the alarm for every @ts-expect-error directive', () => {
@@ -123,7 +124,10 @@ describe('step order', () => {
   })
 
   it('migrates before running integration tests', () => {
-    expect(stepIndex('npm run db:migrate')).toBeLessThan(stepIndex('npm run test:integration'))
+    const migrate = stepIndex('npm run db:migrate')
+    const integration = stepIndex('npm run test:integration')
+    expect(migrate).toBeGreaterThan(-1)
+    expect(integration).toBeGreaterThan(migrate)
   })
 
   it('runs unit tests before touching the database', () => {

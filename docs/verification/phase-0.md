@@ -2,11 +2,11 @@
 
 Date: 2026-10-23
 Branch: `phase/0-spine-task10`
-Spec: `docs/TECHNICAL_PLAN.md` v0.3.0, §16 Phase 0
+Spec: `docs/TECHNICAL_PLAN.md` v0.3.0, now v0.3.1, §16 Phase 0
 
 ## Scope
 
-Phase 0 spans 24 commits: 17 on `main` covering Tasks 1-9, and 7 on
+Phase 0 spans 25 commits: 17 on `main` covering Tasks 1-9, and 8 on
 `phase/0-spine-task10` covering Tasks 10-14, this record included. One commit
 per landed unit of work; every commit leaves `npm run verify` green on its own.
 
@@ -29,12 +29,12 @@ each cites the task that performed it.
 | No real credential shape is committed | Task 9 Step 6 grep | no match (one-time capture, Task 9) |
 | The storage config the shipped constructor requires | `npx vitest run tests/mastra/storage.test.ts` | pass (23/23) |
 | Migrations apply, are idempotent, and reject an edited history | `npm run test:integration` | skipped — no database locally (1 passed, 6 skipped) |
-| The Mastra instance boots both ways and fails closed on the MCP key | `npx vitest run tests/mastra/boot.test.ts` | pass (29/29) |
+| The Mastra instance boots both ways and fails closed on the MCP key | `npx vitest run tests/mastra/boot.test.ts` | pass (30/30) |
 | The CI workflow calls only declared scripts | `npx vitest run tests/ci/workflow.test.ts` | pass (21/21) |
 | The schema snapshot is deterministic | Task 11 Step 9, `restored=0` | deterministic (one-time capture, Task 11) |
 
 Suite totals from this round's runs: `npm run verify` exits 0 (13 test files;
-284 passed, 6 skipped, 1 todo). `npm run test:integration` exits 0 with 1
+285 passed, 6 skipped, 1 todo). `npm run test:integration` exits 0 with 1
 passed and 6 skipped: `CRUM_INTEGRATION_DATABASE_URL` is not set on this
 machine, so the six database-backed tests skipped rather than failed. Because
 of that, the acceptance clause "migrations apply to a clean Supabase" is **not
@@ -166,7 +166,11 @@ Recorded here and written back into `docs/TECHNICAL_PLAN.md` as v0.3.1:
     credential scanner, so the fixture token `postgres:postgres@` was added to
     the scanner allowlist in both the CI Credential shapes step and the local
     pre-commit hook. The local hook lives in `.git/hooks/` and is not
-    version-controlled; only the CI step's allowlist is in this commit's scope.
+    version-controlled; only the CI step's allowlist is version-controlled
+    (Task 13, commit 61e8810). Note that the shipped workflow itself connects
+    with `postgres:changeme@`, which was already allowlisted, so the new token
+    guards only documentation fixtures: the spec's §14.2 and this repo's plan
+    text.
 
 ## Plan-text errata
 
