@@ -77,10 +77,6 @@ export const createCustomerTool = createTool({
         requestContext: { tenantId: rc.tenantId, userId: rc.userId, userRole: rc.userRole },
       })
 
-      if (gate === 'refuse') {
-        throw new Error('Policy now refuses this write')
-      }
-
       const draft = await getOrCreateDraft({
         tenantId: rc.tenantId,
         runId: 'pending',
@@ -88,7 +84,7 @@ export const createCustomerTool = createTool({
         operation: 'create',
         payload: inputData,
         riskScore: assessment.score,
-        gate: gate === 'refuse' ? 'approval' : gate,
+        gate,
         requestedBy: rc.userId,
         idempotencyKey: inputData.draftHash,
       })
