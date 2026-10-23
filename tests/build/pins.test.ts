@@ -2,7 +2,16 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-const pkg = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8'))
+interface PackageJson {
+  name: string
+  version: string
+  type: string
+  engines: { node: string }
+  dependencies: Record<string, string>
+  devDependencies: Record<string, string>
+}
+
+const pkg = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')) as PackageJson
 
 // Appendix B of TECHNICAL_PLAN.md. Exact, because a caret range on @mastra/core
 // resolves below 1.78.0 and beforeApproval disappears.
