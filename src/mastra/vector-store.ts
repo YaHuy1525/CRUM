@@ -39,8 +39,12 @@ export function indexNameFor(_tenantId: string): string {
 }
 
 /**
- * PgVector index configuration for tenant schemas. Used when creating indexes
- * during ingest (Task 3). Kept here so all vector-store config lives in one module.
+ * PgVector index configuration for tenant schemas. Passed to createIndex()
+ * during ingest to set dimension, distance metric, HNSW parameters, and
+ * metadata btree indexes. Kept here so all vector-store config lives in one module.
+ *
+ * Note: These are createIndex() parameters, not PgVector constructor parameters.
+ * The PgVector constructor only accepts connection config (connectionString, schemaName, id).
  */
 export const CRUM_VECTOR_CONFIG = {
   dimension: EMBEDDING_DIMENSIONS,

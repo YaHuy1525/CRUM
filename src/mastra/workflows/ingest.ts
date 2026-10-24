@@ -5,7 +5,7 @@ import { createWorkflow, createStep } from '@mastra/core/workflows'
 import { z } from 'zod'
 import { CRUM_CHUNK_PARAMS } from '../chunking'
 import { crumEmbeddingModel, EMBEDDING_MODEL_ID } from '../embeddings'
-import { tenantVectorStoreResolver, indexNameFor } from '../vector-store'
+import { tenantVectorStoreResolver, indexNameFor, CRUM_VECTOR_CONFIG } from '../vector-store'
 
 const INGEST_BATCH = 32
 
@@ -105,6 +105,10 @@ export const ingestStep = createStep({
         )
 
         const pgVector = await tenantVectorStoreResolver({ requestContext, mastra })
+
+        // Ensure the index exists with the correct dimension, metric, and HNSW config.
+        // createIndex is idempotent — it skips creation if the index already exists.
+        await pgVector.createIndex({ indexName, ...CRUM_VECTOR_CONFIG })
 
         await pgVector.upsert({
           indexName,

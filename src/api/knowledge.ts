@@ -162,8 +162,8 @@ export function createKnowledgeRouter(): Hono {
     // Re-ingest: reset status to processing. The actual workflow trigger
     // requires the Mastra instance reference at server startup.
     await db.query(
-      `UPDATE knowledge_documents SET status = 'processing', updated_at = now() WHERE id = $1`,
-      [documentId],
+      `UPDATE knowledge_documents SET status = 'processing', updated_at = now() WHERE id = $1 AND tenant_id = $2`,
+      [documentId, tenantId],
     )
 
     return c.json({ documentId, status: 'reingesting' }, 202)

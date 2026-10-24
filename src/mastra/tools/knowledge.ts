@@ -1,7 +1,6 @@
 import { createVectorQueryTool } from '@mastra/rag'
-import { ModelRouterEmbeddingModel } from '@mastra/core/llm'
+import { crumEmbeddingModel } from '../embeddings'
 import { tenantVectorStoreResolver } from '../vector-store'
-import { EMBEDDING_MODEL_ID } from '../embeddings'
 
 /**
  * Knowledge retrieval via vector search with reranking. §6.3.3.
@@ -22,7 +21,7 @@ export const knowledgeRetrieveTool = createVectorQueryTool({
     'customer, deal or task records, which have their own tools.',
   vectorStore: tenantVectorStoreResolver,
   indexName: 'crum_knowledge',
-  model: new ModelRouterEmbeddingModel(EMBEDDING_MODEL_ID),
+  model: crumEmbeddingModel(),
   enableFilter: true,
   includeSources: true,
   databaseConfig: {
@@ -33,7 +32,7 @@ export const knowledgeRetrieveTool = createVectorQueryTool({
     },
   },
   reranker: {
-    model: new ModelRouterEmbeddingModel(EMBEDDING_MODEL_ID),
+    model: crumEmbeddingModel(),
     options: {
       weights: { semantic: 0.5, vector: 0.3, position: 0.2 },
       topK: 5,
