@@ -4,6 +4,7 @@ import { createFeedbackRouter } from './feedback'
 import { createUsageRouter } from './usage'
 import { createDigestRouter } from './digest'
 import { createSignalsRouter } from './signals'
+import { createHealthRouter } from './health'
 
 /**
  * Aggregate API router. Mounts all sub-routers under their respective
@@ -17,6 +18,7 @@ export function createApiRouter(): Hono {
   app.route('/', createUsageRouter())
   app.route('/', createDigestRouter())
   app.route('/', createSignalsRouter())
+  app.route('/', createHealthRouter())
 
   return app
 }
