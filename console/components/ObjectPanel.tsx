@@ -19,14 +19,14 @@ interface ObjectPanelProps {
 export function ObjectPanel({ customer }: ObjectPanelProps) {
   if (!customer) {
     return (
-      <div className="object-panel empty">
+      <div className="object-panel empty" aria-label="Object details">
         <p>No customer selected</p>
       </div>
     )
   }
 
   return (
-    <div className="object-panel">
+    <div className="object-panel" aria-label="Object details">
       <h3>{customer.name}</h3>
       {customer.city && <p className="city">{customer.city}</p>}
       {customer.tags && customer.tags.length > 0 && (

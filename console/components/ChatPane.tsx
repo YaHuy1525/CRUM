@@ -40,7 +40,7 @@ export function ChatPane() {
 
   return (
     <>
-      <div className="messages">
+      <div className="messages" role="log" aria-live="polite" aria-label="Conversation messages">
         {messages.length === 0 && (
           <div className="empty-state">Start a conversation</div>
         )}
@@ -57,8 +57,10 @@ export function ChatPane() {
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleSend()}
           placeholder="Type a message..."
+          aria-label="Message input"
+          className="focus-ring"
         />
-        <button onClick={handleSend}>Send</button>
+        <button onClick={handleSend} aria-label="Send message" className="focus-ring">Send</button>
       </div>
     </>
   )
