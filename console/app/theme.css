@@ -1,0 +1,58 @@
+/* console/app/theme.css — TECHNICAL_PLAN.md §11.1 */
+:root {
+  /* Palette */
+  --crum-white: #ffffff;
+  --crum-black-900: #1a1a1a;
+  --crum-black-950: #0d0d0d;
+  --crum-green-500: #22c55e;
+  --crum-green-600: #16a34a;
+
+  /* Semantic tokens — dark mode default */
+  --bg-base: var(--crum-black-950);
+  --bg-card: var(--crum-black-900);
+  --bg-raised: #242424;
+  --text-primary: var(--crum-white);
+  --text-muted: rgba(255, 255, 255, 0.48);
+  --text-secondary: rgba(255, 255, 255, 0.72);
+  --accent: var(--crum-green-500);
+  --accent-fg: var(--crum-black-950);
+  --border: rgba(255, 255, 255, 0.12);
+  --border-strong: rgba(255, 255, 255, 0.24);
+  --state-danger: #ef4444;
+  --state-warning: #f59e0b;
+  --state-success: var(--crum-green-500);
+
+  /* Typography — §11.1.4 */
+  --text-base: 14px;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  --line-height-prose: 1.5;
+  --line-height-table: 1.35;
+
+  /* Spacing */
+  --radius-md: 6px;
+  --radius-lg: 10px;
+}
+
+/* Light mode — §11.1.2: green-500 fails AA on white (3.0:1), use green-600 */
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg-base: #ffffff;
+    --bg-card: #f8f8f8;
+    --bg-raised: #f0f0f0;
+    --text-primary: var(--crum-black-950);
+    --text-muted: rgba(0, 0, 0, 0.48);
+    --text-secondary: rgba(0, 0, 0, 0.72);
+    --accent: var(--crum-green-600);
+    --accent-fg: var(--crum-white);
+    --border: rgba(0, 0, 0, 0.12);
+    --border-strong: rgba(0, 0, 0, 0.24);
+  }
+}
+
+/* Focus ring — §11.1.3: 2px accent offset 2px, always visible */
+.focus-ring:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
