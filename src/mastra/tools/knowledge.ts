@@ -1,31 +1,42 @@
-import { createTool } from '@mastra/core/tools'
-import { z } from 'zod'
-import { TenantRequestContextSchema } from '../tenant-context'
-import { queryKnowledgeDocuments } from '../../db/queries'
+import { createVectorQueryTool } from '@mastra/rag'
+import { ModelRouterEmbeddingModel } from '@mastra/core/llm'
+import { tenantVectorStoreResolver } from '../vector-store'
+import { EMBEDDING_MODEL_ID } from '../embeddings'
 
-const KnowledgeDocumentSchema = z.object({
-  id: z.string(),
-  tenant_id: z.string(),
-  title: z.string(),
-  content: z.string().optional(),
-  created_at: z.string(),
-  updated_at: z.string(),
-})
-
-export const knowledgeRetrieveTool = createTool({
+/**
+ * Knowledge retrieval via vector search with reranking. §6.3.3.
+ *
+ * Corrections against v0.2:
+ * - createVectorQueryTool comes from @mastra/rag, not @mastra/core/tools.
+ * - reranker.options.weights must sum to 1. CRUM shifts toward semantic because
+ *   contract language is paraphrased more often than quoted.
+ * - The reranker needs metadata.text. Ingestion writes it for that reason.
+ * - PgVector returns an empty document field. Chunk text is read from
+ *   sources[i].metadata.text.
+ */
+export const knowledgeRetrieveTool = createVectorQueryTool({
   id: 'knowledge.retrieve',
-  title: 'Retrieve Knowledge',
-  description: 'Search knowledge documents by title or content. Returns matching documents scoped to the current tenant.',
-  requestContextSchema: TenantRequestContextSchema,
-  inputSchema: z.object({
-    query: z.string().min(1),
-    limit: z.number().int().positive().max(100).optional(),
-  }),
-  outputSchema: z.array(KnowledgeDocumentSchema),
-  execute: async (input, context) => {
-    return context.observe.span('knowledge.retrieve', async () => {
-      const rc = context.requestContext.all
-      return queryKnowledgeDocuments(rc, input.query, input.limit ?? 20)
-    })
+  description:
+    'Search uploaded contracts, proposals, playbooks and call transcripts for the current tenant. ' +
+    'Returns chunk text with sourceId and span for citation. Use it for prose questions; never for ' +
+    'customer, deal or task records, which have their own tools.',
+  vectorStore: tenantVectorStoreResolver,
+  indexName: 'crum_knowledge',
+  model: new ModelRouterEmbeddingModel(EMBEDDING_MODEL_ID),
+  enableFilter: true,
+  includeSources: true,
+  databaseConfig: {
+    pgvector: {
+      minScore: 0.35,
+      ef: 128,
+      probes: 12,
+    },
+  },
+  reranker: {
+    model: new ModelRouterEmbeddingModel(EMBEDDING_MODEL_ID),
+    options: {
+      weights: { semantic: 0.5, vector: 0.3, position: 0.2 },
+      topK: 5,
+    },
   },
 })

@@ -1,3 +1,5 @@
+import { PGVECTOR_PROMPT } from '@mastra/pg'
+
 // §4.4 — static, cacheable, stable part first. Nothing request-specific.
 export const CRUM_INSTRUCTIONS = `
 <identity>
@@ -35,4 +37,4 @@ Concise prose. Use a table only when comparing three or more records. When
 listing records, give name plus the one field that matters for the question.
 Never dump raw JSON at the user.
 </output_format>
-`.trim()
+`.trim() + '\n\n' + PGVECTOR_PROMPT
