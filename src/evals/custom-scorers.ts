@@ -1,5 +1,4 @@
 import { createScorer } from '@mastra/core/evals'
-import { buildJudge } from './judge'
 
 const REFUSAL_PATTERNS = [
   /i don'?t have/i,

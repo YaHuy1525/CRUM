@@ -6,6 +6,17 @@ describe('GET /api/usage', () => {
     vi.resetModules()
   })
 
+  it('requires x-tenant-id header', async () => {
+    const { createUsageRouter } = await import('../../src/api/usage')
+    const app = createUsageRouter()
+
+    const res = await app.request('/api/usage?from=2026-10-17&to=2026-10-24')
+
+    expect(res.status).toBe(400)
+    const data = await res.json()
+    expect(data.error).toMatch(/x-tenant-id/)
+  })
+
   it('returns usage metrics shape', async () => {
     const queryMetrics = vi.fn().mockResolvedValue({
       tokensIn: 125000,
@@ -25,7 +36,9 @@ describe('GET /api/usage', () => {
     const { createUsageRouter } = await import('../../src/api/usage')
     const app = createUsageRouter()
 
-    const res = await app.request('/api/usage?from=2026-10-17&to=2026-10-24')
+    const res = await app.request('/api/usage?from=2026-10-17&to=2026-10-24', {
+      headers: { 'x-tenant-id': 'tenant_1' },
+    })
 
     expect(res.status).toBe(200)
     const data = await res.json()
@@ -46,7 +59,9 @@ describe('GET /api/usage', () => {
     const { createUsageRouter } = await import('../../src/api/usage')
     const app = createUsageRouter()
 
-    const res = await app.request('/api/usage?from=2026-10-17&to=2026-10-24')
+    const res = await app.request('/api/usage?from=2026-10-17&to=2026-10-24', {
+      headers: { 'x-tenant-id': 'tenant_1' },
+    })
 
     expect(res.status).toBe(503)
     const data = await res.json()
@@ -64,7 +79,9 @@ describe('GET /api/usage', () => {
     const { createUsageRouter } = await import('../../src/api/usage')
     const app = createUsageRouter()
 
-    const res = await app.request('/api/usage?from=2026-10-17&to=2026-10-24')
+    const res = await app.request('/api/usage?from=2026-10-17&to=2026-10-24', {
+      headers: { 'x-tenant-id': 'tenant_1' },
+    })
 
     expect(res.status).toBe(500)
     const data = await res.json()

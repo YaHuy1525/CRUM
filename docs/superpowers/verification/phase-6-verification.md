@@ -88,12 +88,11 @@ scorerEntries.push(scorers.trajectoryAccuracy)
 **Evidence:**
 ```bash
 $ npx vitest run tests/api/feedback.test.ts --reporter=verbose
-✓ tests/api/feedback.test.ts (5 tests)
+✓ tests/api/feedback.test.ts (4 tests)
   ✓ POST /api/feedback > requires x-tenant-id header
-  ✓ POST /api/feedback > validates payload schema
-  ✓ POST /api/feedback > calls addFeedback with correct args
-  ✓ POST /api/feedback > returns 200 on success
-  ✓ POST /api/feedback > returns 500 on addFeedback error
+  ✓ POST /api/feedback > calls addFeedback with correct shape
+  ✓ POST /api/feedback > rejects missing traceId
+  ✓ POST /api/feedback > returns 500 when addFeedback throws
 ```
 
 ### 4. Usage dashboard
@@ -107,12 +106,11 @@ $ npx vitest run tests/api/feedback.test.ts --reporter=verbose
 **Evidence:**
 ```bash
 $ npx vitest run tests/api/usage.test.ts --reporter=verbose
-✓ tests/api/usage.test.ts (5 tests)
+✓ tests/api/usage.test.ts (4 tests)
   ✓ GET /api/usage > requires x-tenant-id header
-  ✓ GET /api/usage > defaults to 7-day window
-  ✓ GET /api/usage > accepts custom date range
-  ✓ GET /api/usage > returns metrics structure
-  ✓ GET /api/usage > returns 503 when storage unavailable
+  ✓ GET /api/usage > returns usage metrics shape
+  ✓ GET /api/usage > returns 503 when metrics are not available
+  ✓ GET /api/usage > returns 500 when queryMetrics throws
 ```
 
 ### 5. Digest schedule

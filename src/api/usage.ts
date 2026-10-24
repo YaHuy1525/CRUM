@@ -12,9 +12,13 @@ export function createUsageRouter(): Hono {
   const app = new Hono().basePath('/api/usage')
 
   app.get('/', async (c) => {
+    const tenantId = c.req.header('x-tenant-id')
+    if (!tenantId) {
+      return c.json({ error: 'x-tenant-id header required' }, 400)
+    }
+
     const from = c.req.query('from')
     const to = c.req.query('to')
-    const tenantSlug = c.req.query('tenantSlug')
 
     const env = parseEnv()
     const mastra = createCrumMastra(env)
@@ -25,7 +29,7 @@ export function createUsageRouter(): Hono {
       const metrics = await mastra.storage.queryMetrics?.({
         from: from ? new Date(from) : new Date(Date.now() - 7 * 86400000),
         to: to ? new Date(to) : new Date(),
-        tenantSlug,
+        tenantSlug: tenantId,
       })
 
       if (!metrics) {

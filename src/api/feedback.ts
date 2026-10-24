@@ -22,6 +22,11 @@ export function createFeedbackRouter(): Hono {
   const app = new Hono().basePath('/api/feedback')
 
   app.post('/', async (c) => {
+    const tenantId = c.req.header('x-tenant-id')
+    if (!tenantId) {
+      return c.json({ error: 'x-tenant-id header required' }, 400)
+    }
+
     const body = await c.req.json()
     const parsed = FeedbackSchema.safeParse(body)
     if (!parsed.success) {

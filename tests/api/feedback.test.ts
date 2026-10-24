@@ -6,6 +6,21 @@ describe('POST /api/feedback', () => {
     vi.resetModules()
   })
 
+  it('requires x-tenant-id header', async () => {
+    const { createFeedbackRouter } = await import('../../src/api/feedback')
+    const app = createFeedbackRouter()
+
+    const res = await app.request('/api/feedback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ traceId: 'trace_123', vote: 'up' }),
+    })
+
+    expect(res.status).toBe(400)
+    const data = await res.json()
+    expect(data.error).toMatch(/x-tenant-id/)
+  })
+
   it('calls addFeedback with correct shape', async () => {
     const addFeedback = vi.fn().mockResolvedValue({ id: 'fb_1' })
     vi.doMock('../../src/mastra/index', () => ({
@@ -19,7 +34,7 @@ describe('POST /api/feedback', () => {
 
     const res = await app.request('/api/feedback', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-tenant-id': 'tenant_1' },
       body: JSON.stringify({
         traceId: 'trace_123',
         spanId: 'span_456',
@@ -47,7 +62,7 @@ describe('POST /api/feedback', () => {
 
     const res = await app.request('/api/feedback', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-tenant-id': 'tenant_1' },
       body: JSON.stringify({ vote: 'up' }),
     })
 
@@ -67,7 +82,7 @@ describe('POST /api/feedback', () => {
 
     const res = await app.request('/api/feedback', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-tenant-id': 'tenant_1' },
       body: JSON.stringify({
         traceId: 'trace_err',
         vote: 'up',
