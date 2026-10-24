@@ -18,6 +18,7 @@ import { emailDrafterAgent } from './agents/email-drafter'
 import { digestAgent } from './agents/digest'
 import { createCrumMcpServer } from './mcp-server'
 import { buildScorers } from '../evals/scorers'
+import { buildScheduleHooks } from './schedule-hooks'
 
 export interface CrumMastraOptions {
   /**
@@ -83,6 +84,7 @@ export function createCrumMastra(env: CrumEnv, options: CrumMastraOptions = {}):
       'crum-injection': injectionClassifier,
     },
     scorers: buildScorers(),
+    schedules: buildScheduleHooks(),
     mcpServers: {
       'crum-crm': crumMcpServer,
     },
