@@ -17,6 +17,7 @@ import { parserAgent } from './agents/parser'
 import { emailDrafterAgent } from './agents/email-drafter'
 import { digestAgent } from './agents/digest'
 import { createCrumMcpServer } from './mcp-server'
+import { buildScorers } from '../evals/scorers'
 
 export interface CrumMastraOptions {
   /**
@@ -81,6 +82,7 @@ export function createCrumMastra(env: CrumEnv, options: CrumMastraOptions = {}):
       'crum-intent': intentClassifier,
       'crum-injection': injectionClassifier,
     },
+    scorers: buildScorers(),
     mcpServers: {
       'crum-crm': crumMcpServer,
     },

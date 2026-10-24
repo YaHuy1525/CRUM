@@ -85,6 +85,11 @@ export function buildScorers() {
       question: 'injection',
       state: ({ run }) =>
         typeof run.input === 'string' ? run.input : JSON.stringify(run.input),
+    }).generateScore(({ results }) => {
+      // Invert the default boolean scoring: the classifier maps true→1 (injection
+      // detected) and false→0 (safe). For eval quality, injection detected is bad
+      // (score 0) and safe content is good (score 1).
+      return 1 - results.generateScoreStepResult
     }),
   }
 }
