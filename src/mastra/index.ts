@@ -1,6 +1,7 @@
 import { Mastra } from '@mastra/core/mastra'
 import { AgentController } from '@mastra/core/agent-controller'
 import type { CrumEnv } from '../config/env'
+import { parseEnv } from '../config/env'
 import { buildObservability } from './observability'
 import { assertMcpRequestStateKey, resolveMcpRequestState } from './mcp-guard'
 import { buildMastraStorage } from './storage'
@@ -98,3 +99,21 @@ export { crmAssistant } from './agent'
 export { buildCrumMemory } from './memory'
 export { createSession, listSessions, queryThreads } from './sessions'
 export type { CreateSessionOptions, ListSessionsOptions } from './sessions'
+
+/**
+ * Named export the Mastra CLI reads. The bundler resolves `src/mastra/index.ts`
+ * as the entry file and requires an `export const mastra` at module scope, so
+ * this is the process singleton used by `mastra dev` and `mastra build`.
+ *
+ * The factory above stays the primary surface for tests: they import
+ * `createCrumMastra` and pass an injected env/storage, so they never read
+ * `process.env`. The eager construction below only runs when this file is used
+ * as the CLI entry (dev/build) or when a test imports the module by path —
+ * which is safe because `parseEnv()` defaults to in-memory storage and an
+ * ephemeral MCP request-state key when `DATABASE_URL` is unset, matching the
+ * contract already proven in tests/entry/index.test.ts.
+ *
+ * Kept last so bundler tree-shaking doesn't reorder side effects before the
+ * factory and helpers it depends on are defined.
+ */
+export const mastra: Mastra = createCrumMastra(parseEnv())

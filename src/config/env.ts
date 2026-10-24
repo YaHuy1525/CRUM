@@ -85,7 +85,14 @@ export const EnvSchema = z.object({
   // Mastra runtime (§13.3)
   MASTRA_OBSERVABILITY: booleanish.prefault('false'),
   MASTRA_TRACE_PROBABILITY: z.coerce.number().min(0).max(1).default(1),
-  MASTRA_PG_SSL: z.enum(['true', 'false']).optional(),
+  // "Unset means auto" (§9.1, .env.example). Dotenv turns `MASTRA_PG_SSL=` into
+  // the empty string, not an absent key, so `.optional()` alone would reject it
+  // with `invalid_value`. Accept `""` explicitly and collapse it to `undefined`
+  // so downstream callers only see `'true' | 'false' | undefined`.
+  MASTRA_PG_SSL: z
+    .enum(['true', 'false', ''])
+    .transform((v) => (v === '' ? undefined : v))
+    .optional(),
   MASTRA_PG_POOL_MAX: z.coerce
     .number()
     .int()
