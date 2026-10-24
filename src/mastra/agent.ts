@@ -67,6 +67,13 @@ export const crmAssistant = new Agent({
   // in WriteClaimGuardProcessor (Phase 3) depends on it. §4.3.
   maxProcessorRetries: 2,
 
+  // §4.7.3 — Goal defaults. Judge model evaluates completion each loop iteration.
+  // Hard maxRuns budget; exhaustion pauses with a persisted reason.
+  goal: {
+    judgeModelId: 'anthropic/claude-sonnet-5-5',
+    maxRuns: 12,
+  },
+
   // Processors are typed as Processor[] in processors.ts; the Agent constructor
   // expects the narrower InputProcessorOrWorkflow / OutputProcessorOrWorkflow
   // unions. The runtime dispatch is correct (the processor runner checks method
