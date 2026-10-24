@@ -123,7 +123,7 @@ describe('createCrumMastra', () => {
   it('registers Phase 5 agents (parser, email-drafter)', () => {
     const mastra = createCrumMastra(envWith())
     const agentKeys = Object.keys(mastra.listAgents()).sort()
-    expect(agentKeys).toEqual(['crm-assistant', 'email-drafter', 'parser'])
+    expect(agentKeys).toEqual(['crm-assistant', 'digest', 'email-drafter', 'parser'])
   })
 
   it('registers Phase 5 classifiers (intent, injection)', () => {
