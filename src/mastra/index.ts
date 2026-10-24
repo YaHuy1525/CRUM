@@ -5,7 +5,7 @@ import { buildObservability } from './observability'
 import { assertMcpRequestStateKey } from './mcp-guard'
 import { buildMastraStorage } from './storage'
 import type { CrumStorage } from './storage'
-import { crmAssistant } from './agent'
+import { crmAssistant, CRUM_SUBAGENTS } from './agent'
 import { buildCrumMemory } from './memory'
 import { ingestWorkflow } from './workflows/ingest'
 
@@ -46,6 +46,7 @@ export function createCrumMastra(env: CrumEnv, options: CrumMastraOptions = {}):
     id: 'crm-assistant',
     modes: [{ id: 'default', name: 'Default' }],
     agent: crmAssistant,
+    subagents: CRUM_SUBAGENTS,
   })
 
   return new Mastra({

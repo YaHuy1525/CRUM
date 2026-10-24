@@ -1,10 +1,12 @@
 import { Agent } from '@mastra/core/agent'
+import type { AgentControllerSubagent } from '@mastra/core/agent-controller'
 import type {
   InputProcessorOrWorkflow,
   OutputProcessorOrWorkflow,
 } from '@mastra/core/processors'
 import { CRUM_INSTRUCTIONS } from './instructions'
 import { crumInputProcessors, crumOutputProcessors } from './processors'
+import { emailDrafterAgent } from './agents/email-drafter'
 import { listCustomersTool, getCustomerTool } from './tools/customers'
 import { findContactsTool } from './tools/contacts'
 import { listFollowupsTool } from './tools/followups'
@@ -86,3 +88,32 @@ export const crmAssistant = new Agent({
   // Phase 1: no memory. Phase 2 wires coreMemory via Mastra instance.
   // memory: buildCrumMemory(storage),
 })
+
+// §6 — Controller subagents. Pure definitions registered on the
+// AgentController in index.ts. Each subagent gets its own model and step
+// ceiling; the harness enforces the ceiling rather than trusting the prompt.
+export const CRUM_SUBAGENTS: AgentControllerSubagent[] = [
+  {
+    id: 'parser',
+    name: 'Record Parser',
+    description:
+      'Turns pasted business cards, email signatures or meeting notes into structured CRM fields.',
+    instructions:
+      'Extract CRM record fields from untrusted pasted text. Return only fields ' +
+      'literally present. Never infer a city from an area code or an email domain. ' +
+      'Omit anything not stated.',
+    tools: {},
+    defaultModelId: 'google/gemini-3.8-flash',
+    maxSteps: 3,
+  },
+  {
+    id: 'email-drafter',
+    name: 'Email Drafter',
+    description:
+      'Drafts an outbound email body from a customer record and a stated intent. Never sends.',
+    instructions: emailDrafterAgent.getInstructions() as string,
+    tools: {},
+    defaultModelId: 'anthropic/claude-sonnet-5-5',
+    maxSteps: 1,
+  },
+]
