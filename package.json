@@ -22,6 +22,8 @@
     "coverage": "vitest run --coverage",
     "db:export-schema": "tsx scripts/db-export-schema.ts",
     "db:migrate": "tsx scripts/db-migrate.ts",
+    "eval:seed": "tsx scripts/eval-seed.ts",
+    "eval:run": "vitest run tests/evals/golden-gate.test.ts --reporter=verbose",
     "verify": "npm run typecheck && npm run lint && npm run test"
   },
   "dependencies": {
