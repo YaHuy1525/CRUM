@@ -12,8 +12,10 @@ import { ingestWorkflow } from './workflows/ingest'
 import { intentClassifier } from './classifiers/intent'
 import { injectionClassifier } from './classifiers/injection'
 import { intentTriageFlow } from './workflows/intent-triage'
+import { digestWorkflow } from './workflows/digest'
 import { parserAgent } from './agents/parser'
 import { emailDrafterAgent } from './agents/email-drafter'
+import { digestAgent } from './agents/digest'
 import { createCrumMcpServer } from './mcp-server'
 
 export interface CrumMastraOptions {
@@ -68,10 +70,12 @@ export function createCrumMastra(env: CrumEnv, options: CrumMastraOptions = {}):
       'crm-assistant': crmAssistant,
       'parser': parserAgent,
       'email-drafter': emailDrafterAgent,
+      'digest': digestAgent,
     },
     workflows: {
       'knowledge-ingest': ingestWorkflow,
       'crum-intent-triage': intentTriageFlow,
+      'crum-digest': digestWorkflow,
     },
     classifiers: {
       'crum-intent': intentClassifier,

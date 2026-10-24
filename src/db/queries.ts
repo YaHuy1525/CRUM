@@ -293,3 +293,44 @@ export async function queryMyFollowups(
   const result = await getDbClient().query(sql, params)
   return result.rows
 }
+
+/**
+ * Returns all tasks for a tenant (used by digest workflow).
+ * The digest runs as a background job with no user session, so it queries
+ * by tenant_id only — no row-level visibility predicate.
+ */
+export async function queryAllTasks(tenantId: string): Promise<Task[]> {
+  const result = await getDbClient().query(
+    `SELECT * FROM tasks WHERE tenant_id = $1 ORDER BY created_at DESC`,
+    [tenantId],
+  )
+  return result.rows
+}
+
+/**
+ * Returns schedules for a tenant on a given date (used by digest workflow).
+ */
+export async function querySchedulesForDate(
+  tenantId: string,
+  date: string,
+): Promise<Schedule[]> {
+  const result = await getDbClient().query(
+    `SELECT * FROM schedules WHERE tenant_id = $1 AND scheduled_at::date = $2::date ORDER BY scheduled_at ASC`,
+    [tenantId, date],
+  )
+  return result.rows
+}
+
+/**
+ * Returns followups not updated within `staleDays` days (used by digest workflow).
+ */
+export async function queryStaleFollowups(
+  tenantId: string,
+  staleDays = 7,
+): Promise<Followup[]> {
+  const result = await getDbClient().query(
+    `SELECT * FROM followups WHERE tenant_id = $1 AND updated_at < NOW() - INTERVAL '1 day' * $2 ORDER BY updated_at ASC`,
+    [tenantId, staleDays],
+  )
+  return result.rows
+}
