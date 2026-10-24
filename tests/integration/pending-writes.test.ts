@@ -9,10 +9,18 @@ import {
 } from '../../src/db/pending-writes'
 import { computeActionHash } from '../../src/governance/receipt'
 
+/**
+ * getDbClient() reads DATABASE_URL lazily, so pointing it at the integration
+ * instance here is enough — and without one the suite skips rather than fails,
+ * the same contract the other tests/integration files keep (§14.2).
+ */
+const url = process.env.CRUM_INTEGRATION_DATABASE_URL ?? ''
+if (url) process.env.DATABASE_URL = url
+
 const TENANT_A = '550e8400-e29b-41d4-a716-446655440000'
 const USER_A = '660e8400-e29b-41d4-a716-446655440001'
 
-describe('getOrCreateDraft', () => {
+describe.skipIf(!url)('getOrCreateDraft', () => {
   beforeAll(async () => {
     const db = getDbClient()
     await db.query('DELETE FROM audit_receipts WHERE tenant_id = $1', [TENANT_A])

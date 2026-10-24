@@ -22,6 +22,11 @@ describe('TenantRequestContextSchema', () => {
     const adminContext = { ...validContext, userRole: 'admin' as const }
     const result = TenantRequestContextSchema.safeParse(adminContext)
     expect(result.success).toBe(true)
+    if (!result.success) {
+      throw new Error(
+        `expected admin context to parse, got issues: ${JSON.stringify(result.error.issues)}`,
+      )
+    }
     expect(result.data.userRole).toBe('admin')
   })
 

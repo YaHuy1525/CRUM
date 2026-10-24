@@ -22,7 +22,7 @@ describe('POST /api/feedback', () => {
     })
 
     expect(res.status).toBe(400)
-    const data = await res.json()
+    const data = (await res.json()) as { error: string }
     expect(data.error).toMatch(/x-tenant-id/)
   })
 

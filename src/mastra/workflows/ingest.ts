@@ -94,10 +94,13 @@ export const ingestStep = createStep({
         const doc = MDocument.fromText(inputData.text, {
           contentType: inputData.contentType,
         })
-        const chunks = await doc.chunk({
-          ...CRUM_CHUNK_PARAMS,
-          observabilityContext,
-        })
+        // CRUM_CHUNK_PARAMS is `as const`, so its separators tuple is readonly;
+        // RecursiveChunkOptions wants a mutable string[]. Copy instead of widening
+        // the shared constant, which other call sites rely on.
+        const chunks = await doc.chunk(
+          { ...CRUM_CHUNK_PARAMS, separators: [...CRUM_CHUNK_PARAMS.separators] },
+          { observabilityContext },
+        )
 
         const embeddings = await embedInBatches(
           chunks.map((c: { text: string }) => c.text),
@@ -149,7 +152,7 @@ async function embedInBatches(
     const batch = texts.slice(i, i + INGEST_BATCH)
     const { embeddings } = await embedMany({
       model,
-      value: batch,
+      values: batch,
     })
     allEmbeddings.push(...embeddings)
   }

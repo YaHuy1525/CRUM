@@ -11,10 +11,16 @@ import { Mastra } from '@mastra/core/mastra'
  * builds an InMemoryStore and an ephemeral MCP request-state key.
  */
 describe('src/index.ts entry point', () => {
-  it('exports a Mastra instance as the default export', async () => {
-    const mod = await import('../../src/index')
-    expect(mod.default).toBeInstanceOf(Mastra)
-  })
+  it(
+    'exports a Mastra instance as the default export',
+    async () => {
+      const mod = await import('../../src/index')
+      expect(mod.default).toBeInstanceOf(Mastra)
+    },
+    // The first import() pays for the whole Mastra graph; under a full-suite
+    // run with parallel workers that costs more than the 5s default.
+    30_000,
+  )
 
   it('registers the crm-assistant agent', async () => {
     const mod = await import('../../src/index')

@@ -31,7 +31,9 @@ export const createCustomerTool = createTool({
   outputSchema: ApprovalOutputSchema,
   outputValidation: 'warn',
 
-  requireApproval: (input, { requestContext }) => {
+  // requireApproval's ctx argument is itself optional in @mastra/core 1.79.0, hence `= {}`:
+  // a call that arrives without ctx keeps requestContext undefined instead of inventing a tenant.
+  requireApproval: (input, { requestContext } = {}) => {
     const policy = loadPolicy()
     const rc = requestContext as Record<string, unknown> | undefined
     const assessment = scoreRisk(input, policy.risk, 'crm.create_customer')
@@ -119,7 +121,7 @@ export const updateCustomerTool = createTool({
   outputSchema: ApprovalOutputSchema,
   outputValidation: 'warn',
 
-  requireApproval: (input, { requestContext }) => {
+  requireApproval: (input, { requestContext } = {}) => {
     const policy = loadPolicy()
     const rc = requestContext as Record<string, unknown> | undefined
     const assessment = scoreRisk(input, policy.risk, 'crm.update_customer')

@@ -1,6 +1,7 @@
 // src/api/feedback.ts
 import { Hono } from 'hono'
 import { z } from 'zod'
+import type { FeedbackInput } from '@mastra/core/observability'
 import { createCrumMastra } from '../mastra/index'
 import { parseEnv } from '../config/env'
 
@@ -38,7 +39,7 @@ export function createFeedbackRouter(): Hono {
     const env = parseEnv()
     const mastra = createCrumMastra(env)
 
-    const feedback: Record<string, unknown> = {
+    const feedback: FeedbackInput = {
       feedbackType: 'thumbs',
       value: vote,
       feedbackSource: 'user',
@@ -56,7 +57,7 @@ export function createFeedbackRouter(): Hono {
     }
 
     try {
-      await mastra.observability.addFeedback({
+      await mastra.observability.addFeedback?.({
         traceId,
         spanId,
         feedback,

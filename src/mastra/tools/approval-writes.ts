@@ -58,7 +58,9 @@ export const createContactTool = createTool({
   }),
   outputSchema: ApprovalOutputSchema,
   outputValidation: 'warn',
-  requireApproval: (input, { requestContext }) => {
+  // requireApproval's ctx argument is itself optional in @mastra/core 1.79.0, hence `= {}`:
+  // a call that arrives without ctx keeps requestContext undefined instead of inventing a tenant.
+  requireApproval: (input, { requestContext } = {}) => {
     const policy = loadPolicy()
     const rc = requestContext as Record<string, unknown> | undefined
     return policy.gateFor('crm.create_contact', scoreRisk(input, policy.risk, 'crm.create_contact'), { requestContext: rc }) === 'approval'
@@ -99,7 +101,7 @@ export const createScheduleTool = createTool({
   }),
   outputSchema: ApprovalOutputSchema,
   outputValidation: 'warn',
-  requireApproval: (input, { requestContext }) => {
+  requireApproval: (input, { requestContext } = {}) => {
     const policy = loadPolicy()
     const rc = requestContext as Record<string, unknown> | undefined
     return policy.gateFor('crm.create_schedule', scoreRisk(input, policy.risk, 'crm.create_schedule'), { requestContext: rc }) === 'approval'
@@ -137,7 +139,7 @@ export const transferOwnerTool = createTool({
   }),
   outputSchema: ApprovalOutputSchema,
   outputValidation: 'warn',
-  requireApproval: (input, { requestContext }) => {
+  requireApproval: (input, { requestContext } = {}) => {
     const policy = loadPolicy()
     const rc = requestContext as Record<string, unknown> | undefined
     return policy.gateFor('crm.transfer_owner', scoreRisk(input, policy.risk, 'crm.transfer_owner'), { requestContext: rc }) === 'approval'
@@ -175,7 +177,7 @@ export const sendMailTool = createTool({
   }),
   outputSchema: ApprovalOutputSchema,
   outputValidation: 'warn',
-  requireApproval: (input, { requestContext }) => {
+  requireApproval: (input, { requestContext } = {}) => {
     const policy = loadPolicy()
     const rc = requestContext as Record<string, unknown> | undefined
     return policy.gateFor('mail.send', scoreRisk(input, policy.risk, 'mail.send'), { requestContext: rc }) === 'approval'

@@ -90,14 +90,17 @@ describe('ObjectBindingProcessor', () => {
       '770e8400-e29b-41d4-a716-446655440002',
     )
     expect(result).toBeDefined()
-    expect(result!.systemMessages).toBeDefined()
-    expect(result!.systemMessages!.length).toBe(1)
-    const sys = result!.systemMessages![0]
-    expect(sys.role).toBe('system')
+    const systemMessages = result?.systemMessages
+    expect(systemMessages).toBeDefined()
+    expect(systemMessages?.length).toBe(1)
+    const sys = systemMessages?.[0]
+    expect(sys).toBeDefined()
+    expect(sys?.role).toBe('system')
+    const content = sys?.content
     const text =
-      typeof sys.content === 'string'
-        ? sys.content
-        : (sys.content as any[])
+      typeof content === 'string'
+        ? content
+        : (content as any[])
             .filter((p: any) => p.type === 'text')
             .map((p: any) => p.text)
             .join('')

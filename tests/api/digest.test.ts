@@ -38,7 +38,7 @@ describe('GET /api/digest', () => {
     const res = await app.request('/api/digest')
 
     expect(res.status).toBe(400)
-    const data = await res.json()
+    const data = (await res.json()) as { error: string }
     expect(data.error).toContain('x-tenant-id')
   })
 
@@ -127,7 +127,7 @@ describe('GET /api/digest', () => {
     })
 
     expect(res.status).toBe(500)
-    const data = await res.json()
+    const data = (await res.json()) as { error: string }
     expect(data.error).toContain('failed')
   })
 })

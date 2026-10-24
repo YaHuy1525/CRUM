@@ -1,5 +1,7 @@
 import { createVectorQueryTool } from '@mastra/rag'
+import { ModelRouterLanguageModel } from '@mastra/core/llm'
 import { crumEmbeddingModel } from '../embeddings'
+import { CRUM_LIGHT_MODEL } from '../models'
 import { tenantVectorStoreResolver } from '../vector-store'
 
 /**
@@ -9,6 +11,9 @@ import { tenantVectorStoreResolver } from '../vector-store'
  * - createVectorQueryTool comes from @mastra/rag, not @mastra/core/tools.
  * - reranker.options.weights must sum to 1. CRUM shifts toward semantic because
  *   contract language is paraphrased more often than quoted.
+ * - reranker.model scores relevance by generating a number, so it must be a
+ *   language model (or a RelevanceScoreProvider), never the embedding model.
+ *   VectorQueryTool swallows the resulting error and returns no sources.
  * - The reranker needs metadata.text. Ingestion writes it for that reason.
  * - PgVector returns an empty document field. Chunk text is read from
  *   sources[i].metadata.text.
@@ -32,7 +37,7 @@ export const knowledgeRetrieveTool = createVectorQueryTool({
     },
   },
   reranker: {
-    model: crumEmbeddingModel(),
+    model: new ModelRouterLanguageModel(CRUM_LIGHT_MODEL),
     options: {
       weights: { semantic: 0.5, vector: 0.3, position: 0.2 },
       topK: 5,

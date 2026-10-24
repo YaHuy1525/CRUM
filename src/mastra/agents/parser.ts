@@ -20,5 +20,5 @@ export const parserAgent = new Agent({
     'literally present. Never infer a city from an area code or an email domain. ' +
     'Omit anything not stated.',
   model: 'google/gemini-3.8-flash',
-  defaultOptions: { temperature: 0 },
+  defaultOptions: { modelSettings: { temperature: 0 } },
 })

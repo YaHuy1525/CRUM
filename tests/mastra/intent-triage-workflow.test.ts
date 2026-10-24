@@ -10,7 +10,8 @@ beforeAll(() => {
 describe('intentTriageFlow', () => {
   // Dynamic import so the env var is set before module evaluation.
   // Cache the result to avoid repeated imports.
-  let flow: Awaited<ReturnType<typeof import('../../src/mastra/workflows/intent-triage')>>['intentTriageFlow']
+  type TriageModule = typeof import('../../src/mastra/workflows/intent-triage')
+  let flow: TriageModule['intentTriageFlow']
 
   beforeAll(async () => {
     const mod = await import('../../src/mastra/workflows/intent-triage')
@@ -21,13 +22,15 @@ describe('intentTriageFlow', () => {
     expect(flow.id).toBe('crum-intent-triage')
   })
 
-  it('has an input schema requiring message', () => {
-    const result = flow.inputSchema.safeParse({ message: 'Schedule a meeting Thursday 2 to 3' })
-    expect(result.success).toBe(true)
+  it('has an input schema requiring message', async () => {
+    const result = await flow.inputSchema['~standard'].validate({
+      message: 'Schedule a meeting Thursday 2 to 3',
+    })
+    expect(result.issues).toBeUndefined()
   })
 
-  it('rejects input without message', () => {
-    const result = flow.inputSchema.safeParse({})
-    expect(result.success).toBe(false)
+  it('rejects input without message', async () => {
+    const result = await flow.inputSchema['~standard'].validate({})
+    expect(result.issues).toBeDefined()
   })
 })

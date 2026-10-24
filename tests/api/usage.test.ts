@@ -9,7 +9,7 @@ describe('GET /api/usage', () => {
   it('requires x-tenant-id header', async () => {
     vi.doMock('../../src/mastra/index', () => ({
       createCrumMastra: () => ({
-        storage: { queryMetrics: vi.fn() },
+        getStorage: () => ({ queryMetrics: vi.fn() }),
       }),
     }))
     const { createUsageRouter } = await import('../../src/api/usage')
@@ -18,7 +18,7 @@ describe('GET /api/usage', () => {
     const res = await app.request('/api/usage?from=2026-10-17&to=2026-10-24')
 
     expect(res.status).toBe(400)
-    const data = await res.json()
+    const data = (await res.json()) as { error: string }
     expect(data.error).toMatch(/x-tenant-id/)
   })
 
@@ -34,7 +34,7 @@ describe('GET /api/usage', () => {
     })
     vi.doMock('../../src/mastra/index', () => ({
       createCrumMastra: () => ({
-        storage: { queryMetrics },
+        getStorage: () => ({ queryMetrics }),
       }),
     }))
 
@@ -57,7 +57,7 @@ describe('GET /api/usage', () => {
   it('returns 503 when metrics are not available', async () => {
     vi.doMock('../../src/mastra/index', () => ({
       createCrumMastra: () => ({
-        storage: {},
+        getStorage: () => ({}),
       }),
     }))
 
@@ -77,7 +77,7 @@ describe('GET /api/usage', () => {
     const queryMetrics = vi.fn().mockRejectedValue(new Error('db connection lost'))
     vi.doMock('../../src/mastra/index', () => ({
       createCrumMastra: () => ({
-        storage: { queryMetrics },
+        getStorage: () => ({ queryMetrics }),
       }),
     }))
 

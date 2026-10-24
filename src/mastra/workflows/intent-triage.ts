@@ -1,4 +1,6 @@
 import { createWorkflow, createStep } from '@mastra/core/workflows'
+import type { ClassifierStepOutput } from '@mastra/core/workflows'
+import type { StandardSchemaWithJSON } from '@mastra/core/schema'
 import { z } from 'zod'
 import { intentClassifier } from '../classifiers/intent'
 
@@ -11,7 +13,8 @@ import { intentClassifier } from '../classifiers/intent'
  * useful to do.
  *
  * Three branches:
- * - schedule: intent.choice === 'schedule' && hasTimeRange.probability > 0.7
+ * - schedule: intent.choice === 'schedule' && hasTimeRange is a boolean answer
+ *   with probability > 0.7
  * - task: intent.choice === 'task'
  * - clarify: everything else (including 'other' and all refusals)
  *
@@ -20,9 +23,37 @@ import { intentClassifier } from '../classifiers/intent'
  * router is a workflow step (§6.5.6).
  */
 
-const branchInputSchema = z.object({
-  message: z.string(),
-})
+const workflowInputSchema = z.object({ message: z.string() })
+
+type TriageClassifierOutput = ClassifierStepOutput<typeof intentClassifier.questions>
+
+/**
+ * `.branch()` types every target step's input as the classifier step's output,
+ * which is `{ answers, usage }` — never the workflow's own input. `satisfies`
+ * pins this schema to the classifier's inferred answer types so a question
+ * change breaks the build here instead of at run time.
+ */
+const classifierOutputSchema = z
+  .object({
+    answers: z.object({
+      intent: z.union([
+        z.object({
+          type: z.literal('choice'),
+          choice: z.enum(['schedule', 'task', 'other']),
+        }),
+        z.object({ type: z.literal('refusal') }),
+      ]),
+      hasTimeRange: z.union([
+        z.object({ type: z.literal('boolean'), probability: z.number() }),
+        z.object({ type: z.literal('refusal') }),
+      ]),
+    }),
+    usage: z.object({
+      inputTokens: z.number().optional(),
+      outputTokens: z.number().optional(),
+      totalTokens: z.number(),
+    }),
+  }) satisfies StandardSchemaWithJSON<TriageClassifierOutput>
 
 const branchOutputSchema = z.object({
   action: z.enum(['schedule', 'task', 'clarify']),
@@ -31,34 +62,43 @@ const branchOutputSchema = z.object({
 
 const scheduleStep = createStep({
   id: 'schedule-action',
-  inputSchema: branchInputSchema,
+  inputSchema: classifierOutputSchema,
   outputSchema: branchOutputSchema,
-  execute: async ({ inputData }) => {
-    return { action: 'schedule' as const, message: inputData.message }
+  execute: async (ctx) => {
+    return {
+      action: 'schedule' as const,
+      message: ctx.getInitData<z.infer<typeof workflowInputSchema>>().message,
+    }
   },
 })
 
 const taskStep = createStep({
   id: 'task-action',
-  inputSchema: branchInputSchema,
+  inputSchema: classifierOutputSchema,
   outputSchema: branchOutputSchema,
-  execute: async ({ inputData }) => {
-    return { action: 'task' as const, message: inputData.message }
+  execute: async (ctx) => {
+    return {
+      action: 'task' as const,
+      message: ctx.getInitData<z.infer<typeof workflowInputSchema>>().message,
+    }
   },
 })
 
 const clarifyStep = createStep({
   id: 'clarify-action',
-  inputSchema: branchInputSchema,
+  inputSchema: classifierOutputSchema,
   outputSchema: branchOutputSchema,
-  execute: async ({ inputData }) => {
-    return { action: 'clarify' as const, message: inputData.message }
+  execute: async (ctx) => {
+    return {
+      action: 'clarify' as const,
+      message: ctx.getInitData<z.infer<typeof workflowInputSchema>>().message,
+    }
   },
 })
 
 export const intentTriageFlow = createWorkflow({
   id: 'crum-intent-triage',
-  inputSchema: z.object({ message: z.string() }),
+  inputSchema: workflowInputSchema,
   outputSchema: branchOutputSchema,
 })
   .map(async ({ inputData }) => ({ message: inputData.message }))
@@ -67,6 +107,7 @@ export const intentTriageFlow = createWorkflow({
     [
       async ({ inputData }) =>
         inputData.answers.intent.choice === 'schedule' &&
+        inputData.answers.hasTimeRange.type === 'boolean' &&
         inputData.answers.hasTimeRange.probability > 0.7,
       scheduleStep,
     ],

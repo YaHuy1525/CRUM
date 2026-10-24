@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { parserAgent } from '../mastra/agents/parser'
-import { PREFILL_SCHEMAS, type PrefillObjectType } from '../mastra/schemas/prefill'
+import { PREFILL_SCHEMAS } from '../mastra/schemas/prefill'
 
 /**
  * POST /api/crm/prefill/:objectType — structured prefill from pasted text.
@@ -30,21 +30,52 @@ export function createPrefillRouter(): Hono {
       return c.json({ error: 'text field required' }, 400)
     }
 
-    const schema = PREFILL_SCHEMAS[objectType as PrefillObjectType]
     const fallbackValue = objectType === 'customer' ? { name: '', tags: [] as string[] }
       : objectType === 'contact' ? { firstName: '' }
       : objectType === 'schedule' ? { title: '', attendees: [] as string[] }
       : { title: '' }
 
     try {
-      const result = await parserAgent.generate(body.text, {
-        structuredOutput: {
-          schema,
-          errorStrategy: 'fallback',
-          fallbackValue,
-        },
-        jsonPromptInjection: true,
-      })
+      // Dispatch on the concrete object type so each generate() call receives a
+      // single schema with a correlated fallback value; a union-typed schema
+      // cannot unify to one structured-output generic.
+      const result = await (
+        objectType === 'customer'
+          ? parserAgent.generate(body.text, {
+              structuredOutput: {
+                schema: PREFILL_SCHEMAS.customer,
+                errorStrategy: 'fallback',
+                fallbackValue: { name: '', tags: [] as string[] },
+                jsonPromptInjection: true,
+              },
+            })
+          : objectType === 'contact'
+            ? parserAgent.generate(body.text, {
+                structuredOutput: {
+                  schema: PREFILL_SCHEMAS.contact,
+                  errorStrategy: 'fallback',
+                  fallbackValue: { firstName: '' },
+                  jsonPromptInjection: true,
+                },
+              })
+            : objectType === 'schedule'
+              ? parserAgent.generate(body.text, {
+                  structuredOutput: {
+                    schema: PREFILL_SCHEMAS.schedule,
+                    errorStrategy: 'fallback',
+                    fallbackValue: { title: '', attendees: [] as string[] },
+                    jsonPromptInjection: true,
+                  },
+                })
+              : parserAgent.generate(body.text, {
+                  structuredOutput: {
+                    schema: PREFILL_SCHEMAS.task,
+                    errorStrategy: 'fallback',
+                    fallbackValue: { title: '' },
+                    jsonPromptInjection: true,
+                  },
+                })
+      )
 
       return c.json({
         objectType,

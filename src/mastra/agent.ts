@@ -95,8 +95,22 @@ export const crmAssistant = new Agent({
     }
   },
 
-  // Phase 1: no memory. Phase 2 wires coreMemory via Mastra instance.
-  // memory: buildCrumMemory(storage),
+  // Memory is registered on the Mastra instance as `coreMemory` (index.ts), but
+  // an agent only ever resolves its own `memory` or one delegated through
+  // MASTRA_INHERITED_MEMORY_KEY — instance registration alone does not reach it,
+  // and a run without memory fails in the goal-state processor before the first
+  // model call. Resolve it from the registry so there is still one instance.
+  // A resolver that returns nothing is a tracked agent error, so fail closed
+  // here instead of letting a silently memory-less agent run.
+  memory: ({ mastra }) => {
+    const coreMemory = mastra?.getMemory('coreMemory')
+    if (!coreMemory) {
+      throw new Error(
+        'crm-assistant requires `coreMemory` registered on the Mastra instance (see createCrumMastra)',
+      )
+    }
+    return coreMemory
+  },
 })
 
 // §6 — Controller subagents. Pure definitions registered on the

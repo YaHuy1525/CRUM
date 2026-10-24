@@ -79,16 +79,24 @@ describe('CRUM golden dataset CI gate', () => {
         targetOptions: {
           maxSteps: 8,
           modelSettings: { temperature: 0 },
+          // The agent inherits coreMemory from the instance, but a run with no
+          // active resource/thread fails in the goal-state processor before the
+          // first model call. runEvals mints a thread per item, so only the
+          // resource has to name the eval sandbox.
+          memory: { resource: 'crum-evals:golden-gate' },
         },
       })
 
       // Echo results
-      if (result.verdict === 'failed') {
+      const verdict = result.verdict
+      if (verdict === 'failed') {
         console.error('[eval-gate] FAILED — gate failures:', result.gateResults?.filter((g: any) => !g.passed))
-      } else if (result.verdict === 'scored') {
+      } else if (verdict === 'scored') {
         console.warn('[eval-gate] SCORED — threshold misses:', result.thresholdResults?.filter((t: any) => !t.passed))
+      } else if (verdict) {
+        console.log(`[eval-gate] ${verdict.toUpperCase()} — ${result.summary.totalItems} items scored`)
       } else {
-        console.log(`[eval-gate] ${result.verdict.toUpperCase()} — ${result.summary.totalItems} items scored`)
+        console.log(`[eval-gate] NO VERDICT — ${result.summary.totalItems} items scored (no gate or threshold produced a numeric result)`)
       }
 
       // CI assertion: must not fail
