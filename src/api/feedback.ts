@@ -50,11 +50,16 @@ export function createFeedbackRouter(): Hono {
       feedback.metadata = metadata
     }
 
-    await mastra.observability.addFeedback({
-      traceId,
-      spanId,
-      feedback,
-    })
+    try {
+      await mastra.observability.addFeedback({
+        traceId,
+        spanId,
+        feedback,
+      })
+    } catch (err) {
+      console.error('addFeedback failed:', err)
+      return c.json({ error: 'Internal server error' }, 500)
+    }
 
     return c.json({ ok: true })
   })

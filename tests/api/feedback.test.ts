@@ -2,6 +2,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 describe('POST /api/feedback', () => {
+  beforeEach(() => {
+    vi.resetModules()
+  })
+
   it('calls addFeedback with correct shape', async () => {
     const addFeedback = vi.fn().mockResolvedValue({ id: 'fb_1' })
     vi.doMock('../../src/mastra/index', () => ({
@@ -48,5 +52,30 @@ describe('POST /api/feedback', () => {
     })
 
     expect(res.status).toBe(400)
+  })
+
+  it('returns 500 when addFeedback throws', async () => {
+    const addFeedback = vi.fn().mockRejectedValue(new Error('observability down'))
+    vi.doMock('../../src/mastra/index', () => ({
+      createCrumMastra: () => ({
+        observability: { addFeedback },
+      }),
+    }))
+
+    const { createFeedbackRouter } = await import('../../src/api/feedback')
+    const app = createFeedbackRouter()
+
+    const res = await app.request('/api/feedback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        traceId: 'trace_err',
+        vote: 'up',
+      }),
+    })
+
+    expect(res.status).toBe(500)
+    const body = await res.json()
+    expect(body).toEqual({ error: 'Internal server error' })
   })
 })
