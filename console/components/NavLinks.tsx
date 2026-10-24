@@ -17,6 +17,7 @@ export function NavLinks() {
         <Link
           key={link.href}
           href={link.href}
+          className="focus-ring"
           aria-current={pathname === link.href ? 'page' : undefined}
         >
           {link.label}

@@ -32,14 +32,14 @@ export function SessionList() {
   return (
     <ul className="session-list" role="listbox" aria-label="Conversation sessions">
       {sessions.length === 0 && (
-        <li className="empty-state">No sessions yet</li>
+        <li className="empty-state" role="presentation">No sessions yet</li>
       )}
       {sessions.map((session) => {
         const isActive = activeSession === session.threadId
         return (
           <li
             key={session.threadId}
-            className={`session-item ${isActive ? 'active' : ''}`}
+            className={`session-item focus-ring ${isActive ? 'active' : ''}`}
             role="option"
             aria-selected={isActive}
             tabIndex={0}
