@@ -1,0 +1,52 @@
+// tests/api/feedback.test.ts
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+
+describe('POST /api/feedback', () => {
+  it('calls addFeedback with correct shape', async () => {
+    const addFeedback = vi.fn().mockResolvedValue({ id: 'fb_1' })
+    vi.doMock('../../src/mastra/index', () => ({
+      createCrumMastra: () => ({
+        observability: { addFeedback },
+      }),
+    }))
+
+    const { createFeedbackRouter } = await import('../../src/api/feedback')
+    const app = createFeedbackRouter()
+
+    const res = await app.request('/api/feedback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        traceId: 'trace_123',
+        spanId: 'span_456',
+        vote: 'down',
+        comment: 'Incorrect answer',
+      }),
+    })
+
+    expect(res.status).toBe(200)
+    expect(addFeedback).toHaveBeenCalledWith({
+      traceId: 'trace_123',
+      spanId: 'span_456',
+      feedback: {
+        feedbackType: 'thumbs',
+        value: 'down',
+        feedbackSource: 'user',
+        comment: 'Incorrect answer',
+      },
+    })
+  })
+
+  it('rejects missing traceId', async () => {
+    const { createFeedbackRouter } = await import('../../src/api/feedback')
+    const app = createFeedbackRouter()
+
+    const res = await app.request('/api/feedback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vote: 'up' }),
+    })
+
+    expect(res.status).toBe(400)
+  })
+})
