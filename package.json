@@ -25,6 +25,7 @@
     "verify": "npm run typecheck && npm run lint && npm run test"
   },
   "dependencies": {
+    "@ai-sdk/openai": "4.0.101",
     "@ai-sdk/typesafe-ai": "3.0.24",
     "@mastra/ai-sdk": "1.11.2",
     "@mastra/core": "1.79.0",

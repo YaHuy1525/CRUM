@@ -115,6 +115,17 @@ export const EnvSchema = z.object({
   // Phase 5: classification decision model (§6.5.2)
   TYPESAFE_AI_API_KEY: optionalString,
   TYPESAFE_AI_BASE_URL: optionalString,
+
+  // Phase 6: evals judge configuration (§6.5)
+  JUDGE_PROVIDER: optionalString,
+  JUDGE_MODEL: optionalString,
+  JEV_API_KEY: optionalString,
+  JUDGE_CHAT_BASE_URL: optionalString,
+  JUDGE_CHAT_MODEL: optionalString,
+  JUDGE_CHAT_API_KEY: optionalString,
+  JUDGE_TIMEOUT_SECONDS: z.coerce.number().int().min(1).default(60),
+  EVAL_EXPERIMENT_TIMEOUT_MS: z.coerce.number().int().min(1000).default(120_000),
+  MASTRA_AUTO_REFRESH_PRICING: booleanish.prefault('false'),
 })
 
 export type CrumEnv = z.infer<typeof EnvSchema>
@@ -148,15 +159,6 @@ export const DEFERRED_ENV_VARS: Readonly<Record<string, number>> = {
   RUNS_SWEEP_INTERVAL_SECONDS: 3,
   CORS_ALLOW_ORIGINS: 5,
   TRUSTED_PROXY_IPS: 5,
-  JEV_API_KEY: 6,
-  JUDGE_PROVIDER: 6,
-  JUDGE_MODEL: 6,
-  JUDGE_CHAT_BASE_URL: 6,
-  JUDGE_CHAT_MODEL: 6,
-  JUDGE_CHAT_API_KEY: 6,
-  JUDGE_TIMEOUT_SECONDS: 6,
-  EVAL_EXPERIMENT_TIMEOUT_MS: 6,
-  MASTRA_AUTO_REFRESH_PRICING: 6,
 }
 
 /**
