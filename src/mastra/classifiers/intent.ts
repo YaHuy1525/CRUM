@@ -19,9 +19,28 @@ import { crumDecisionModel } from '../decision-model'
  */
 const model = crumDecisionModel()
 
+/**
+ * When no API key is configured, crumDecisionModel() returns undefined. The
+ * Classifier constructor accesses model.provider at construction time, which
+ * would crash. A stub model is provided instead: it constructs safely but
+ * throws at classification time. The workflow step's error handling catches
+ * that and falls through to the clarify branch (§6.5.6).
+ */
+const safeModel =
+  model ??
+  ({
+    provider: 'crum-unavailable',
+    modelId: 'crum-unavailable',
+    specificationVersion: 'v4' as const,
+    supportedQuestionTypes: ['boolean', 'choice', 'score'],
+    doDecide: async () => {
+      throw new Error('Decision model unavailable: no API key configured')
+    },
+  }) as unknown as NonNullable<ReturnType<typeof crumDecisionModel>>
+
 export const intentClassifier = new Classifier({
   id: 'crum-intent',
-  model: model!,
+  model: safeModel,
   questions: {
     intent: {
       type: 'choice',

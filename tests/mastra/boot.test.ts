@@ -117,7 +117,33 @@ describe('createCrumMastra', () => {
 
   it('registers the crmAssistant agent', () => {
     const mastra = createCrumMastra(envWith())
-    expect(Object.keys(mastra.listAgents())).toEqual(['crm-assistant'])
+    expect(Object.keys(mastra.listAgents())).toContain('crm-assistant')
+  })
+
+  it('registers Phase 5 agents (parser, email-drafter)', () => {
+    const mastra = createCrumMastra(envWith())
+    const agentKeys = Object.keys(mastra.listAgents()).sort()
+    expect(agentKeys).toEqual(['crm-assistant', 'email-drafter', 'parser'])
+  })
+
+  it('registers Phase 5 classifiers (intent, injection)', () => {
+    const mastra = createCrumMastra(envWith())
+    const classifiers = mastra.listClassifiers?.() ?? {}
+    const classifierKeys = Object.keys(classifiers).sort()
+    expect(classifierKeys).toEqual(['crum-injection', 'crum-intent'])
+  })
+
+  it('registers the intent triage workflow', () => {
+    const mastra = createCrumMastra(envWith())
+    const workflows = mastra.listWorkflows?.() ?? {}
+    expect(workflows).toHaveProperty('crum-intent-triage')
+    expect(workflows).toHaveProperty('knowledge-ingest')
+  })
+
+  it('registers the MCP server', () => {
+    const mastra = createCrumMastra(envWith())
+    const mcpServers = mastra.listMCPServers?.() ?? {}
+    expect(mcpServers).toHaveProperty('crum-crm')
   })
 })
 

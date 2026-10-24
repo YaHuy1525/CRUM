@@ -2,12 +2,18 @@ import { Mastra } from '@mastra/core/mastra'
 import { AgentController } from '@mastra/core/agent-controller'
 import type { CrumEnv } from '../config/env'
 import { buildObservability } from './observability'
-import { assertMcpRequestStateKey } from './mcp-guard'
+import { assertMcpRequestStateKey, resolveMcpRequestState } from './mcp-guard'
 import { buildMastraStorage } from './storage'
 import type { CrumStorage } from './storage'
 import { crmAssistant, CRUM_SUBAGENTS } from './agent'
 import { buildCrumMemory } from './memory'
 import { ingestWorkflow } from './workflows/ingest'
+import { intentClassifier } from './classifiers/intent'
+import { injectionClassifier } from './classifiers/injection'
+import { intentTriageFlow } from './workflows/intent-triage'
+import { parserAgent } from './agents/parser'
+import { emailDrafterAgent } from './agents/email-drafter'
+import { createCrumMcpServer } from './mcp-server'
 
 export interface CrumMastraOptions {
   /**
@@ -49,12 +55,29 @@ export function createCrumMastra(env: CrumEnv, options: CrumMastraOptions = {}):
     subagents: CRUM_SUBAGENTS,
   })
 
+  // §10.3 — Resolve MCP request state key (ephemeral in dev, configured in prod)
+  const mcpDecision = resolveMcpRequestState(env)
+  if (mcpDecision.warning) {
+    console.warn(`[CRUM] ${mcpDecision.warning}`)
+  }
+  const crumMcpServer = createCrumMcpServer(mcpDecision.key)
+
   return new Mastra({
     agents: {
       'crm-assistant': crmAssistant,
+      'parser': parserAgent,
+      'email-drafter': emailDrafterAgent,
     },
     workflows: {
       'knowledge-ingest': ingestWorkflow,
+      'crum-intent-triage': intentTriageFlow,
+    },
+    classifiers: {
+      'crum-intent': intentClassifier,
+      'crum-injection': injectionClassifier,
+    },
+    mcpServers: {
+      'crum-crm': crumMcpServer,
     },
     storage,
     memory: {
