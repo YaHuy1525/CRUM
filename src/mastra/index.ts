@@ -7,6 +7,7 @@ import { buildMastraStorage } from './storage'
 import type { CrumStorage } from './storage'
 import { crmAssistant } from './agent'
 import { buildCrumMemory } from './memory'
+import { ingestWorkflow } from './workflows/ingest'
 
 export interface CrumMastraOptions {
   /**
@@ -51,7 +52,9 @@ export function createCrumMastra(env: CrumEnv, options: CrumMastraOptions = {}):
     agents: {
       'crm-assistant': crmAssistant,
     },
-    workflows: {},
+    workflows: {
+      'knowledge-ingest': ingestWorkflow,
+    },
     storage,
     memory: {
       coreMemory: memory,

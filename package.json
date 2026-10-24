@@ -34,6 +34,7 @@
     "@mastra/observability": "1.21.0",
     "@mastra/pg": "1.32.0",
     "@mastra/rag": "2.7.0",
+    "ai": "^7.0.150",
     "hono": "4.13.13",
     "pg": "8.23.1",
     "yaml": "2.9.1",
