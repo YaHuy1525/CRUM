@@ -104,6 +104,10 @@ export const EnvSchema = z.object({
   EMBEDDING_DIMENSIONS: z.coerce.number().int().min(1).optional(),
   EMBEDDING_BASE_URL: optionalString,
   EMBEDDING_API_KEY: optionalString,
+
+  // Phase 5: classification decision model (§6.5.2)
+  TYPESAFE_AI_API_KEY: optionalString,
+  TYPESAFE_AI_BASE_URL: optionalString,
 })
 
 export type CrumEnv = z.infer<typeof EnvSchema>
@@ -137,8 +141,6 @@ export const DEFERRED_ENV_VARS: Readonly<Record<string, number>> = {
   RUNS_SWEEP_INTERVAL_SECONDS: 3,
   CORS_ALLOW_ORIGINS: 5,
   TRUSTED_PROXY_IPS: 5,
-  TYPESAFE_AI_API_KEY: 5,
-  TYPESAFE_AI_BASE_URL: 5,
   JEV_API_KEY: 6,
   JUDGE_PROVIDER: 6,
   JUDGE_MODEL: 6,
