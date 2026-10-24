@@ -126,6 +126,9 @@ export const EnvSchema = z.object({
   JUDGE_TIMEOUT_SECONDS: z.coerce.number().int().min(1).default(60),
   EVAL_EXPERIMENT_TIMEOUT_MS: z.coerce.number().int().min(1000).default(120_000),
   MASTRA_AUTO_REFRESH_PRICING: booleanish.prefault('false'),
+
+  // Phase 6: digest schedule (§9)
+  CRUM_DIGEST_CRON: optionalString,
 })
 
 export type CrumEnv = z.infer<typeof EnvSchema>
