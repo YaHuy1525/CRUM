@@ -98,6 +98,12 @@ export const EnvSchema = z.object({
   POLICY_DIR: optionalString,
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).default(120),
   RATE_LIMIT_WINDOW_SECONDS: z.coerce.number().int().min(1).default(60),
+
+  // Phase 4: RAG embeddings (§6.4)
+  EMBEDDING_MODEL_ID: optionalString,
+  EMBEDDING_DIMENSIONS: z.coerce.number().int().min(1).optional(),
+  EMBEDDING_BASE_URL: optionalString,
+  EMBEDDING_API_KEY: optionalString,
 })
 
 export type CrumEnv = z.infer<typeof EnvSchema>
@@ -117,10 +123,6 @@ export const DEFERRED_ENV_VARS: Readonly<Record<string, number>> = {
   MASTRA_MEMORY_EMBEDDER: 1,
   NEXT_PUBLIC_SUPABASE_URL: 1,
   NEXT_PUBLIC_SUPABASE_ANON_KEY: 1,
-  EMBEDDING_MODEL_ID: 4,
-  EMBEDDING_DIMENSIONS: 4,
-  EMBEDDING_BASE_URL: 4,
-  EMBEDDING_API_KEY: 4,
   RETRIEVAL_TOP_K: 4,
   RETRIEVAL_MIN_SCORE: 4,
   RETRIEVAL_HNSW_EF: 4,
