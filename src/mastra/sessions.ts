@@ -101,6 +101,33 @@ export async function listSessions(
   return sessions
 }
 
+export interface ResolveSessionOptions {
+  sessionId: string
+  tenantId: string
+}
+
+/**
+ * Recovers an existing AgentController session by its session id and tenant.
+ *
+ * The AgentController keeps in-memory sessions keyed by id. After a restart the
+ * session must be reconstructed from its thread state — this function wraps that
+ * recovery so signal endpoints can obtain a live Session handle from just the
+ * headers the browser sends (`x-session-id`, `x-tenant-id`).
+ *
+ * Returns `{ session }` — the live Session object with `abort()`, `steer()`,
+ * `sendSignal()`, and `queueMessage()` methods.
+ */
+export async function resolveSession(
+  _options: ResolveSessionOptions,
+): Promise<{ session: any }> {
+  // TODO(phase-7): wire to controller.createSession({ id: sessionId }) after
+  // verifying the session belongs to tenantId. For now, throw so callers get a
+  // clear diagnostic until the full recovery path is implemented.
+  throw new Error(
+    `resolveSession: session recovery not yet implemented for sessionId "${_options.sessionId}"`,
+  )
+}
+
 /**
  * Read-only thread listing. Does NOT create a session — this is the sidebar
  * query that must respond in <300ms without provisioning a workspace.
