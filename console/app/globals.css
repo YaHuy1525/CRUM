@@ -139,3 +139,155 @@ body {
   padding: 16px;
   text-align: center;
 }
+
+/* Top navigation */
+.top-nav {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 16px;
+  background: #1976d2;
+  color: white;
+  font-size: 14px;
+}
+
+.top-nav a {
+  color: white;
+  text-decoration: none;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+
+.top-nav a:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.top-nav .brand {
+  font-weight: 700;
+  margin-right: 8px;
+}
+
+/* Usage dashboard */
+.usage-dashboard {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.usage-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.usage-header h1 {
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.usage-range {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.usage-range label {
+  font-size: 13px;
+  color: #666;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.usage-range input[type='date'] {
+  padding: 4px 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.usage-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 32px;
+}
+
+.usage-card {
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 20px;
+  text-align: center;
+}
+
+.usage-card-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #888;
+  margin-bottom: 8px;
+}
+
+.usage-card-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: #1976d2;
+}
+
+.usage-detail h2 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.usage-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.usage-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #f0f0f0;
+  font-size: 14px;
+}
+
+.usage-table td:last-child {
+  text-align: right;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-loading,
+.usage-error {
+  text-align: center;
+  padding: 48px 16px;
+  color: #666;
+}
+
+.usage-error {
+  color: #c62828;
+}
+
+.usage-error-detail {
+  font-size: 13px;
+  color: #888;
+  margin-top: 4px;
+  margin-bottom: 16px;
+}
+
+.usage-error button {
+  padding: 8px 16px;
+  background: #1976d2;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.usage-error button:hover {
+  background: #1565c0;
+}
