@@ -19,6 +19,7 @@ export default function RootLayout({
           <span className="brand">CRUM</span>
           <Link href="/">Home</Link>
           <Link href="/usage">Usage</Link>
+          <Link href="/today">Today</Link>
         </nav>
         {children}
       </body>

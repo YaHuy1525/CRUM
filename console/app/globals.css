@@ -291,3 +291,172 @@ body {
 .usage-error button:hover {
   background: #1565c0;
 }
+
+/* Today view */
+.today-view {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.today-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.today-header h1 {
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.today-date {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.today-date label {
+  font-size: 13px;
+  color: #666;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.today-date input[type='date'] {
+  padding: 4px 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.today-summary {
+  background: #f5f5f5;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 12px 16px;
+  font-size: 14px;
+  color: #444;
+  margin-bottom: 20px;
+}
+
+.today-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 32px;
+}
+
+.today-stat {
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 20px;
+  text-align: center;
+}
+
+.today-stat-value {
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.today-stat-overdue .today-stat-value {
+  color: #c62828;
+}
+
+.today-stat-schedule .today-stat-value {
+  color: #1976d2;
+}
+
+.today-stat-stale .today-stat-value {
+  color: #e65100;
+}
+
+.today-stat-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #888;
+  margin-top: 4px;
+}
+
+.today-section {
+  margin-bottom: 24px;
+}
+
+.today-section h2 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: #333;
+}
+
+.today-list {
+  list-style: none;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.today-list-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 16px;
+  border-bottom: 1px solid #f0f0f0;
+  font-size: 14px;
+}
+
+.today-list-item:last-child {
+  border-bottom: none;
+}
+
+.today-item-label {
+  color: #333;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.today-item-meta {
+  color: #888;
+  font-size: 12px;
+  margin-left: 12px;
+  white-space: nowrap;
+}
+
+.today-loading,
+.today-error {
+  text-align: center;
+  padding: 48px 16px;
+  color: #666;
+}
+
+.today-error {
+  color: #c62828;
+}
+
+.today-error-detail {
+  font-size: 13px;
+  color: #888;
+  margin-top: 4px;
+  margin-bottom: 16px;
+}
+
+.today-error button {
+  padding: 8px 16px;
+  background: #1976d2;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.today-error button:hover {
+  background: #1565c0;
+}

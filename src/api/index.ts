@@ -2,6 +2,7 @@
 import { Hono } from 'hono'
 import { createFeedbackRouter } from './feedback'
 import { createUsageRouter } from './usage'
+import { createDigestRouter } from './digest'
 
 /**
  * Aggregate API router. Mounts all sub-routers under their respective
@@ -13,6 +14,7 @@ export function createApiRouter(): Hono {
 
   app.route('/', createFeedbackRouter())
   app.route('/', createUsageRouter())
+  app.route('/', createDigestRouter())
 
   return app
 }
