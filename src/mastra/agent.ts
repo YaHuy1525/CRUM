@@ -18,6 +18,7 @@ import { createCustomerTool, updateCustomerTool, deleteCustomerTool } from './to
 import { createContactTool, createScheduleTool, transferOwnerTool, sendMailTool } from './tools/approval-writes'
 import { approvalFlow } from './workflows/approval-flow'
 import { resolveActiveTools } from './active-tools'
+import { CRUM_MAIN_MODEL, CRUM_LIGHT_MODEL } from './models'
 import type { TenantRequestContext } from './tenant-context'
 
 const crumToolRegistry = {
@@ -55,7 +56,7 @@ export const crmAssistant = new Agent({
   instructions: CRUM_INSTRUCTIONS,
 
   // Phase 1: single model. Phase 2 adds fallback array per §4.3.1.
-  model: 'anthropic/claude-sonnet-5-5',
+  model: CRUM_MAIN_MODEL,
 
   tools: crumToolRegistry,
 
@@ -68,9 +69,10 @@ export const crmAssistant = new Agent({
   maxProcessorRetries: 2,
 
   // §4.7.3 — Goal defaults. Judge model evaluates completion each loop iteration.
-  // Hard maxRuns budget; exhaustion pauses with a persisted reason.
+  // Hard maxRuns budget; exhaustion pauses with a persisted reason. The GoalConfig
+  // field is `judge` (a model id/object/resolver), not `judgeModelId`.
   goal: {
-    judgeModelId: 'anthropic/claude-sonnet-5-5',
+    judge: CRUM_MAIN_MODEL,
     maxRuns: 12,
   },
 
@@ -82,7 +84,9 @@ export const crmAssistant = new Agent({
   outputProcessors: crumOutputProcessors as OutputProcessorOrWorkflow[],
 
   defaultOptions: ({ requestContext }) => {
-    const tenantContext = requestContext?.get('tenantContext') as TenantRequestContext | undefined
+    const tenantContext = requestContext?.get<'tenantContext', TenantRequestContext | undefined>(
+      'tenantContext',
+    )
     if (!tenantContext) {
       return { activeTools: [] }
     }
@@ -109,7 +113,7 @@ export const CRUM_SUBAGENTS: AgentControllerSubagent[] = [
       'literally present. Never infer a city from an area code or an email domain. ' +
       'Omit anything not stated.',
     tools: {},
-    defaultModelId: 'google/gemini-3.8-flash',
+    defaultModelId: CRUM_LIGHT_MODEL,
     maxSteps: 3,
   },
   {
@@ -123,7 +127,7 @@ export const CRUM_SUBAGENTS: AgentControllerSubagent[] = [
       'Keep the tone matching the relationship stage: formal for new contacts, ' +
       'warm but professional for established ones.',
     tools: {},
-    defaultModelId: 'anthropic/claude-sonnet-5-5',
+    defaultModelId: CRUM_MAIN_MODEL,
     maxSteps: 1,
   },
 ]

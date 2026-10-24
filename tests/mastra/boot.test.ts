@@ -31,6 +31,8 @@ const REMOTE = 'postgresql://crum:secret@db.abcdefgh.supabase.co:5432/postgres'
 /** The six secrets §13.8 requires in production. Placeholders, not credentials. */
 const PRODUCTION_BASE: Record<string, string> = {
   NODE_ENV: 'production',
+  // production + dev auth throws at parseEnv; production fixtures are jwt.
+  CRUM_AUTH_MODE: 'jwt',
   DATABASE_URL: REMOTE,
   OPENROUTER_API_KEY: 'sk-or-v1-placeholder',
   APPROVAL_HMAC_SECRET: 'a'.repeat(32),

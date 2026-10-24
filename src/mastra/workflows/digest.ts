@@ -1,6 +1,6 @@
 import { createWorkflow, createStep } from '@mastra/core/workflows'
 import { z } from 'zod'
-import { queryAllTasks, querySchedulesForDate, queryStaleFollowups } from '../../db/queries'
+import { queryAllTasks, queryTenantSchedulesForDate, queryStaleFollowups } from '../../db/queries'
 
 /**
  * §9 — Digest workflow: morning priorities summary.
@@ -73,7 +73,7 @@ export const fetchTodayScheduleStep = createStep({
   outputSchema: fetchOutputSchema,
   execute: async ({ inputData }) => {
     const date = inputData.date ?? new Date().toISOString().slice(0, 10)
-    const schedules = await querySchedulesForDate(inputData.tenantId, date)
+    const schedules = await queryTenantSchedulesForDate(inputData.tenantId, date)
     return {
       items: schedules.map((s) => ({
         id: s.id,

@@ -81,6 +81,28 @@ export const EnvSchema = z.object({
   MCP_REQUEST_STATE_KEY: hmacSecret,
   SUPABASE_URL: optionalString,
   SUPABASE_SERVICE_ROLE_KEY: optionalString,
+  /**
+   * Where Supabase publishes its signing keys. Only read in `jwt` auth mode;
+   * `parseEnv` still accepts it here so `.env.example is the contract` and
+   * `DEFERRED_ENV_VARS` stop special-casing it. §13.2.
+   */
+  SUPABASE_JWKS_URL: optionalString,
+
+  // Wave 1A: identity and model selection (§13.2, §4.3.1)
+  /**
+   * How the server derives a `TenantRequestContext` for a request.
+   * - `dev`: trust the `x-tenant-id`/`x-user-id`/`x-user-role` headers. Never
+   *   allowed in production — `parseEnv` throws on `production + dev` so a
+   *   misconfigured deploy cannot accept spoofable identity claims.
+   * - `jwt`: verify the `Authorization: Bearer` token against `SUPABASE_JWKS_URL`
+   *   and derive claims from the verified payload, ignoring browser headers.
+   */
+  CRUM_AUTH_MODE: z.enum(['dev', 'jwt']).default('dev'),
+  CRUM_MODEL_MAIN: optionalString,
+  CRUM_MODEL_LIGHT: optionalString,
+  /** The Mastra HTTP server port (chat route + Studio). Default 4111; the
+   *  hand-rolled Hono REST plane runs separately on 4113. */
+  CRUM_API_PORT: z.coerce.number().int().min(1).max(65535).default(4111),
 
   // Mastra runtime (§13.3)
   MASTRA_OBSERVABILITY: booleanish.prefault('false'),
@@ -139,7 +161,6 @@ export type CrumEnv = z.infer<typeof EnvSchema>
  * variable is neither parsed nor listed here, so this map cannot rot quietly.
  */
 export const DEFERRED_ENV_VARS: Readonly<Record<string, number>> = {
-  SUPABASE_JWKS_URL: 1,
   SUPABASE_JWT_ISSUER: 1,
   SUPABASE_JWT_AUDIENCE: 1,
   MASTRA_BASE_URL: 1,
@@ -181,7 +202,21 @@ export const PRODUCTION_REQUIRED_SECRETS: readonly string[] = [
 
 export function parseEnv(raw: NodeJS.ProcessEnv = process.env): CrumEnv {
   const result = EnvSchema.safeParse(raw)
-  if (result.success) return result.data
+  if (result.success) {
+    const env = result.data
+    // §13.2 / §13.8: the `dev` mode trusts spoofable browser headers, so a
+    // production process must never run it. Fail at boot rather than at the
+    // first request that carries a forged x-user-id.
+    if (env.NODE_ENV === 'production' && env.CRUM_AUTH_MODE === 'dev') {
+      throw new EnvParseError(
+        'CRUM_AUTH_MODE cannot be "dev" in production: it trusts the ' +
+          'x-tenant-id/x-user-id/x-user-role request headers, which a client can ' +
+          'forge. Set CRUM_AUTH_MODE="jwt" so identity comes from a verified ' +
+          'Supabase token (§13.2, §13.8).',
+      )
+    }
+    return env
+  }
 
   const summary = result.error.issues
     .map((issue) => `  ${issue.path.join('.') || '(root)'}: ${issue.message}`)

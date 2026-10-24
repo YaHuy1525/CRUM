@@ -1,5 +1,9 @@
 import { Mastra } from '@mastra/core/mastra'
+import { randomUUID } from 'node:crypto'
 import { AgentController } from '@mastra/core/agent-controller'
+import { chatRoute } from '@mastra/ai-sdk'
+import { MASTRA_RESOURCE_ID_KEY, MASTRA_THREAD_ID_KEY, RequestContext } from '@mastra/core/request-context'
+import type { Middleware, ServerConfig } from '@mastra/core/server'
 import type { CrumEnv } from '../config/env'
 import { parseEnv } from '../config/env'
 import { buildObservability } from './observability'
@@ -19,6 +23,7 @@ import { digestAgent } from './agents/digest'
 import { createCrumMcpServer } from './mcp-server'
 import { buildScorers } from '../evals/scorers'
 import { buildScheduleHooks } from './schedule-hooks'
+import { resolveIdentity, IdentityError } from './identity'
 
 export interface CrumMastraOptions {
   /**
@@ -27,6 +32,94 @@ export interface CrumMastraOptions {
    * passes it.
    */
   storage?: CrumStorage
+}
+
+/**
+ * Builds the `server:` block (§4.1, §13.2): a chat route for the assistant plus
+ * one middleware that turns each request into a validated `TenantRequestContext`
+ * before the agent runs.
+ *
+ * Exported separately from `createCrumMastra` so the middleware's dual-convention
+ * `RequestContext` writes are unit-testable with a stub Hono context, without
+ * binding a socket.
+ *
+ * The middleware satisfies BOTH request-context conventions the tools rely on:
+ * - the NESTED convention, `agent.ts` `defaultOptions` reads via
+ *   `requestContext.get('tenantContext')` to pick `activeTools`; and
+ * - the FLAT convention, each tool's `requestContextSchema` reads via
+ *   `requestContext.all` (`tenantId`/`userId`/`userRole`).
+ * Because `RequestContext` is an open map, one handler populating both is enough
+ * — no per-tool changes are required.
+ *
+ * Identity is fail-closed: any `resolveIdentity` throw (missing claim, bad UUID,
+ * unverified token, unset JWKS) short-circuits with a 401 and never calls
+ * `next()`, so a request without a trustworthy identity cannot reach the agent or
+ * read another tenant's rows.
+ */
+export function buildCrumServerConfig(env: CrumEnv): ServerConfig {
+  const identityMiddleware: Middleware = {
+    path: '/chat/*',
+    handler: async (c, next) => {
+      const header = (name: string): string | undefined => c.req.header(name)
+
+      let identity
+      try {
+        identity = await resolveIdentity(header, env)
+      } catch (err) {
+        if (!(err instanceof IdentityError)) {
+          // Unexpected failure: log it but still deny — never let an unknown
+          // error open the route. Logged through the process logger, not the
+          // request-scoped `mastra` Hono variable, to keep this handler off
+          // `any`-typed context access.
+          console.error('[CRUM] identity resolution threw unexpectedly', err)
+        }
+        return c.json({ error: 'unauthorized' }, 401)
+      }
+
+      // The framework installs a per-request `RequestContext` before middleware
+      // runs; mutate that instance so the chat route reads the same object. Fall
+      // back to a fresh one (and re-set it) if a non-Hono path reaches here.
+      const existing = c.get('requestContext') as RequestContext | undefined
+      const rc = existing ?? new RequestContext()
+
+      // NESTED convention — drives activeTools selection in agent.ts.
+      rc.set('tenantContext', identity)
+      // FLAT convention — validated by each tool's requestContextSchema.
+      rc.set('tenantId', identity.tenantId)
+      rc.set('userId', identity.userId)
+      rc.set('userRole', identity.userRole)
+
+      // Memory/resource scoping: a tenant-qualified resource id keeps threads
+      // isolated per user within a tenant (§4.2).
+      rc.set(MASTRA_RESOURCE_ID_KEY, `${identity.tenantId}:${identity.userId}`)
+
+      // Thread id comes from a header, not the body, so identity resolution
+      // never has to read (or buffer) the streamed request body. When it is
+      // absent a fresh id is minted rather than left unset: core memory needs
+      // an active thread for the goal-state signal, and a missing threadId made
+      // every run throw before the first model call. A minted thread is a
+      // single-turn thread, which is the right semantics for "no conversation
+      // yet" — the console sends `x-thread-id` on every turn after the first.
+      const threadId = header('x-thread-id') ?? randomUUID()
+      rc.set(MASTRA_THREAD_ID_KEY, threadId)
+
+      if (!c.get('requestContext')) c.set('requestContext', rc)
+      return next()
+    },
+  }
+
+  return {
+    port: env.CRUM_API_PORT,
+    middleware: [identityMiddleware],
+    apiRoutes: [
+      chatRoute({
+        path: '/chat/crm',
+        agent: 'crm-assistant',
+        version: 'v7',
+        heartbeatMs: 10000,
+      }),
+    ],
+  }
 }
 
 /**
@@ -96,6 +189,7 @@ export function createCrumMastra(env: CrumEnv, options: CrumMastraOptions = {}):
     agentControllers: {
       'crm-assistant': crmController,
     },
+    server: buildCrumServerConfig(env),
   })
 }
 

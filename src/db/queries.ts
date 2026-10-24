@@ -373,13 +373,15 @@ export async function queryAllTasks(tenantId: string): Promise<Task[]> {
 
 /**
  * Returns schedules for a tenant on a given date (used by digest workflow).
+ * The digest runs as a background job with no user session, so it queries
+ * by tenant_id only — no row-level visibility predicate.
  */
-export async function querySchedulesForDate(
+export async function queryTenantSchedulesForDate(
   tenantId: string,
   date: string,
 ): Promise<Schedule[]> {
   const result = await getDbClient().query(
-    `SELECT * FROM schedules WHERE tenant_id = $1 AND scheduled_at::date = $2::date ORDER BY scheduled_at ASC`,
+    `SELECT * FROM schedules WHERE tenant_id = $1 AND date(start_time) = $2::date ORDER BY start_time ASC`,
     [tenantId, date],
   )
   return result.rows
