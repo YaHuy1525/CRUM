@@ -7,6 +7,11 @@ describe('POST /api/feedback', () => {
   })
 
   it('requires x-tenant-id header', async () => {
+    vi.doMock('../../src/mastra/index', () => ({
+      createCrumMastra: () => ({
+        observability: { addFeedback: vi.fn() },
+      }),
+    }))
     const { createFeedbackRouter } = await import('../../src/api/feedback')
     const app = createFeedbackRouter()
 

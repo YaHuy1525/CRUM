@@ -7,6 +7,11 @@ describe('GET /api/usage', () => {
   })
 
   it('requires x-tenant-id header', async () => {
+    vi.doMock('../../src/mastra/index', () => ({
+      createCrumMastra: () => ({
+        storage: { queryMetrics: vi.fn() },
+      }),
+    }))
     const { createUsageRouter } = await import('../../src/api/usage')
     const app = createUsageRouter()
 
