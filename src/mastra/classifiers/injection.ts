@@ -8,13 +8,31 @@ import { crumDecisionModel } from '../decision-model'
  * treats a refusal as unsafe. A safety question that cannot be answered should
  * not wave content through (§6.5.5).
  *
- * Requires crumDecisionModel() to be defined.
+ * When no API key is configured, crumDecisionModel() returns undefined. The
+ * Classifier constructor accesses model.provider at construction time, which
+ * would crash. A stub model is provided instead: it constructs safely but
+ * throws at classification time. The processor's errorStrategy: 'warn' catches
+ * that and lets messages through (fail-open), which is correct because the
+ * structural controls (§4.3.3 write-claim guard, §11.3 approval queue) already
+ * defend the write path.
  */
 const model = crumDecisionModel()
 
+const safeModel =
+  model ??
+  ({
+    provider: 'crum-unavailable',
+    modelId: 'crum-unavailable',
+    specificationVersion: 'v4' as const,
+    supportedQuestionTypes: ['boolean', 'choice', 'score'],
+    doDecide: async () => {
+      throw new Error('Decision model unavailable: no API key configured')
+    },
+  }) as unknown as NonNullable<ReturnType<typeof crumDecisionModel>>
+
 export const injectionClassifier = new Classifier({
   id: 'crum-injection',
-  model: model!,
+  model: safeModel,
   questions: {
     injection: {
       type: 'boolean',
