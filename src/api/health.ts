@@ -32,12 +32,15 @@ export function createHealthRouter(): Hono {
 
       if (!storage) {
         dependencies.storage = { status: 'degraded', message: 'no storage configured' }
-      } else if (typeof (storage as Record<string, unknown>).getStatus === 'function') {
-        await (storage as Record<string, (...args: unknown[]) => Promise<unknown>>).getStatus()
-        dependencies.storage = { status: 'ok' }
       } else {
-        // Storage exists but has no getStatus method — assume reachable
-        dependencies.storage = { status: 'ok' }
+        const getStatus = (storage as unknown as Record<string, ((...args: unknown[]) => Promise<unknown>) | undefined>).getStatus
+        if (typeof getStatus === 'function') {
+          await getStatus.call(storage)
+          dependencies.storage = { status: 'ok' }
+        } else {
+          // Storage exists but has no getStatus method — assume reachable
+          dependencies.storage = { status: 'ok' }
+        }
       }
     } catch (err) {
       dependencies.storage = {

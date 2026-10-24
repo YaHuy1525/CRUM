@@ -13,7 +13,7 @@ describe('startInboxClearingGoal', () => {
     })
 
     expect(setObjective).toHaveBeenCalledOnce()
-    const [objective, opts] = setObjective.mock.calls[0]
+    const [objective, opts] = setObjective.mock.calls[0]!
     expect(objective).toContain('approval-free')
     expect(opts.maxRuns).toBe(12)
     expect(opts.threadId).toBe('thread-1')
@@ -31,7 +31,7 @@ describe('startInboxClearingGoal', () => {
       resourceId: 'tenant_1:user_1',
     })
 
-    const [objective] = setObjective.mock.calls[0]
+    const [objective] = setObjective.mock.calls[0]!
     expect(objective).toMatch(/followup|inbox|clear/i)
   })
 })

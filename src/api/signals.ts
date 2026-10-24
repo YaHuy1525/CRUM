@@ -2,18 +2,20 @@
 import { Hono } from 'hono'
 import { resolveSession } from '../mastra/sessions'
 
-export function createSignalsRouter(): Hono {
-  const app = new Hono().basePath('/api/signals')
+type Env = { Variables: { tenantId: string } }
+
+export function createSignalsRouter(): Hono<Env> {
+  const app = new Hono<Env>().basePath('/api/signals')
 
   app.use('*', async (c, next) => {
-    const tenantId = c.req.header('x-tenant-id')
+    const tenantId = c.req.header('x-tenant-id') as string | undefined
     if (!tenantId) return c.json({ error: 'x-tenant-id header required' }, 400)
     c.set('tenantId', tenantId)
     await next()
   })
 
   app.post('/interrupt', async (c) => {
-    const sessionId = c.req.header('x-session-id')
+    const sessionId = c.req.header('x-session-id') as string | undefined
     if (!sessionId) return c.json({ error: 'x-session-id header required' }, 400)
     const { session } = await resolveSession({ sessionId, tenantId: c.get('tenantId') })
     session.abort()
@@ -21,7 +23,7 @@ export function createSignalsRouter(): Hono {
   })
 
   app.post('/correct', async (c) => {
-    const sessionId = c.req.header('x-session-id')
+    const sessionId = c.req.header('x-session-id') as string | undefined
     if (!sessionId) return c.json({ error: 'x-session-id header required' }, 400)
     const body = await c.req.json()
     if (!body.content || typeof body.content !== 'string') {
@@ -33,7 +35,7 @@ export function createSignalsRouter(): Hono {
   })
 
   app.post('/rebind', async (c) => {
-    const sessionId = c.req.header('x-session-id')
+    const sessionId = c.req.header('x-session-id') as string | undefined
     if (!sessionId) return c.json({ error: 'x-session-id header required' }, 400)
     const body = await c.req.json()
     if (!body.objectType || !body.objectId) {

@@ -20,7 +20,7 @@ describe('GET /health', () => {
     const res = await app.request('/health')
 
     expect(res.status).toBe(200)
-    const data = await res.json()
+    const data = (await res.json()) as any
     expect(data.status).toBe('ok')
     expect(data.dependencies.storage.status).toBe('ok')
     expect(getStatus).toHaveBeenCalled()
@@ -40,7 +40,7 @@ describe('GET /health', () => {
     const res = await app.request('/health')
 
     expect(res.status).toBe(200)
-    const data = await res.json()
+    const data = (await res.json()) as any
     expect(data.status).toBe('degraded')
     expect(data.dependencies.storage.status).toBe('degraded')
     expect(data.dependencies.storage.message).toMatch(/connection refused/)
@@ -59,7 +59,7 @@ describe('GET /health', () => {
     const res = await app.request('/health')
 
     expect(res.status).toBe(200)
-    const data = await res.json()
+    const data = (await res.json()) as any
     expect(data.status).toBe('degraded')
     expect(data.dependencies.storage.status).toBe('degraded')
     expect(data.dependencies.storage.message).toMatch(/no storage/)
@@ -78,7 +78,7 @@ describe('GET /health', () => {
     const res = await app.request('/health')
 
     expect(res.status).toBe(200)
-    const data = await res.json()
+    const data = (await res.json()) as any
     expect(data.status).toBe('ok')
     expect(data.dependencies.storage.status).toBe('ok')
   })

@@ -81,7 +81,7 @@ describe('POST /api/signals/rebind', () => {
     })
     expect(res.status).toBe(200)
     expect(sendSignal).toHaveBeenCalled()
-    const signalArg = sendSignal.mock.calls[0][0]
+    const signalArg = sendSignal.mock.calls[0]![0]
     expect(signalArg.type).toBe('state')
   })
 })
