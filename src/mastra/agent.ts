@@ -6,7 +6,6 @@ import type {
 } from '@mastra/core/processors'
 import { CRUM_INSTRUCTIONS } from './instructions'
 import { crumInputProcessors, crumOutputProcessors } from './processors'
-import { emailDrafterAgent } from './agents/email-drafter'
 import { listCustomersTool, getCustomerTool } from './tools/customers'
 import { findContactsTool } from './tools/contacts'
 import { listFollowupsTool } from './tools/followups'
@@ -111,7 +110,11 @@ export const CRUM_SUBAGENTS: AgentControllerSubagent[] = [
     name: 'Email Drafter',
     description:
       'Drafts an outbound email body from a customer record and a stated intent. Never sends.',
-    instructions: emailDrafterAgent.getInstructions() as string,
+    instructions:
+      'Draft a professional email body based on the customer context and intent provided. ' +
+      'Never send the email. Never include placeholders the user must fill in. ' +
+      'Keep the tone matching the relationship stage: formal for new contacts, ' +
+      'warm but professional for established ones.',
     tools: {},
     defaultModelId: 'anthropic/claude-sonnet-5-5',
     maxSteps: 1,
