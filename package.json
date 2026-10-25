@@ -10,9 +10,11 @@
   "scripts": {
     "dev": "mastra dev",
     "dev:mastra": "mastra dev",
+    "dev:api": "tsx watch src/api/serve.ts",
+    "dev:all": "tsx scripts/dev-all.ts",
     "dev:console": "cd console && npm run dev",
     "build": "mastra build",
-    "start": "node dist/index.js",
+    "start": "mastra start",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
@@ -30,6 +32,7 @@
   "dependencies": {
     "@ai-sdk/openai": "4.0.101",
     "@ai-sdk/typesafe-ai": "3.0.24",
+    "@hono/node-server": "1.19.17",
     "@mastra/ai-sdk": "1.11.2",
     "@mastra/core": "1.79.0",
     "@mastra/evals": "1.10.8",

@@ -225,5 +225,61 @@ export type { CreateSessionOptions, ListSessionsOptions } from './sessions'
  *
  * Kept last so bundler tree-shaking doesn't reorder side effects before the
  * factory and helpers it depends on are defined.
+ *
+ * Memoised on `globalThis` rather than just constructed, because the bundler
+ * evaluates this module more than once inside a single server process: four
+ * routers under `src/api` import `createCrumMastra` from here, so the
+ * dynamically-loaded `serve.mjs` chunk gets its own copy of this module, and
+ * `node .mastra/output/index.mjs` was observed constructing a second registry.
+ * A per-process global is the only seam that survives chunk duplication, and it
+ * keeps the promise the paragraph above makes — one instance per process.
  */
-export const mastra: Mastra = createCrumMastra(parseEnv())
+interface EntryMastraGlobal {
+  __crumEntryMastra?: Mastra
+}
+
+const entryEnv = parseEnv()
+const entryHolder = globalThis as unknown as EntryMastraGlobal
+export const mastra: Mastra = entryHolder.__crumEntryMastra ??= createCrumMastra(entryEnv)
+
+/**
+ * Process-level side effects: the digest schedule and the `/api` REST plane.
+ *
+ * They live here because this is the module the CLI actually executes. `mastra
+ * dev` and `mastra build` bundle from `src/mastra/index.ts`, not from
+ * `src/index.ts`, so anything placed in the latter is never evaluated by a
+ * server the framework starts — observed in a real `mastra dev` boot that came
+ * up with no REST plane listener, then confirmed by grepping the generated
+ * `.mastra/output/index.mjs` and finding the plane's strings only in the
+ * `.mastra/output/boot.mjs` and `serve.mjs` chunks the bundler splits out beside
+ * it — that is where `src/mastra/boot.ts` and `src/api/serve.ts` ended up, not in
+ * the dead `src/index.ts`.
+ *
+ * `bootCrumProcess` re-checks the environment and refuses to bind anything when
+ * this module is loaded from source, because it is also the library barrel that
+ * `src/api/*` and half the suite import.
+ *
+ * Imported lazily on purpose: every router under `src/api` imports this barrel,
+ * so a static edge back to the plane would put the entry in a cycle and leave
+ * `mastra` uninitialised while those routers are still being evaluated.
+ */
+if (entryEnv.NODE_ENV !== 'test') {
+  void import('./boot')
+    .then(({ bootCrumProcess }) => {
+      const result = bootCrumProcess(entryEnv, mastra)
+      // A server that decided not to boot must say why; the first `npm run
+      // dev:all` came up looking healthy with no plane and no clue in the log.
+      // Refusing a source-mode load is the normal case and stays quiet, and the
+      // registry itself is memoised, so the duplicate evaluation this reports is
+      // cheap.
+      if (result.skipped === 'already-started') {
+        console.log('[CRUM] Boot side effects already running in this process (the bundler evaluates this module twice); not binding a second plane.')
+      } else if (result.skipped && result.skipped !== 'not-server-process') {
+        console.log(`[CRUM] Boot side effects skipped: ${result.skipped}`)
+      }
+      return result.restPlane
+    })
+    .catch((err: unknown) => {
+      console.error(`[CRUM] Boot side effects never ran: ${err instanceof Error ? err.message : String(err)}`)
+    })
+}

@@ -18,9 +18,9 @@ import { createAgentRouter } from './agent'
  * file mounts them all at `/`.
  *
  * Everything on this plane reaches the registry through `getMastra`, a function
- * rather than an instance: the module-level singleton lives in `src/index.ts`,
- * and importing it here would make every route test construct a Mastra (and read
- * `process.env`) at import time.
+ * rather than an instance: the module-level singleton lives in `src/mastra/index.ts`
+ * (the CLI entry), and importing it here would make every route test construct a
+ * Mastra (and read `process.env`) at import time.
  */
 export interface ApiRouterDeps {
   env: CrumEnv

@@ -26,9 +26,9 @@ import { getDbClient } from '../db/client'
  * background run finishes (the workflow has no terminal step, and a run survives
  * only as long as the process does), so a 202 would be a promise the server
  * cannot keep. The cost is stated in §10.2: a large document can outlive the
- * server timeout while the workflow keeps running server-side, so
- * `CRUM_API_PORT`'s `server.timeout` and `MASTRA_REQUEST_TIMEOUT_SECONDS` have to
- * agree with each other.
+ * server timeout while the workflow keeps running server-side, so the REST plane's
+ * request timeout (`CRUM_REST_PORT`, served by src/api/serve.ts on Node's default
+ * 300 s) and `MASTRA_REQUEST_TIMEOUT_SECONDS` have to agree with each other.
  */
 
 /** The `knowledge-ingest` input, mirroring the workflow's own inputSchema. */

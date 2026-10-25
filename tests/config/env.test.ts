@@ -30,6 +30,8 @@ describe('parseEnv', () => {
     expect(env.MASTRA_OBSERVABILITY).toBe(false)
     expect(env.CRUM_AUTH_MODE).toBe('dev')
     expect(env.CRUM_API_PORT).toBe(4111)
+    // The REST plane is a second port on purpose: Mastra reserves `/api`.
+    expect(env.CRUM_REST_PORT).toBe(4113)
   })
 
   it('refuses dev identity in production (§13.2, §13.8)', () => {

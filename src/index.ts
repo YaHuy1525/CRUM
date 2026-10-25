@@ -1,31 +1,23 @@
-import { parseEnv } from './config/env'
-import { createCrumMastra } from './mastra'
-import { buildDigestScheduleConfig } from './mastra/schedules/digest'
+// src/index.ts
+import { mastra } from './mastra'
 
-// Phase 1: construct the singleton at process startup, where the process
-// environment is the right thing to read. No module-level singleton on purpose
-// (see src/mastra/index.ts comment).
-const env = parseEnv()
-const mastra = createCrumMastra(env)
+/**
+ * Compatibility re-export of the process singleton, kept because Phase 1 named
+ * this file the entry point (`docs/superpowers/plans/2026-10-23-phase-1-harness.md`
+ * task 1) and a reader landing here should find the same instance the server uses.
+ *
+ * It is not what `mastra dev` or `mastra build` run. Those resolve
+ * `src/mastra/index.ts` as the entry file (the CLI's default `--dir`), so the
+ * boot side effects — the digest schedule and the `/api` REST plane — live in
+ * that module and in `src/mastra/boot.ts`. Anything added here would be silently
+ * skipped by the server the framework starts; that is the whole reason this file
+ * is a re-export rather than sixty lines of boot code.
+ *
+ * Importing it does construct the singleton and, outside `test`, boot the
+ * process, because that happens in the module being re-exported. What it does
+ * *not* do is start the Mastra HTTP server itself — no CLI, no chat lane. Use
+ * `npm run dev` for that.
+ */
+export { mastra }
 
-// Phase 6: register the digest schedule at boot. Schedule creation is async
-// (it persists to storage), so it runs detached from the synchronous export
-// below. Errors are logged but do not crash the boot — a missing schedule is
-// a degraded feature, not a fatal one.
-const digestScheduleConfig = buildDigestScheduleConfig(env)
-if (digestScheduleConfig) {
-  mastra.schedules
-    .create(digestScheduleConfig)
-    .then((schedule) => {
-      console.log(
-        `[CRUM] Digest schedule created: id=${schedule.id}, cron=${schedule.cron}, tz=${schedule.timezone ?? 'UTC'}`,
-      )
-    })
-    .catch((err: unknown) => {
-      const message = err instanceof Error ? err.message : String(err)
-      console.error(`[CRUM] Failed to create digest schedule: ${message}`)
-    })
-}
-
-// Mastra CLI reads this export and starts the server.
 export default mastra

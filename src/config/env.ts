@@ -100,9 +100,20 @@ export const EnvSchema = z.object({
   CRUM_AUTH_MODE: z.enum(['dev', 'jwt']).default('dev'),
   CRUM_MODEL_MAIN: optionalString,
   CRUM_MODEL_LIGHT: optionalString,
-  /** The Mastra HTTP server port (chat route + Studio). Default 4111; the
-   *  hand-rolled Hono REST plane runs separately on 4113. */
+  /** The Mastra HTTP server port (chat route + Studio). */
   CRUM_API_PORT: z.coerce.number().int().min(1).max(65535).default(4111),
+  /**
+   * The hand-rolled Hono REST plane (`/api/*`: approvals, knowledge, signals,
+   * agent threads). It cannot live on `CRUM_API_PORT` because Mastra reserves the
+   * `/api` prefix for its own routes, and `registerApiRoute` documents `:param`
+   * only — no splat — so it cannot host `/api/*` at all (§10.2).
+   *
+   * Served by `src/api/serve.ts`, which `src/mastra/boot.ts` starts in the same
+   * process as the registry: an `AgentController` session lives in the process that
+   * owns the live run, so a REST plane in another process could list threads from
+   * storage but never see the run a signal is meant to reach.
+   */
+  CRUM_REST_PORT: z.coerce.number().int().min(1).max(65535).default(4113),
 
   // Mastra runtime (§13.3)
   MASTRA_OBSERVABILITY: booleanish.prefault('false'),
