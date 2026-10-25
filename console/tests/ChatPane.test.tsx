@@ -63,7 +63,7 @@ describe('ChatPane', () => {
   it('renders the input field and send button', () => {
     render(<ChatPane threadId={THREAD} />)
     expect(screen.getByPlaceholderText('Type a message...')).toBeInTheDocument()
-    expect(screen.getByText('Send')).toBeInTheDocument()
+    expect(screen.getByLabelText('Send message')).toBeInTheDocument()
   })
 
   it('sends the thread id as a per-turn header', async () => {
@@ -71,7 +71,7 @@ describe('ChatPane', () => {
     render(<ChatPane threadId={THREAD} />)
 
     fireEvent.change(screen.getByPlaceholderText('Type a message...'), { target: { value: 'Hello CRM' } })
-    fireEvent.click(screen.getByText('Send'))
+    fireEvent.click(screen.getByLabelText('Send message'))
 
     await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1))
     const [message, options] = vi.mocked(sendMessage).mock.calls[0]!
@@ -87,7 +87,7 @@ describe('ChatPane', () => {
     const input = screen.getByPlaceholderText('Type a message...') as HTMLInputElement
 
     fireEvent.change(input, { target: { value: 'Test message' } })
-    fireEvent.click(screen.getByText('Send'))
+    fireEvent.click(screen.getByLabelText('Send message'))
 
     expect(input.value).toBe('')
   })
@@ -95,7 +95,7 @@ describe('ChatPane', () => {
   it('does not send empty messages', async () => {
     const { sendMessage } = chat()
     render(<ChatPane threadId={THREAD} />)
-    fireEvent.click(screen.getByText('Send'))
+    fireEvent.click(screen.getByLabelText('Send message'))
     expect(sendMessage).not.toHaveBeenCalled()
     expect(screen.getByText(/Start a conversation/)).toBeInTheDocument()
   })
@@ -213,7 +213,7 @@ describe('ChatPane', () => {
   it('swaps Send for Stop while streaming', () => {
     const { stop } = chat({ status: 'streaming' })
     render(<ChatPane threadId={THREAD} />)
-    expect(screen.queryByText('Send')).toBeNull()
+    expect(screen.queryByLabelText('Send message')).toBeNull()
     fireEvent.click(screen.getByLabelText('Stop generation'))
     expect(stop).toHaveBeenCalled()
   })

@@ -88,7 +88,10 @@ export function UsageDashboard() {
     return (
       <div className="usage-dashboard">
         <div className="usage-header">
-          <h1>Usage</h1>
+          <div>
+            <h1>Usage</h1>
+            <p className="page-sub">Tokens and cost across the selected range.</p>
+          </div>
         </div>
         <div className="usage-loading">Loading metrics...</div>
       </div>
@@ -99,7 +102,10 @@ export function UsageDashboard() {
     return (
       <div className="usage-dashboard">
         <div className="usage-header">
-          <h1>Usage</h1>
+          <div>
+            <h1>Usage</h1>
+            <p className="page-sub">Tokens and cost across the selected range.</p>
+          </div>
         </div>
         <div className="usage-error">
           <p>Failed to load usage data</p>
@@ -114,7 +120,10 @@ export function UsageDashboard() {
     return (
       <div className="usage-dashboard">
         <div className="usage-header">
-          <h1>Usage</h1>
+          <div>
+            <h1>Usage</h1>
+            <p className="page-sub">Tokens and cost across the selected range.</p>
+          </div>
         </div>
         <div className="empty-state">No usage data available</div>
       </div>
@@ -124,7 +133,10 @@ export function UsageDashboard() {
   return (
     <div className="usage-dashboard">
       <div className="usage-header">
-        <h1>Usage</h1>
+        <div>
+          <h1>Usage</h1>
+          <p className="page-sub">Tokens and cost across the selected range.</p>
+        </div>
         <div className="usage-range">
           <label>
             From{' '}

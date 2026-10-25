@@ -99,7 +99,7 @@ export function SessionList({ activeThreadId, onSelect, refreshKey }: SessionLis
               {/* A thread the agent never named has a null title, so fall back to
                   the id rather than showing an empty row. */}
               <div className="session-title">{thread.title ?? thread.id}</div>
-              <div style={{ fontSize: '12px', color: '#666' }}>
+              <div className="session-meta">
                 {new Date(thread.updated_at).toLocaleString()}
               </div>
             </li>

@@ -77,7 +77,10 @@ export function TodayView() {
     return (
       <div className="today-view">
         <div className="today-header">
-          <h1>Today</h1>
+          <div>
+            <h1>Today</h1>
+            <p className="page-sub">Your digest for the day.</p>
+          </div>
         </div>
         <div className="today-loading">Loading digest...</div>
       </div>
@@ -88,7 +91,10 @@ export function TodayView() {
     return (
       <div className="today-view">
         <div className="today-header">
-          <h1>Today</h1>
+          <div>
+            <h1>Today</h1>
+            <p className="page-sub">Your digest for the day.</p>
+          </div>
         </div>
         <div className="today-error">
           <p>Failed to load digest</p>
@@ -103,7 +109,10 @@ export function TodayView() {
     return (
       <div className="today-view">
         <div className="today-header">
-          <h1>Today</h1>
+          <div>
+            <h1>Today</h1>
+            <p className="page-sub">Your digest for the day.</p>
+          </div>
         </div>
         <div className="empty-state">No digest data available</div>
       </div>
@@ -115,7 +124,10 @@ export function TodayView() {
   return (
     <div className="today-view">
       <div className="today-header">
-        <h1>Today</h1>
+        <div>
+          <h1>Today</h1>
+          <p className="page-sub">Your digest for {digest.date}.</p>
+        </div>
         <div className="today-date">
           <label>
             Date{' '}

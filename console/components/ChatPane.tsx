@@ -87,6 +87,47 @@ interface ChatPaneProps {
   threadId: string
 }
 
+/**
+ * Suggestions for the empty canvas, in Cedar's card-grid grammar. They are not
+ * navigation: clicking one fills the composer with a real prompt the agent can
+ * answer, so the card is a starting move, not a shortcut to another page.
+ */
+const SUGGESTIONS = [
+  {
+    title: 'What should I do today?',
+    desc: 'Ask the assistant to rank today\u2019s follow-ups from the live pipeline.',
+    prompt: 'What should I work on today? Check overdue follow-ups and deals at risk.',
+    icon: (
+      <>
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 7v5l3 2" />
+      </>
+    ),
+  },
+  {
+    title: 'Summarize a customer',
+    desc: 'Deals, tasks and notes for one account, from the rows you can see.',
+    prompt: 'Summarize my open deals and the last activity for my most active customer.',
+    icon: (
+      <>
+        <path d="M3 20V10l9-6 9 6v10" />
+        <path d="M9 20v-6h6v6" />
+      </>
+    ),
+  },
+  {
+    title: 'Draft a next step',
+    desc: 'A follow-up staged as a draft \u2014 it waits for your approval, always.',
+    prompt: 'Draft a follow-up task for the deal that went quiet longest.',
+    icon: (
+      <>
+        <path d="M12 20h9" />
+        <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+      </>
+    ),
+  },
+]
+
 export function ChatPane({ threadId }: ChatPaneProps) {
   const [input, setInput] = useState('')
 
@@ -117,9 +158,29 @@ export function ChatPane({ threadId }: ChatPaneProps) {
     <>
       <div className="messages" role="log" aria-live="polite" aria-label="Conversation messages">
         {messages.length === 0 && (
-          <div className="empty-state">
-            Start a conversation — this talks to the live `crm-assistant` agent.
-          </div>
+          <>
+            <div className="empty-state">
+              Start a conversation — this talks to the live `crm-assistant` agent.
+            </div>
+            <div className="suggest-grid" aria-label="Suggested prompts">
+              {SUGGESTIONS.map((s) => (
+                <button
+                  key={s.title}
+                  type="button"
+                  className="suggest-card focus-ring"
+                  onClick={() => setInput(s.prompt)}
+                >
+                  <span className="suggest-icon" aria-hidden="true">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                      {s.icon}
+                    </svg>
+                  </span>
+                  <span className="suggest-title">{s.title}</span>
+                  <span className="suggest-desc">{s.desc}</span>
+                </button>
+              ))}
+            </div>
+          </>
         )}
 
         {messages.map((message) => (
@@ -189,12 +250,17 @@ export function ChatPane({ threadId }: ChatPaneProps) {
           className="focus-ring"
         />
         {busy ? (
-          <button onClick={stop} aria-label="Stop generation" className="focus-ring">
-            Stop
+          <button onClick={stop} aria-label="Stop generation" className="stop focus-ring">
+            <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+              <rect x="1.5" y="1.5" width="9" height="9" rx="2" fill="currentColor" />
+            </svg>
           </button>
         ) : (
           <button onClick={send} aria-label="Send message" className="focus-ring">
-            Send
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M12 19V5" />
+              <path d="m5 12 7-7 7 7" />
+            </svg>
           </button>
         )}
       </div>

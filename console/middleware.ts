@@ -43,7 +43,15 @@ function refuse(status: number, error: string, detail: string): NextResponse {
 
 export function middleware(request: NextRequest): NextResponse {
   const headers = new Headers(request.headers)
-  const mode = process.env.CRUM_AUTH_MODE === 'jwt' ? 'jwt' : 'dev'
+  // The `NEXT_PUBLIC_*` fallbacks exist for the containerized build. This module
+  // runs in the Next.js Edge runtime, and a self-hosted `next start` only exposes
+  // build-inlined `NEXT_PUBLIC_*` to that sandbox — the plain server keys are
+  // present there but empty, so `||` (not `??`) is what lets a baked value win.
+  // On a host (or under `next dev`) the plain names resolve first and the fallback
+  // is never used. The dev identity is a non-secret local fixture, so baking it is
+  // safe; `jwt` mode reads the caller's own token and ignores it.
+  const authMode = process.env.CRUM_AUTH_MODE || process.env.NEXT_PUBLIC_CRUM_AUTH_MODE
+  const mode = authMode === 'jwt' ? 'jwt' : 'dev'
 
   if (mode === 'jwt') {
     // The token is the caller's, not this app's secret: pass it through and let
@@ -57,9 +65,9 @@ export function middleware(request: NextRequest): NextResponse {
     return NextResponse.next({ request: { headers } })
   }
 
-  const tenantId = process.env.CRUM_DEV_TENANT_ID ?? ''
-  const userId = process.env.CRUM_DEV_USER_ID ?? ''
-  const role = process.env.CRUM_DEV_USER_ROLE ?? ''
+  const tenantId = process.env.CRUM_DEV_TENANT_ID || process.env.NEXT_PUBLIC_CRUM_DEV_TENANT_ID || ''
+  const userId = process.env.CRUM_DEV_USER_ID || process.env.NEXT_PUBLIC_CRUM_DEV_USER_ID || ''
+  const role = process.env.CRUM_DEV_USER_ROLE || process.env.NEXT_PUBLIC_CRUM_DEV_USER_ROLE || ''
 
   // Same vocabulary the identity layer uses, checked here so a typo in the
   // console's environment is reported by the console rather than arriving as an

@@ -1,58 +1,141 @@
-/* console/app/theme.css — TECHNICAL_PLAN.md §11.1 */
+/* console/app/theme.css — CRUM design system.
+ *
+ * Structure borrows from Cedar (sidebar shell, serif display voice, card rail,
+ * one gradient reserved for the composer), but the color identity stays ours:
+ * graphite surfaces with a single emerald accent, used only where a decision or
+ * a primary action lives. Every token below is a name for a decision;
+ * components reference names and never reach for raw colors.
+ */
 :root {
-  /* Palette */
+  color-scheme: dark;
+
+  /* ── Brand primitives ───────────────────────────────────────────── */
   --crum-white: #ffffff;
-  --crum-black-900: #1a1a1a;
-  --crum-black-950: #0d0d0d;
-  --crum-green-500: #22c55e;
-  --crum-green-600: #16a34a;
+  --cedar-900: #06402c;
+  --cedar-700: #10b981;
+  --cedar-500: #34d399;
+  --cedar-100: rgba(16, 185, 129, 0.14);
+  /* Retained for compatibility with any older var references. */
+  --crum-emerald-500: var(--cedar-700);
+  --crum-emerald-400: var(--cedar-500);
 
-  /* Semantic tokens — dark mode default */
-  --bg-base: var(--crum-black-950);
-  --bg-card: var(--crum-black-900);
-  --bg-raised: #242424;
-  --text-primary: var(--crum-white);
-  --text-muted: rgba(255, 255, 255, 0.48);
-  --text-secondary: rgba(255, 255, 255, 0.72);
-  --accent: var(--crum-green-500);
-  --accent-fg: var(--crum-black-950);
-  --border: rgba(255, 255, 255, 0.12);
-  --border-strong: rgba(255, 255, 255, 0.24);
-  --state-danger: #ef4444;
-  --state-warning: #f59e0b;
-  --state-success: var(--crum-green-500);
+  /* ── Graphite surfaces ──────────────────────────────────────────── */
+  --bg-base: #0b0e14;      /* app canvas */
+  --bg-sunken: #070910;    /* inputs, wells, tracks */
+  --bg-card: #12161f;      /* card and pane surface */
+  --bg-raised: #1a1f2b;    /* focus fills, hover fills */
+  --bg-elevated: #232b3a;  /* floating elements */
+  --bg-hover: rgba(255, 255, 255, 0.04);
+  --bg-active-pill: #1a1f2b; /* sidebar/tab active track */
 
-  /* Typography — §11.1.4 */
-  --text-base: 14px;
+  /* ── Text ──────────────────────────────────────────────────────── */
+  --text-primary: #e7ecf3;
+  --text-secondary: #aab4c4;
+  --text-muted: #6c7789;
+
+  /* ── Accent: emerald, decision-only ─────────────────────────────── */
+  --accent: var(--cedar-700);
+  --accent-bright: var(--cedar-500);
+  --accent-fg: #04120c;
+  --accent-soft: var(--cedar-100);
+  --accent-line: rgba(16, 185, 129, 0.32);
+
+  /* ── Lines ──────────────────────────────────────────────────────── */
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --border-focus: var(--accent);
+
+  /* ── Semantic states ────────────────────────────────────────────── */
+  --state-danger: #f8717a;
+  --state-danger-soft: rgba(248, 113, 122, 0.14);
+  --state-danger-line: rgba(248, 113, 122, 0.35);
+  --state-warning: #f5b445;
+  --state-warning-soft: rgba(245, 180, 69, 0.14);
+  --state-warning-line: rgba(245, 180, 69, 0.35);
+  --state-success: var(--cedar-500);
+  --state-success-soft: rgba(52, 211, 153, 0.14);
+  --state-success-line: rgba(52, 211, 153, 0.35);
+  --state-info: #6ea8fe;
+  --state-info-soft: rgba(110, 168, 254, 0.14);
+
+  /* ── The one gradient: the composer, tinted to sit on graphite ──── */
+  --grad-composer: linear-gradient(
+    115deg,
+    rgba(110, 168, 254, 0.09) 0%,
+    rgba(16, 185, 129, 0.08) 48%,
+    rgba(245, 180, 69, 0.07) 100%
+  );
+
+  /* ── Typography ────────────────────────────────────────────────── */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', sans-serif;
+  --font-display: 'Source Serif 4', 'Iowan Old Style', Georgia,
+    'Times New Roman', serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'SFMono-Regular', Consolas, monospace;
+
   --text-xs: 12px;
   --text-sm: 13px;
-  --font-mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
-  --line-height-prose: 1.5;
+  --text-base: 14px;
+  --text-md: 15px;
+  --text-lg: 18px;
+  --text-xl: 22px;
+  --text-2xl: 28px;
+  --tracking-tight: -0.01em;
+  --tracking-label: 0.06em;
+
+  --line-height-prose: 1.55;
+  --line-height-tight: 1.25;
   --line-height-table: 1.35;
 
-  /* Spacing */
-  --radius-md: 6px;
-  --radius-lg: 10px;
+  /* ── Spacing scale (4px grid) ───────────────────────────────────── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* ── Radii ──────────────────────────────────────────────────────── */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-pill: 999px;
+
+  /* ── Elevation ──────────────────────────────────────────────────── */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.30);
+  --shadow-md: 0 4px 16px -6px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 18px 48px -18px rgba(0, 0, 0, 0.70);
+  --shadow-accent: 0 6px 22px -8px rgba(16, 185, 129, 0.55);
+  --ring: 0 0 0 2px var(--bg-base), 0 0 0 4px var(--accent);
+
+  /* ── Motion ─────────────────────────────────────────────────────── */
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --dur-fast: 120ms;
+  --dur: 180ms;
+  --transition: var(--dur) var(--ease);
+
+  /* ── Layout ─────────────────────────────────────────────────────── */
+  --sidebar-w: 240px;
+  --header-h: 0px; /* kept for compatibility; the shell is a sidebar now */
+  --pane-sessions-w: 264px;
+  --pane-context-w: 332px;
 }
 
-/* Light mode — §11.1.2: green-500 fails AA on white (3.0:1), use green-600 */
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg-base: #ffffff;
-    --bg-card: #f8f8f8;
-    --bg-raised: #f0f0f0;
-    --text-primary: var(--crum-black-950);
-    --text-muted: rgba(0, 0, 0, 0.48);
-    --text-secondary: rgba(0, 0, 0, 0.72);
-    --accent: var(--crum-green-600);
-    --accent-fg: var(--crum-white);
-    --border: rgba(0, 0, 0, 0.12);
-    --border-strong: rgba(0, 0, 0, 0.24);
+/* Respect users who ask for less motion. */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
   }
 }
 
-/* Focus ring — §11.1.3: 2px accent offset 2px, always visible */
+/* Focus ring — always visible, emerald, offset from the surface. */
 .focus-ring:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }

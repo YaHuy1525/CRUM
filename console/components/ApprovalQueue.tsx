@@ -135,6 +135,10 @@ export function ApprovalQueue() {
 
   return (
     <div className="approval-queue">
+      <div className="queue-header">
+        <h1>Approvals</h1>
+        <p className="page-sub">Every write to the CRM waits here for a human decision.</p>
+      </div>
       <div className="tabs">
         <button
           className={tab === 'pending' ? 'active focus-ring' : 'focus-ring'}
