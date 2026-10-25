@@ -60,40 +60,40 @@ const branchOutputSchema = z.object({
   message: z.string(),
 })
 
+// Mastra types ExecuteFunction / ConditionFunction as Promise-returning, so a step
+// or branch with nothing to await returns Promise.resolve(...) explicitly instead
+// of being declared `async` with no await inside it.
 const scheduleStep = createStep({
   id: 'schedule-action',
   inputSchema: classifierOutputSchema,
   outputSchema: branchOutputSchema,
-  execute: async (ctx) => {
-    return {
+  execute: (ctx) =>
+    Promise.resolve({
       action: 'schedule' as const,
       message: ctx.getInitData<z.infer<typeof workflowInputSchema>>().message,
-    }
-  },
+    }),
 })
 
 const taskStep = createStep({
   id: 'task-action',
   inputSchema: classifierOutputSchema,
   outputSchema: branchOutputSchema,
-  execute: async (ctx) => {
-    return {
+  execute: (ctx) =>
+    Promise.resolve({
       action: 'task' as const,
       message: ctx.getInitData<z.infer<typeof workflowInputSchema>>().message,
-    }
-  },
+    }),
 })
 
 const clarifyStep = createStep({
   id: 'clarify-action',
   inputSchema: classifierOutputSchema,
   outputSchema: branchOutputSchema,
-  execute: async (ctx) => {
-    return {
+  execute: (ctx) =>
+    Promise.resolve({
       action: 'clarify' as const,
       message: ctx.getInitData<z.infer<typeof workflowInputSchema>>().message,
-    }
-  },
+    }),
 })
 
 export const intentTriageFlow = createWorkflow({
@@ -101,20 +101,22 @@ export const intentTriageFlow = createWorkflow({
   inputSchema: workflowInputSchema,
   outputSchema: branchOutputSchema,
 })
-  .map(async ({ inputData }) => ({ message: inputData.message }))
+  .map(({ inputData }) => Promise.resolve({ message: inputData.message }))
   .classifier(intentClassifier)
   .branch([
     [
-      async ({ inputData }) =>
-        inputData.answers.intent.choice === 'schedule' &&
-        inputData.answers.hasTimeRange.type === 'boolean' &&
-        inputData.answers.hasTimeRange.probability > 0.7,
+      ({ inputData }) =>
+        Promise.resolve(
+          inputData.answers.intent.choice === 'schedule' &&
+            inputData.answers.hasTimeRange.type === 'boolean' &&
+            inputData.answers.hasTimeRange.probability > 0.7,
+        ),
       scheduleStep,
     ],
     [
-      async ({ inputData }) => inputData.answers.intent.choice === 'task',
+      ({ inputData }) => Promise.resolve(inputData.answers.intent.choice === 'task'),
       taskStep,
     ],
-    [async () => true, clarifyStep],
+    [() => Promise.resolve(true), clarifyStep],
   ])
   .commit()

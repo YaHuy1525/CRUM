@@ -35,20 +35,18 @@ export const createCustomerTool = createTool({
   // a call that arrives without ctx keeps requestContext undefined instead of inventing a tenant.
   requireApproval: (input, { requestContext } = {}) => {
     const policy = loadPolicy()
-    const rc = requestContext as Record<string, unknown> | undefined
     const assessment = scoreRisk(input, policy.risk, 'crm.create_customer')
-    return policy.gateFor('crm.create_customer', assessment, { requestContext: rc }) === 'approval'
+    return policy.gateFor('crm.create_customer', assessment, { requestContext }) === 'approval'
   },
 
   beforeApproval: async (input, { toolCallId, requestContext }) => {
     const policy = loadPolicy()
-    const rc = requestContext as Record<string, unknown> | undefined
     const assessment = scoreRisk(input, policy.risk, 'crm.create_customer')
-    const gate = policy.gateFor('crm.create_customer', assessment, { requestContext: rc })
+    const gate = policy.gateFor('crm.create_customer', assessment, { requestContext })
 
     if (gate === 'refuse') {
-      const tenantId = rc?.['tenantId'] as string
-      const userId = rc?.['userId'] as string
+      const tenantId = requestContext?.['tenantId'] as string
+      const userId = requestContext?.['userId'] as string
       await createHumanTask({
         tenantId,
         runId: toolCallId,
@@ -94,7 +92,7 @@ export const createCustomerTool = createTool({
       return {
         pendingWriteId: draft.id,
         riskScore: assessment.score,
-        gate: gate === 'refuse' ? 'approval' as const : gate as 'auto' | 'approval',
+        gate: gate === 'refuse' ? ('approval' as const) : gate,
         message: `Customer staged for approval (draft ${draft.id}).`,
       }
     })
@@ -123,20 +121,18 @@ export const updateCustomerTool = createTool({
 
   requireApproval: (input, { requestContext } = {}) => {
     const policy = loadPolicy()
-    const rc = requestContext as Record<string, unknown> | undefined
     const assessment = scoreRisk(input, policy.risk, 'crm.update_customer')
-    return policy.gateFor('crm.update_customer', assessment, { requestContext: rc }) === 'approval'
+    return policy.gateFor('crm.update_customer', assessment, { requestContext }) === 'approval'
   },
 
   beforeApproval: async (input, { toolCallId, requestContext }) => {
     const policy = loadPolicy()
-    const rc = requestContext as Record<string, unknown> | undefined
     const assessment = scoreRisk(input, policy.risk, 'crm.update_customer')
-    const gate = policy.gateFor('crm.update_customer', assessment, { requestContext: rc })
+    const gate = policy.gateFor('crm.update_customer', assessment, { requestContext })
 
     if (gate === 'refuse') {
-      const tenantId = rc?.['tenantId'] as string
-      const userId = rc?.['userId'] as string
+      const tenantId = requestContext?.['tenantId'] as string
+      const userId = requestContext?.['userId'] as string
       await createHumanTask({
         tenantId, runId: toolCallId, toolName: 'crm.update_customer',
         riskScore: assessment.score,
@@ -178,7 +174,7 @@ export const updateCustomerTool = createTool({
       return {
         pendingWriteId: draft.id,
         riskScore: assessment.score,
-        gate: gate === 'refuse' ? 'approval' as const : gate as 'auto' | 'approval',
+        gate: gate === 'refuse' ? ('approval' as const) : gate,
         message: `Customer update staged (draft ${draft.id}).`,
       }
     })
@@ -204,13 +200,12 @@ export const deleteCustomerTool = createTool({
 
   beforeApproval: async (input, { toolCallId, requestContext }) => {
     const policy = loadPolicy()
-    const rc = requestContext as Record<string, unknown> | undefined
     const assessment = scoreRisk(input, policy.risk, 'crm.delete_customer')
-    const gate = policy.gateFor('crm.delete_customer', assessment, { requestContext: rc })
+    const gate = policy.gateFor('crm.delete_customer', assessment, { requestContext })
 
     if (gate === 'refuse') {
-      const tenantId = rc?.['tenantId'] as string
-      const userId = rc?.['userId'] as string
+      const tenantId = requestContext?.['tenantId'] as string
+      const userId = requestContext?.['userId'] as string
       await createHumanTask({
         tenantId, runId: toolCallId, toolName: 'crm.delete_customer',
         riskScore: assessment.score,

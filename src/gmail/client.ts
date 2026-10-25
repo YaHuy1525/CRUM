@@ -63,7 +63,7 @@ export interface GmailConnectionRow {
 }
 
 export function resolvePool(pool?: Queryable): Queryable {
-  return pool ?? (getDbClient() as unknown as Queryable)
+  return pool ?? getDbClient()
 }
 
 // ── OAuth URL building and state ─────────────────────────────
@@ -308,7 +308,7 @@ export async function searchThreadSummaries(
 ): Promise<ThreadSummary[]> {
   const listRes = await gmailFetch(
     accessToken,
-    `/threads?${new URLSearchParams({ q: query, maxResults: String(maxResults) })}`,
+    `/threads?${new URLSearchParams({ q: query, maxResults: String(maxResults) }).toString()}`,
   )
   const list = (await listRes.json()) as { threads?: { id: string }[] }
   const ids = (list.threads ?? []).map((t) => t.id)

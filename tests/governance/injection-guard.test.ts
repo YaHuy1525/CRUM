@@ -14,6 +14,18 @@ describe('InjectionGuardProcessor', () => {
       (m) => new m.InjectionGuardProcessor(),
     )
 
+  /**
+   * The base Processor config fields these tests read. They are protected on the
+   * framework base class, so the probe declares the shape it expects rather than
+   * reaching through `any`.
+   */
+  type ProcessorConfigProbe = {
+    errorStrategy: string
+    lastMessageOnly: boolean
+    maxInputLength: number
+  }
+  const configOf = (proc: object): ProcessorConfigProbe => proc as ProcessorConfigProbe
+
   it('has the correct id', async () => {
     const proc = await getProcessor()
     expect(proc.id).toBe('crum-injection-guard')
@@ -21,19 +33,16 @@ describe('InjectionGuardProcessor', () => {
 
   it('uses errorStrategy warn (fail-open)', async () => {
     const proc = await getProcessor()
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    expect((proc as any).errorStrategy).toBe('warn')
+    expect(configOf(proc).errorStrategy).toBe('warn')
   })
 
   it('uses lastMessageOnly true', async () => {
     const proc = await getProcessor()
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    expect((proc as any).lastMessageOnly).toBe(true)
+    expect(configOf(proc).lastMessageOnly).toBe(true)
   })
 
   it('uses maxInputLength 8000', async () => {
     const proc = await getProcessor()
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    expect((proc as any).maxInputLength).toBe(8_000)
+    expect(configOf(proc).maxInputLength).toBe(8_000)
   })
 })

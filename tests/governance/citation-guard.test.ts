@@ -13,7 +13,7 @@ function makeMessage(text: string): MastraDBMessage {
     role: 'assistant',
     createdAt: new Date(),
     content: { format: 2, parts: [{ type: 'text', text }] },
-  } as MastraDBMessage
+  }
 }
 
 function makeOutputArgs(overrides: Partial<ProcessOutputStepArgs> = {}): ProcessOutputStepArgs {
@@ -65,74 +65,74 @@ describe('CitationGuardProcessor', () => {
   })
 
   describe('processToolResult', () => {
-    it('records that retrieval returned sources', async () => {
+    it('records that retrieval returned sources', () => {
       const processor = new CitationGuardProcessor()
       const args = makeToolResultArgs()
-      await processor.processToolResult(args)
+      processor.processToolResult(args)
       expect(args.state[SOURCES_STATE_KEY]).toBe(true)
     })
 
-    it('ignores a retrieval that returned no sources', async () => {
+    it('ignores a retrieval that returned no sources', () => {
       const processor = new CitationGuardProcessor()
       const args = makeToolResultArgs({ result: { sources: [] } })
-      await processor.processToolResult(args)
+      processor.processToolResult(args)
       expect(args.state[SOURCES_STATE_KEY]).toBeUndefined()
     })
 
-    it('ignores other tools', async () => {
+    it('ignores other tools', () => {
       const processor = new CitationGuardProcessor()
       const args = makeToolResultArgs({ toolName: 'crm.log_followup' })
-      await processor.processToolResult(args)
+      processor.processToolResult(args)
       expect(args.state[SOURCES_STATE_KEY]).toBeUndefined()
     })
   })
 
   describe('processOutputStep', () => {
-    it('does nothing when no retrieval returned sources', async () => {
+    it('does nothing when no retrieval returned sources', () => {
       const processor = new CitationGuardProcessor()
       const args = makeOutputArgs({ text: 'Some response without citations.' })
-      await processor.processOutputStep(args)
+      processor.processOutputStep(args)
       expect(args.abort).not.toHaveBeenCalled()
     })
 
-    it('does nothing while the step still calls tools', async () => {
+    it('does nothing while the step still calls tools', () => {
       const processor = new CitationGuardProcessor()
       const args = makeOutputArgs({
         state: { [SOURCES_STATE_KEY]: true },
         text: 'A response that forgot to cite its sources.',
         toolCalls: [{ toolName: 'crm.log_followup', toolCallId: 'call-1', args: {} }],
       })
-      await processor.processOutputStep(args)
+      processor.processOutputStep(args)
       expect(args.abort).not.toHaveBeenCalled()
     })
 
-    it('does nothing on an empty step', async () => {
+    it('does nothing on an empty step', () => {
       const processor = new CitationGuardProcessor()
       const args = makeOutputArgs({ state: { [SOURCES_STATE_KEY]: true }, text: '' })
-      await processor.processOutputStep(args)
+      processor.processOutputStep(args)
       expect(args.abort).not.toHaveBeenCalled()
     })
 
-    it('clears the flag once the response carries citations', async () => {
+    it('clears the flag once the response carries citations', () => {
       const processor = new CitationGuardProcessor()
       const state = { [SOURCES_STATE_KEY]: true }
       const args = makeOutputArgs({
         state,
         text: 'The answer is here [doc-abc:12] and also [doc-def:34].',
       })
-      await processor.processOutputStep(args)
+      processor.processOutputStep(args)
       expect(args.abort).not.toHaveBeenCalled()
       expect(state[SOURCES_STATE_KEY]).toBeUndefined()
     })
 
-    it('aborts with retry when sources exist but text has no citations (first retry)', async () => {
+    it('aborts with retry when sources exist but text has no citations (first retry)', () => {
       const processor = new CitationGuardProcessor()
       const args = makeOutputArgs({
         state: { [SOURCES_STATE_KEY]: true },
         text: 'A response that forgot to cite its sources.',
         retryCount: 0,
       })
-      await processor.processOutputStep(args)
+      processor.processOutputStep(args)
       expect(args.abort).toHaveBeenCalledTimes(1)
       expect(args.abort).toHaveBeenCalledWith(
         expect.stringContaining('CITATION_MISSING'),
@@ -140,41 +140,43 @@ describe('CitationGuardProcessor', () => {
       )
     })
 
-    it('aborts with tripwire on second retry when citations still missing', async () => {
+    it('aborts with tripwire on second retry when citations still missing', () => {
       const processor = new CitationGuardProcessor()
       const args = makeOutputArgs({
         state: { [SOURCES_STATE_KEY]: true },
         text: 'Still no citations after retry.',
         retryCount: 1,
       })
-      await processor.processOutputStep(args)
+      processor.processOutputStep(args)
       expect(args.abort).toHaveBeenCalledTimes(1)
       expect(args.abort).toHaveBeenCalledWith(
         'citation-missing-tripwire',
-        expect.objectContaining({ metadata: expect.any(Object) }),
+        expect.objectContaining({
+          metadata: { text: 'Still no citations after retry.', missingCitations: true },
+        }),
       )
     })
 
-    it('returns messages unchanged', async () => {
+    it('returns messages unchanged', () => {
       const processor = new CitationGuardProcessor()
       const msgs = [makeMessage('hi')]
       const args = makeOutputArgs({ messages: msgs })
-      expect(await processor.processOutputStep(args)).toBe(msgs)
+      expect(processor.processOutputStep(args)).toBe(msgs)
     })
   })
 
-  it('enforces the contract across the two hooks of one request', async () => {
+  it('enforces the contract across the two hooks of one request', () => {
     const processor = new CitationGuardProcessor()
     const state: Record<string, unknown> = {}
 
-    await processor.processToolResult(makeToolResultArgs({ state }))
+    processor.processToolResult(makeToolResultArgs({ state }))
 
     const midStep = makeOutputArgs({
       state,
       text: 'Let me look that up.',
       toolCalls: [{ toolName: 'knowledge.retrieve', toolCallId: 'call-1', args: {} }],
     })
-    await processor.processOutputStep(midStep)
+    processor.processOutputStep(midStep)
     expect(midStep.abort).not.toHaveBeenCalled()
 
     const finalStep = makeOutputArgs({
@@ -182,7 +184,7 @@ describe('CitationGuardProcessor', () => {
       text: 'The customer is Acme Corp.',
       retryCount: 0,
     })
-    await processor.processOutputStep(finalStep)
+    processor.processOutputStep(finalStep)
     expect(finalStep.abort).toHaveBeenCalledWith(
       expect.stringContaining('CITATION_MISSING'),
       expect.objectContaining({ retry: true }),

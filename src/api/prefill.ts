@@ -20,12 +20,14 @@ export function createPrefillRouter(): Hono {
       return c.json({ error: 'x-tenant-id header required' }, 400)
     }
 
-    const objectType = c.req.param('objectType') as string
+    const objectType = c.req.param('objectType')
     if (!(objectType in PREFILL_SCHEMAS)) {
       return c.json({ error: `Unknown object type: ${objectType}` }, 400)
     }
 
-    const body = await c.req.json().catch(() => null)
+    // Typed at the boundary: an unparsed body is `unknown`, so the check below is
+    // what makes `body.text` a string rather than a promise about the wire.
+    const body = await c.req.json<{ text?: unknown }>().catch(() => null)
     if (!body || typeof body.text !== 'string' || body.text.trim() === '') {
       return c.json({ error: 'text field required' }, 400)
     }
@@ -82,7 +84,7 @@ export function createPrefillRouter(): Hono {
         data: result.text,
         usedFallbackValue: result.usedFallbackValue ?? false,
       })
-    } catch (err) {
+    } catch {
       return c.json({
         objectType,
         data: fallbackValue,

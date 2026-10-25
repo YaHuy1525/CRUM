@@ -31,7 +31,7 @@ describe('TenantRequestContextSchema', () => {
   })
 
   it('rejects missing tenantId', () => {
-    const { tenantId, ...missingTenant } = validContext
+    const { tenantId: _tenantId, ...missingTenant } = validContext
     const result = TenantRequestContextSchema.safeParse(missingTenant)
     expect(result.success).toBe(false)
     if (!result.success) {
@@ -41,7 +41,7 @@ describe('TenantRequestContextSchema', () => {
   })
 
   it('rejects missing userId', () => {
-    const { userId, ...missingUser } = validContext
+    const { userId: _userId, ...missingUser } = validContext
     const result = TenantRequestContextSchema.safeParse(missingUser)
     expect(result.success).toBe(false)
     if (!result.success) {

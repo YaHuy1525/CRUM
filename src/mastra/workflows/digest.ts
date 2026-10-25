@@ -124,7 +124,7 @@ export const generateSummaryStep = createStep({
     'fetch-stale-followups': fetchOutputSchema,
   }),
   outputSchema: digestOutputSchema,
-  execute: async ({ inputData }) => {
+  execute: ({ inputData }) => {
     const overdue = inputData['fetch-overdue'].items
     const todaySchedule = inputData['fetch-today-schedule'].items
     const staleFollowups = inputData['fetch-stale-followups'].items
@@ -138,13 +138,15 @@ export const generateSummaryStep = createStep({
 
     const summary = `Morning digest: ${parts.join(', ')}.`
 
-    return {
+    // The Mastra ExecuteFunction contract wants a Promise; this step is pure
+    // aggregation, so it resolves one rather than being declared async.
+    return Promise.resolve({
       date,
       overdue,
       todaySchedule,
       staleFollowups,
       summary,
-    }
+    })
   },
 })
 

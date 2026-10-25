@@ -30,8 +30,10 @@ export class ObjectBindingProcessor implements Processor<'object-binding-process
     const requestContext = args.requestContext
     if (!requestContext) return undefined
 
-    const binding = requestContext.get('objectBinding') as ObjectBinding | undefined
-    const tenantContext = requestContext.get('tenantContext') as TenantRequestContext | undefined
+    // RequestContext.get<K, R> takes the key type first and the value type second,
+    // so the value type is declared here rather than asserted on the result.
+    const binding = requestContext.get<'objectBinding', ObjectBinding | undefined>('objectBinding')
+    const tenantContext = requestContext.get<'tenantContext', TenantRequestContext | undefined>('tenantContext')
 
     if (!binding || !tenantContext) return undefined
 

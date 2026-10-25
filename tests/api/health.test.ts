@@ -1,6 +1,12 @@
 // tests/api/health.test.ts
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
+/** The body /health answers with, as asserted field by field in these tests. */
+interface HealthPayload {
+  status: string
+  dependencies: { storage: { status: string; message?: string } }
+}
+
 describe('GET /health', () => {
   beforeEach(() => {
     vi.resetModules()
@@ -20,7 +26,7 @@ describe('GET /health', () => {
     const res = await app.request('/health')
 
     expect(res.status).toBe(200)
-    const data = (await res.json()) as any
+    const data = (await res.json()) as HealthPayload
     expect(data.status).toBe('ok')
     expect(data.dependencies.storage.status).toBe('ok')
     expect(getStatus).toHaveBeenCalled()
@@ -40,7 +46,7 @@ describe('GET /health', () => {
     const res = await app.request('/health')
 
     expect(res.status).toBe(200)
-    const data = (await res.json()) as any
+    const data = (await res.json()) as HealthPayload
     expect(data.status).toBe('degraded')
     expect(data.dependencies.storage.status).toBe('degraded')
     expect(data.dependencies.storage.message).toMatch(/connection refused/)
@@ -59,7 +65,7 @@ describe('GET /health', () => {
     const res = await app.request('/health')
 
     expect(res.status).toBe(200)
-    const data = (await res.json()) as any
+    const data = (await res.json()) as HealthPayload
     expect(data.status).toBe('degraded')
     expect(data.dependencies.storage.status).toBe('degraded')
     expect(data.dependencies.storage.message).toMatch(/no storage/)
@@ -78,7 +84,7 @@ describe('GET /health', () => {
     const res = await app.request('/health')
 
     expect(res.status).toBe(200)
-    const data = (await res.json()) as any
+    const data = (await res.json()) as HealthPayload
     expect(data.status).toBe('ok')
     expect(data.dependencies.storage.status).toBe('ok')
   })

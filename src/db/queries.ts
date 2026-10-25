@@ -1,6 +1,18 @@
-import type { PoolClient } from 'pg'
 import { getDbClient } from './client'
 import type { TenantRequestContext } from '../mastra/tenant-context'
+
+/**
+ * pg hands back every row as `any`, so a bare `return result.rows` here would
+ * satisfy a declared `Promise<Customer[]>` without anything checking the shape.
+ * The wire really is untyped, which is why the cast exists, but it belongs in one
+ * place rather than at fifteen return statements: each caller names the row
+ * interface its SELECT produces, and this is the single point where a row crosses
+ * into it.
+ */
+async function queryRows<T>(sql: string, params: unknown[]): Promise<T[]> {
+  const result = await getDbClient().query(sql, params)
+  return result.rows as T[]
+}
 
 export interface Customer {
   id: string
@@ -127,8 +139,7 @@ export async function queryCustomers(
   }
 
   const sql = `SELECT * FROM customers WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC`
-  const result = await getDbClient().query(sql, params)
-  return result.rows
+  return queryRows<Customer>(sql, params)
 }
 
 /**
@@ -144,8 +155,8 @@ export async function queryCustomer(
   // `deleted_at IS NULL` also gates every child read (contacts/followups/tasks/
   // schedules), which all first call queryCustomer and return [] when it is null.
   const sql = `SELECT * FROM customers WHERE id = $${idx} AND ${vis.sql} AND deleted_at IS NULL LIMIT 1`
-  const result = await getDbClient().query(sql, params)
-  return result.rows[0] ?? null
+  const rows = await queryRows<Customer>(sql, params)
+  return rows[0] ?? null
 }
 
 /**
@@ -157,11 +168,10 @@ export async function queryContacts(
 ): Promise<Contact[]> {
   const customer = await queryCustomer(context, customerId)
   if (!customer) return []
-  const result = await getDbClient().query(
+  return queryRows<Contact>(
     `SELECT * FROM contacts WHERE customer_id = $1 AND tenant_id = $2 ORDER BY created_at DESC`,
     [customerId, context.tenantId],
   )
-  return result.rows
 }
 
 /**
@@ -173,11 +183,10 @@ export async function queryFollowups(
 ): Promise<Followup[]> {
   const customer = await queryCustomer(context, customerId)
   if (!customer) return []
-  const result = await getDbClient().query(
+  return queryRows<Followup>(
     `SELECT * FROM followups WHERE customer_id = $1 AND tenant_id = $2 ORDER BY created_at DESC`,
     [customerId, context.tenantId],
   )
-  return result.rows
 }
 
 /**
@@ -189,11 +198,10 @@ export async function queryTasks(
 ): Promise<Task[]> {
   const customer = await queryCustomer(context, customerId)
   if (!customer) return []
-  const result = await getDbClient().query(
+  return queryRows<Task>(
     `SELECT * FROM tasks WHERE customer_id = $1 AND tenant_id = $2 ORDER BY created_at DESC`,
     [customerId, context.tenantId],
   )
-  return result.rows
 }
 
 /**
@@ -205,11 +213,10 @@ export async function querySchedules(
 ): Promise<Schedule[]> {
   const customer = await queryCustomer(context, customerId)
   if (!customer) return []
-  const result = await getDbClient().query(
+  return queryRows<Schedule>(
     `SELECT * FROM schedules WHERE customer_id = $1 AND tenant_id = $2 ORDER BY created_at DESC`,
     [customerId, context.tenantId],
   )
-  return result.rows
 }
 
 /**
@@ -235,8 +242,7 @@ export async function querySchedulesForDate(
   }
   const sql = `SELECT * FROM schedules WHERE tenant_id = $1 AND date(start_time) = $2::date${ownerClause} ORDER BY start_time ASC LIMIT $${params.length + 1}`
   params.push(limit)
-  const result = await getDbClient().query(sql, params)
-  return result.rows
+  return queryRows<Schedule>(sql, params)
 }
 
 export interface SearchResult {
@@ -271,8 +277,7 @@ export async function querySearch(
       ORDER BY label ASC
       LIMIT $3
     `
-    const result = await getDbClient().query(sql, [context.tenantId, pattern, limit])
-    return result.rows
+    return queryRows<SearchResult>(sql, [context.tenantId, pattern, limit])
   }
 
   // User role: scope by the caller's visible customers. Params: [tenantId, userId, pattern, limit]
@@ -289,8 +294,7 @@ export async function querySearch(
     ORDER BY label ASC
     LIMIT $4
   `
-  const result = await getDbClient().query(sql, [context.tenantId, context.userId, pattern, limit])
-  return result.rows
+  return queryRows<SearchResult>(sql, [context.tenantId, context.userId, pattern, limit])
 }
 
 export interface KnowledgeDocument {
@@ -322,8 +326,7 @@ export async function queryKnowledgeDocuments(
 ): Promise<KnowledgeDocument[]> {
   const pattern = `%${query}%`
   const sql = `SELECT * FROM knowledge_documents WHERE tenant_id = $1 AND title ILIKE $2 ORDER BY updated_at DESC LIMIT $3`
-  const result = await getDbClient().query(sql, [context.tenantId, pattern, limit])
-  return result.rows
+  return queryRows<KnowledgeDocument>(sql, [context.tenantId, pattern, limit])
 }
 
 /**
@@ -339,8 +342,7 @@ export async function queryMyTasks(
 ): Promise<Task[]> {
   const sql = `SELECT * FROM tasks WHERE tenant_id = $1 AND (owner_id = $2 OR assigned_to = $2) ORDER BY created_at DESC`
   const params = [context.tenantId, context.userId]
-  const result = await getDbClient().query(sql, params)
-  return result.rows
+  return queryRows<Task>(sql, params)
 }
 
 /**
@@ -354,8 +356,7 @@ export async function queryMyFollowups(
 ): Promise<Followup[]> {
   const sql = `SELECT * FROM followups WHERE tenant_id = $1 AND owner_id = $2 ORDER BY created_at DESC`
   const params = [context.tenantId, context.userId]
-  const result = await getDbClient().query(sql, params)
-  return result.rows
+  return queryRows<Followup>(sql, params)
 }
 
 /**
@@ -364,11 +365,10 @@ export async function queryMyFollowups(
  * by tenant_id only — no row-level visibility predicate.
  */
 export async function queryAllTasks(tenantId: string): Promise<Task[]> {
-  const result = await getDbClient().query(
+  return queryRows<Task>(
     `SELECT * FROM tasks WHERE tenant_id = $1 ORDER BY created_at DESC`,
     [tenantId],
   )
-  return result.rows
 }
 
 /**
@@ -380,11 +380,10 @@ export async function queryTenantSchedulesForDate(
   tenantId: string,
   date: string,
 ): Promise<Schedule[]> {
-  const result = await getDbClient().query(
+  return queryRows<Schedule>(
     `SELECT * FROM schedules WHERE tenant_id = $1 AND date(start_time) = $2::date ORDER BY start_time ASC`,
     [tenantId, date],
   )
-  return result.rows
 }
 
 /**
@@ -394,9 +393,8 @@ export async function queryStaleFollowups(
   tenantId: string,
   staleDays = 7,
 ): Promise<Followup[]> {
-  const result = await getDbClient().query(
+  return queryRows<Followup>(
     `SELECT * FROM followups WHERE tenant_id = $1 AND updated_at < NOW() - INTERVAL '1 day' * $2 ORDER BY updated_at ASC`,
     [tenantId, staleDays],
   )
-  return result.rows
 }

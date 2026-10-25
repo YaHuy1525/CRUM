@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest'
-// @ts-ignore — autocannon has no bundled types; tests need a live server anyway
 import autocannon from 'autocannon'
 
 describe('load: retrieval tool', () => {

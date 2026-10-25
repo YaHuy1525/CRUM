@@ -89,7 +89,7 @@ export function verifyState(state: string, secret: string, now: number = Date.no
   if (a.length !== b.length || !timingSafeEqual(a, b)) return null
   let payload: Partial<OAuthState>
   try {
-    payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'))
+    payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as Partial<OAuthState>
   } catch {
     return null
   }

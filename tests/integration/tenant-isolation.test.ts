@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { RequestContext } from '@mastra/core/request-context'
+import type { ToolObserve } from '@mastra/core/tools'
 import { Pool } from 'pg'
 import { listCustomersTool } from '../../src/mastra/tools/customers'
-import { getDbClient, closeDbClient } from '../../src/db/client'
+import { closeDbClient } from '../../src/db/client'
 import type { TenantRequestContext } from '../../src/mastra/tenant-context'
 import { migrate } from '../../scripts/db-migrate'
 
@@ -12,9 +13,13 @@ import { migrate } from '../../scripts/db-migrate'
  */
 const url = process.env.CRUM_INTEGRATION_DATABASE_URL ?? ''
 
-function makeObserve() {
+function makeObserve(): ToolObserve {
   return {
-    span: async (_name: string, fn: () => Promise<unknown>) => fn(),
+    // Method shorthand keeps `span` generic, which the framework interface needs;
+    // a stub pinned to Promise<unknown> does not satisfy ToolObserve.
+    span(_name, fn) {
+      return Promise.resolve(fn())
+    },
     log: () => {},
   }
 }
@@ -82,7 +87,7 @@ describe.skipIf(url === '')('Tenant Isolation', () => {
 
     const result = await listCustomersTool.execute?.(
       {},
-      { requestContext: makeRequestContext(contextA), observe: makeObserve() } as any,
+      { requestContext: makeRequestContext(contextA), observe: makeObserve() },
     )
 
     expect(result).toBeDefined()
@@ -103,7 +108,7 @@ describe.skipIf(url === '')('Tenant Isolation', () => {
 
     const result = await listCustomersTool.execute?.(
       {},
-      { requestContext: makeRequestContext(contextB), observe: makeObserve() } as any,
+      { requestContext: makeRequestContext(contextB), observe: makeObserve() },
     )
 
     expect(result).toBeDefined()

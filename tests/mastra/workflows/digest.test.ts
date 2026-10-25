@@ -76,16 +76,33 @@ describe('generateSummaryStep output shape', () => {
       },
     }
 
-    // Call the step's execute function directly with mock data.
-    // Cast the entire params as `any` since we only exercise inputData.
-    const result = (await generateSummaryStep.execute({
+    // Call the step's execute function directly with mock data. Only inputData is
+    // exercised, so the params are projected onto the real execute-parameter type
+    // rather than `any`; the result then carries the step's declared output shape.
+    const params = {
       inputData: mockParallelOutput,
       requestContext: {},
       mastra: {},
       tracingContext: {},
       suspend: () => {},
       resume: undefined,
-    } as any)) as any
+    } as unknown as Parameters<typeof generateSummaryStep.execute>[0]
+    // execute is typed as returning the step output or the workflow InnerOutput
+    // union; this step always resolves the digest shape, so the test pins it.
+    interface DigestItem {
+      id: string
+      customer_id: string
+      label: string
+      updated_at?: string
+    }
+    interface SummaryOutput {
+      date: string
+      overdue: DigestItem[]
+      todaySchedule: DigestItem[]
+      staleFollowups: DigestItem[]
+      summary: string
+    }
+    const result = (await generateSummaryStep.execute(params)) as SummaryOutput
 
     expect(result.overdue).toHaveLength(1)
     expect(result.todaySchedule).toHaveLength(1)

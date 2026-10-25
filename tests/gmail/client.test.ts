@@ -35,18 +35,18 @@ function gmailEnv(overrides: Partial<Pick<CrumEnv, 'GMAIL_OAUTH_CLIENT_ID' | 'GM
 }
 
 function mockFetch(fn: (url: string, init?: RequestInit) => unknown): typeof globalThis.fetch {
-  const impl = vi.fn(async (input: unknown, init?: RequestInit) => {
+  const impl = vi.fn((input: unknown, init?: RequestInit) => {
     const url = String(input)
     const result = fn(url, init)
     const r = (result ?? {}) as { body?: unknown; status?: number }
     const body = 'body' in r ? r.body : r
     const status = r.status ?? 200
-    return {
+    return Promise.resolve({
       ok: status >= 200 && status < 300,
       status,
-      json: async () => body,
-      text: async () => JSON.stringify(body),
-    }
+      json: () => Promise.resolve(body),
+      text: () => Promise.resolve(JSON.stringify(body)),
+    })
   }) as unknown as typeof globalThis.fetch
   vi.stubGlobal('fetch', impl)
   return impl
@@ -54,6 +54,24 @@ function mockFetch(fn: (url: string, init?: RequestInit) => unknown): typeof glo
 
 function jsonFetch(body: unknown, status = 200) {
   return mockFetch(() => ({ body, status }))
+}
+
+/**
+ * Read a form body off a recorded fetch call. Narrowing by hand is stronger than
+ * `String(init.body)`, which would quietly yield "[object Object]".
+ */
+function formBody(init: RequestInit): URLSearchParams {
+  if (init.body instanceof URLSearchParams) return init.body
+  if (typeof init.body === 'string') return new URLSearchParams(init.body)
+  throw new Error(`unexpected request body shape: ${typeof init.body}`)
+}
+
+/** Read a JSON string body off a recorded fetch call. */
+function jsonStringBody(init: RequestInit): string {
+  if (typeof init.body !== 'string') {
+    throw new Error(`unexpected request body shape: ${typeof init.body}`)
+  }
+  return init.body
 }
 
 afterEach(() => {
@@ -105,7 +123,7 @@ describe('exchangeCodeForTokens', () => {
     expect(tokens).toEqual({ refreshToken: '1//refresh', accessToken: 'ya29.access' })
     const [url, init] = vi.mocked(fetchMock).mock.calls[0] as unknown as [string, RequestInit]
     expect(String(url)).toBe('https://oauth2.googleapis.com/token')
-    const form = new URLSearchParams(String(init.body))
+    const form = formBody(init)
     expect(form.get('grant_type')).toBe('authorization_code')
     expect(form.get('code')).toBe('google-auth-code')
     expect(form.get('client_id')).toBe('cid')
@@ -145,7 +163,7 @@ describe('getAccessToken', () => {
     clearAccessTokenCache('tenant-1', 'user-1')
     await expect(getAccessToken(encRow, 'cid', 'secret')).resolves.toBe('ya29.fresh')
     const [, init] = vi.mocked(fetchMock).mock.calls[0] as unknown as [string, RequestInit]
-    const form = new URLSearchParams(String(init.body))
+    const form = formBody(init)
     expect(form.get('grant_type')).toBe('refresh_token')
     expect(form.get('refresh_token')).toBe('1//refresh')
 
@@ -156,7 +174,7 @@ describe('getAccessToken', () => {
   })
 
   it('throws when the envelope secret is gone', async () => {
-    vi.stubEnv('APPROVAL_HMAC_SECRET', undefined as unknown as string)
+    vi.stubEnv('APPROVAL_HMAC_SECRET', undefined)
     clearAccessTokenCache('tenant-2', 'user-2')
     await expect(getAccessToken(encRow2(), 'cid', 'secret')).rejects.toThrow(GmailApiError)
   })
@@ -178,9 +196,9 @@ describe('connection storage', () => {
     vi.stubEnv('APPROVAL_HMAC_SECRET', SECRET)
     const calls: { sql: string; params: unknown[] }[] = []
     const pool = {
-      query: async (sql: string, params?: unknown[]) => {
+      query: (sql: string, params?: unknown[]) => {
         calls.push({ sql, params: params ?? [] })
-        return { rows: [] }
+        return Promise.resolve({ rows: [] })
       },
     }
     await saveConnection(
@@ -200,19 +218,19 @@ describe('connection storage', () => {
   })
 
   it('refuses to store without the encryption secret', async () => {
-    vi.stubEnv('APPROVAL_HMAC_SECRET', undefined as unknown as string)
+    vi.stubEnv('APPROVAL_HMAC_SECRET', undefined)
     await expect(
       saveConnection(
         { tenantId: 't', userId: 'u', gmailEmail: 'me@example.com', refreshToken: 'r', scopes: 's' },
-        { query: async () => ({ rows: [] }) },
+        { query: () => Promise.resolve({ rows: [] }) },
       ),
     ).rejects.toThrow(GmailApiError)
   })
 
   it('loadConnection returns the first row or null', async () => {
     const fakeRow = { ...rowShim, refresh_token_enc: 'v1.x.y.z' }
-    const poolRow = { query: async () => ({ rows: [fakeRow] }) }
-    const poolEmpty = { query: async () => ({ rows: [] }) }
+    const poolRow = { query: () => Promise.resolve({ rows: [fakeRow] }) }
+    const poolEmpty = { query: () => Promise.resolve({ rows: [] }) }
     await expect(loadConnection('tenant-2', 'user-2', poolRow)).resolves.toEqual(fakeRow)
     await expect(loadConnection('tenant-2', 'user-2', poolEmpty)).resolves.toBeNull()
   })
@@ -264,7 +282,7 @@ describe('gmail REST surface', () => {
     const [url, init] = vi.mocked(fetchMock).mock.calls[0] as unknown as [string, RequestInit]
     expect(String(url)).toBe('https://gmail.googleapis.com/gmail/v1/users/me/drafts')
     expect(init.method).toBe('POST')
-    const payload = JSON.parse(String(init.body)) as { message: { raw: string } }
+    const payload = JSON.parse(jsonStringBody(init)) as { message: { raw: string } }
     const raw = Buffer.from(payload.message.raw, 'base64url').toString('utf8')
     expect(raw).toContain('To: a@x.com')
     expect(raw).toContain('Subject: Hi')

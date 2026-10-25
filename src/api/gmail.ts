@@ -48,7 +48,7 @@ export function createGmailConnectRoute(env: CrumEnv): ApiRoute {
   return registerApiRoute('/gmail/connect', {
     method: 'GET',
     requiresAuth: false,
-    handler: async (c) => {
+    handler: (c) => {
       const creds = gmailOAuthConfigured(env)
       const secret = requireStateSecret(env)
       if (!creds || !secret) {

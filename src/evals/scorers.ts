@@ -8,6 +8,7 @@ import {
   createTrajectoryAccuracyScorerCode,
 } from '@mastra/evals/scorers/prebuilt'
 import { createClassifierScorer } from '@mastra/core/evals'
+import type { MastraModelConfig } from '@mastra/core/llm'
 import { buildJudge } from './judge'
 import {
   createRefusalScorer,
@@ -39,20 +40,27 @@ export function buildScorers() {
   // configured; those scorers will return notScorable() at runtime.
   const judgeModel = judge?.model
 
+  // The factory signatures declare `model` as a required MastraModelConfig even
+  // though an unconfigured judge genuinely is undefined here, and the runtime
+  // behaviour the gate relies on (notScorable, then reported as skipped) depends
+  // on that. The conversion is stated once, in the words that describe it, rather
+  // than six times as `as any`.
+  const judgeModelConfig = judgeModel as unknown as MastraModelConfig
+
   return {
     // 7 native
-    faithfulness: createFaithfulnessScorer({ model: judgeModel as any }),
-    answerRelevancy: createAnswerRelevancyScorer({ model: judgeModel as any }),
-    hallucination: createHallucinationScorer({ model: judgeModel as any }),
+    faithfulness: createFaithfulnessScorer({ model: judgeModelConfig }),
+    answerRelevancy: createAnswerRelevancyScorer({ model: judgeModelConfig }),
+    hallucination: createHallucinationScorer({ model: judgeModelConfig }),
     contextPrecision: createContextPrecisionScorer({
-      model: judgeModel as any,
+      model: judgeModelConfig,
       options: {
         contextExtractor: () => ['__crum-context-placeholder__'],
       },
     }),
-    toxicity: createToxicityScorer({ model: judgeModel as any }),
+    toxicity: createToxicityScorer({ model: judgeModelConfig }),
     toolCallAccuracy: createToolCallAccuracyScorerLLM({
-      model: judgeModel as any,
+      model: judgeModelConfig,
       availableTools: [],
     }),
     trajectoryAccuracy: createTrajectoryAccuracyScorerCode({}),

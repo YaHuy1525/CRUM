@@ -36,19 +36,21 @@ export const parseStep = createStep({
     contentType: z.string(),
     documentTitle: z.string(),
   }),
-  execute: async ({ inputData }) => {
+  execute: ({ inputData }) => {
     // For Phase 4, content arrives pre-parsed (text/markdown/html).
     // PDF and DOCX conversion (unpdf/mammoth) is a follow-up when the upload
     // API handles binary files. The step boundary is correct either way.
     const text = inputData.content
 
-    return {
+    // The Mastra ExecuteFunction contract wants a Promise; this step does no IO,
+    // so it resolves one rather than being declared async.
+    return Promise.resolve({
       documentId: inputData.documentId,
       tenantId: inputData.tenantId,
       text,
       contentType: inputData.contentType,
       documentTitle: inputData.documentTitle,
-    }
+    })
   },
 })
 

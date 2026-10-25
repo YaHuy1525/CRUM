@@ -73,9 +73,11 @@ export class WriteClaimGuardProcessor implements Processor<'crum-write-claim-gua
   readonly id = 'crum-write-claim-guard' as const
   readonly name = 'Write Claim Guard Processor'
 
-  async processOutputStep(
+  // Synchronous on purpose: the Processor contract accepts a plain return, and
+  // this body never awaits.
+  processOutputStep(
     args: ProcessOutputStepArgs,
-  ): Promise<MastraDBMessage[]> {
+  ): MastraDBMessage[] {
     const text = args.text ?? ''
     const claimed = claimsWrite(text)
     const mutated = ranMutatingTool(args)

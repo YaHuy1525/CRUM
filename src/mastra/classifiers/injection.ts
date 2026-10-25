@@ -25,7 +25,7 @@ const safeModel =
     modelId: 'crum-unavailable',
     specificationVersion: 'v4' as const,
     supportedQuestionTypes: ['boolean', 'choice', 'score'],
-    doDecide: async () => {
+    doDecide: () => {
       throw new Error('Decision model unavailable: no API key configured')
     },
   }) as unknown as NonNullable<ReturnType<typeof crumDecisionModel>>

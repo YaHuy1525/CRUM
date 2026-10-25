@@ -13,9 +13,14 @@ import { EMBEDDING_DIMENSIONS } from './embeddings'
  */
 const storeCache = new Map<string, PgVector>()
 
-export const tenantVectorStoreResolver: VectorStoreResolver = async ({ requestContext }) => {
-  const tenantId = requestContext?.get('tenantId') as string | undefined
-  if (!tenantId) throw new Error('tenantId is required in request context')
+export const tenantVectorStoreResolver: VectorStoreResolver = ({ requestContext }) => {
+  // RequestContext.get() returns `unknown`-ish `{}` in the shipped types, so the
+  // tenant id is narrowed for real rather than asserted into existence.
+  const rawTenantId = requestContext?.get('tenantId')
+  if (typeof rawTenantId !== 'string' || rawTenantId === '') {
+    throw new Error('tenantId is required in request context')
+  }
+  const tenantId = rawTenantId
 
   if (!storeCache.has(tenantId)) {
     storeCache.set(

@@ -12,7 +12,7 @@ describe('buildCrumMemory', () => {
     expect(memory).toBeInstanceOf(Memory)
   })
 
-  it('configures messageHistory.maxTokens to 24_000', async () => {
+  it('configures messageHistory.maxTokens to 24_000', () => {
     const env = parseEnv()
     const storage = buildMastraStorage(env)
     const memory = buildCrumMemory(storage)

@@ -56,7 +56,7 @@ describe('crmAssistant', () => {
   it('has WriteClaimGuardProcessor in outputProcessors', async () => {
     const processors = await crmAssistant.listConfiguredOutputProcessors()
     const hasWriteClaimGuard = processors.some(
-      (p: any) => p.constructor.name === 'WriteClaimGuardProcessor'
+      (p) => p.constructor.name === 'WriteClaimGuardProcessor'
     )
     expect(hasWriteClaimGuard).toBe(true)
   })
@@ -71,7 +71,7 @@ describe('crmAssistant', () => {
   it('has ObjectBindingProcessor in inputProcessors', async () => {
     const processors = await crmAssistant.listConfiguredInputProcessors()
     const hasObjectBinding = processors.some(
-      (p: any) => p.constructor.name === 'ObjectBindingProcessor'
+      (p) => p.constructor.name === 'ObjectBindingProcessor'
     )
     expect(hasObjectBinding).toBe(true)
   })

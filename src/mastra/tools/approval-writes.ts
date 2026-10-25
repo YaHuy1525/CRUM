@@ -62,12 +62,10 @@ export const createContactTool = createTool({
   // a call that arrives without ctx keeps requestContext undefined instead of inventing a tenant.
   requireApproval: (input, { requestContext } = {}) => {
     const policy = loadPolicy()
-    const rc = requestContext as Record<string, unknown> | undefined
-    return policy.gateFor('crm.create_contact', scoreRisk(input, policy.risk, 'crm.create_contact'), { requestContext: rc }) === 'approval'
+    return policy.gateFor('crm.create_contact', scoreRisk(input, policy.risk, 'crm.create_contact'), { requestContext }) === 'approval'
   },
   beforeApproval: async (input, { toolCallId, requestContext }) => {
-    const rc = requestContext as Record<string, unknown> | undefined
-    return refuseCheck('crm.create_contact', input, toolCallId, rc)
+    return refuseCheck('crm.create_contact', input, toolCallId, requestContext)
   },
   execute: async (inputData, { requestContext, observe }) => {
     return observe.span('crm.create_contact', async () => {
@@ -103,12 +101,10 @@ export const createScheduleTool = createTool({
   outputValidation: 'warn',
   requireApproval: (input, { requestContext } = {}) => {
     const policy = loadPolicy()
-    const rc = requestContext as Record<string, unknown> | undefined
-    return policy.gateFor('crm.create_schedule', scoreRisk(input, policy.risk, 'crm.create_schedule'), { requestContext: rc }) === 'approval'
+    return policy.gateFor('crm.create_schedule', scoreRisk(input, policy.risk, 'crm.create_schedule'), { requestContext }) === 'approval'
   },
   beforeApproval: async (input, { toolCallId, requestContext }) => {
-    const rc = requestContext as Record<string, unknown> | undefined
-    return refuseCheck('crm.create_schedule', input, toolCallId, rc)
+    return refuseCheck('crm.create_schedule', input, toolCallId, requestContext)
   },
   execute: async (inputData, { requestContext, observe }) => {
     return observe.span('crm.create_schedule', async () => {
@@ -141,12 +137,10 @@ export const transferOwnerTool = createTool({
   outputValidation: 'warn',
   requireApproval: (input, { requestContext } = {}) => {
     const policy = loadPolicy()
-    const rc = requestContext as Record<string, unknown> | undefined
-    return policy.gateFor('crm.transfer_owner', scoreRisk(input, policy.risk, 'crm.transfer_owner'), { requestContext: rc }) === 'approval'
+    return policy.gateFor('crm.transfer_owner', scoreRisk(input, policy.risk, 'crm.transfer_owner'), { requestContext }) === 'approval'
   },
   beforeApproval: async (input, { toolCallId, requestContext }) => {
-    const rc = requestContext as Record<string, unknown> | undefined
-    return refuseCheck('crm.transfer_owner', input, toolCallId, rc)
+    return refuseCheck('crm.transfer_owner', input, toolCallId, requestContext)
   },
   execute: async (inputData, { requestContext, observe }) => {
     return observe.span('crm.transfer_owner', async () => {
@@ -179,12 +173,10 @@ export const sendMailTool = createTool({
   outputValidation: 'warn',
   requireApproval: (input, { requestContext } = {}) => {
     const policy = loadPolicy()
-    const rc = requestContext as Record<string, unknown> | undefined
-    return policy.gateFor('mail.send', scoreRisk(input, policy.risk, 'mail.send'), { requestContext: rc }) === 'approval'
+    return policy.gateFor('mail.send', scoreRisk(input, policy.risk, 'mail.send'), { requestContext }) === 'approval'
   },
   beforeApproval: async (input, { toolCallId, requestContext }) => {
-    const rc = requestContext as Record<string, unknown> | undefined
-    return refuseCheck('mail.send', input, toolCallId, rc)
+    return refuseCheck('mail.send', input, toolCallId, requestContext)
   },
   execute: async (inputData, { requestContext, observe }) => {
     return observe.span('mail.send', async () => {

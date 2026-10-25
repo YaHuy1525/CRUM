@@ -16,9 +16,9 @@ const dbCalls = vi.hoisted(() => ({ calls: [] as { sql: string; params: unknown[
 
 vi.mock('../../src/db/client', () => ({
   getDbClient: () => ({
-    query: async (sql: string, params?: unknown[]) => {
+    query: (sql: string, params?: unknown[]) => {
       dbCalls.calls.push({ sql, params: params ?? [] })
-      return { rows: [] }
+      return Promise.resolve({ rows: [] })
     },
   }),
 }))
@@ -59,7 +59,7 @@ type RouteLike = { path?: string; handler: (c: unknown) => Promise<unknown> }
 function handlerOf(route: unknown): (c: MockCtx) => Promise<unknown> {
   const resolved = route as RouteLike | { value?: RouteLike } | Promise<RouteLike>
   const direct = (resolved as RouteLike).handler
-  if (direct) return direct as (c: MockCtx) => Promise<unknown>
+  if (direct) return direct
   throw new Error('route object has no handler — check registerApiRoute shape')
 }
 
@@ -76,16 +76,16 @@ async function callbackHandler(env: CrumEnv) {
 function mockFetchByHost(handler: (url: string, init?: RequestInit) => unknown) {
   vi.stubGlobal(
     'fetch',
-    async (input: unknown, init?: RequestInit) => {
+    (input: unknown, init?: RequestInit) => {
       const url = String(input)
       const result = (handler(url, init) ?? {}) as { body?: unknown; status?: number }
       const status = result.status ?? 200
-      return {
+      return Promise.resolve({
         ok: status >= 200 && status < 300,
         status,
-        json: async () => result.body,
-        text: async () => JSON.stringify(result.body ?? {}),
-      }
+        json: () => Promise.resolve(result.body),
+        text: () => Promise.resolve(JSON.stringify(result.body ?? {})),
+      })
     },
   )
 }

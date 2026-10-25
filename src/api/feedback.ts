@@ -28,7 +28,9 @@ export function createFeedbackRouter(): Hono {
       return c.json({ error: 'x-tenant-id header required' }, 400)
     }
 
-    const body = await c.req.json()
+    // `unknown`, not `any`: the schema below is what decides the shape, and the
+    // route must not be able to read a field the schema did not check.
+    const body = await c.req.json<unknown>()
     const parsed = FeedbackSchema.safeParse(body)
     if (!parsed.success) {
       return c.json({ error: 'Invalid feedback', issues: parsed.error.issues }, 400)

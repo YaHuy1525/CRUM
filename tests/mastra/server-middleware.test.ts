@@ -19,7 +19,7 @@ type Handler = (c: StubContext, next: () => Promise<void>) => Promise<unknown>
 
 function extractHandler(config: ServerConfig): Handler {
   const first = (config.middleware as Middleware[])[0] as { handler: unknown }
-  return first.handler as unknown as Handler
+  return first.handler as Handler
 }
 
 function makeContext(headers: Record<string, string>, withRequestContext = true) {

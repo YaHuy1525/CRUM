@@ -43,7 +43,10 @@ export class CitationGuardProcessor implements Processor<'crum-citation-guard'> 
   readonly id = 'crum-citation-guard' as const
   readonly name = 'Citation Guard Processor'
 
-  async processToolResult(args: ProcessToolResultArgs): Promise<void> {
+  // Both hooks are synchronous: the Processor contract accepts a plain return
+  // (`ProcessorMessageResult` is `Promise<…> | …`), and nothing here awaits, so
+  // promising a Promise would be a claim this body does not keep.
+  processToolResult(args: ProcessToolResultArgs): void {
     // Accept either spelling: the registry id is the vocabulary CRUM authors,
     // the rewritten key is what the framework actually reports.
     if (
@@ -54,9 +57,9 @@ export class CitationGuardProcessor implements Processor<'crum-citation-guard'> 
     }
   }
 
-  async processOutputStep(
+  processOutputStep(
     args: ProcessOutputStepArgs,
-  ): Promise<MastraDBMessage[]> {
+  ): MastraDBMessage[] {
     if (args.state[SOURCES_STATE_KEY] !== true) return args.messages
 
     // A step that still calls tools has not produced the final answer yet.

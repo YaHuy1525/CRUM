@@ -1,6 +1,6 @@
 import type { Mastra } from '@mastra/core/mastra'
 import { isSessionNotStartedError } from '@mastra/core/agent-controller'
-import type { AgentController, AgentControllerThread, Session } from '@mastra/core/agent-controller'
+import type { AgentControllerThread, Session } from '@mastra/core/agent-controller'
 
 // §4.2 — Agent Controller session helpers. Phase 1 wires the read path
 // (queryThreads) and basic session creation. Phase 3 adds the approval queue.
@@ -22,11 +22,18 @@ export interface ListSessionsOptions {
 }
 
 /**
+ * The controller type the Mastra registry hands back for a key. Derived from the
+ * shipped `Mastra.getAgentController` signature so this tracks the framework
+ * rather than restating its `AgentController<any>` escape hatch by hand.
+ */
+type RegisteredAgentController = NonNullable<ReturnType<Mastra['getAgentController']>>
+
+/**
  * Resolves the AgentController registered under `agentId` on the Mastra instance.
  * Throws when no controller is found so callers get a clear diagnostic instead
  * of a silent undefined dereference.
  */
-function requireController(mastra: Mastra, agentId: string): AgentController<any> {
+function requireController(mastra: Mastra, agentId: string): RegisteredAgentController {
   const controller = mastra.getAgentController(agentId)
   if (!controller) {
     throw new Error(
@@ -185,7 +192,7 @@ export async function resolveSession(
     return { ok: false, reason: 'wrong-resource' }
   }
 
-  let controller: AgentController<any>
+  let controller: RegisteredAgentController
   try {
     controller = requireController(mastra, agentId)
   } catch {

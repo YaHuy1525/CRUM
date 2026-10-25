@@ -17,9 +17,11 @@ export class EnsureFinalResponseProcessor implements Processor<'ensure-final-res
     this.maxSteps = maxSteps
   }
 
-  async processOutputStep(
+  // The Processor contract accepts a plain return, and a pass-through has
+  // nothing to await. It becomes async again when the step-budget check lands.
+  processOutputStep(
     args: ProcessOutputStepArgs,
-  ): Promise<MastraDBMessage[]> {
+  ): MastraDBMessage[] {
     // Phase 1 stub: pass through. Phase 2 will check step budget.
     return args.messages
   }

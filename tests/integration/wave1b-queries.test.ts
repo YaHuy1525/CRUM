@@ -66,7 +66,6 @@ describe.skipIf(url === '')('Wave 1B formerly-broken queries against Postgres', 
     expect(rows.length).toBeGreaterThan(0)
     const hit = rows.find((r) => r.id === docId)
     expect(hit, 'seeded knowledge document missing from results').toBeDefined()
-    // eslint-disable-next-line no-console
     console.log('queryKnowledgeDocuments row:', JSON.stringify(hit))
     expect(hit?.title).toBe(title)
   })
@@ -85,7 +84,6 @@ describe.skipIf(url === '')('Wave 1B formerly-broken queries against Postgres', 
     expect(rows.length).toBeGreaterThan(0)
     const hit = rows.find((r) => r.id === scheduleId)
     expect(hit, 'seeded schedule missing from results').toBeDefined()
-    // eslint-disable-next-line no-console
     console.log(`querySchedulesForDate(${day}) row:`, JSON.stringify(hit))
   })
 })
