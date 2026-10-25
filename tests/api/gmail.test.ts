@@ -55,7 +55,7 @@ function buildEnv(vars: Partial<Pick<CrumEnv, 'GMAIL_OAUTH_CLIENT_ID' | 'GMAIL_O
 // registerApiRoute returns a route whose handler we can call directly with a
 // Hono-shaped context; the shape is asserted against the installed core in
 // tests/entry (server config), here we only exercise the handler logic.
-type RouteLike = { handler: (c: unknown) => Promise<unknown> }
+type RouteLike = { path?: string; handler: (c: unknown) => Promise<unknown> }
 function handlerOf(route: unknown): (c: MockCtx) => Promise<unknown> {
   const resolved = route as RouteLike | { value?: RouteLike } | Promise<RouteLike>
   const direct = (resolved as RouteLike).handler
@@ -96,7 +96,30 @@ afterEach(() => {
   dbCalls.calls.length = 0
 })
 
-describe('GET /api/gmail/connect', () => {
+// @mastra/server reserves its built-in apiPrefix ('/api' by default) and
+// validateCustomRoutePaths (server-adapter/index.js:1066) THROWS during server
+// startup for any custom route whose path begins with it. A '/api/gmail/*'
+// path therefore boots no server at all, which no handler-level test can catch.
+// This asserts the predicate the framework itself applies, against the real
+// route objects.
+describe('route registration', () => {
+  it('keeps both Gmail routes clear of the reserved /api prefix', async () => {
+    const env = buildEnv()
+    const { createGmailConnectRoute, createGmailCallbackRoute } = await import('../../src/api/gmail')
+    const routes = [
+      createGmailConnectRoute(env) as unknown as RouteLike,
+      createGmailCallbackRoute(env) as unknown as RouteLike,
+    ]
+    for (const route of routes) {
+      expect(route.path).toBeDefined()
+      expect(route.path?.startsWith('/api/')).toBe(false)
+      expect(route.path).not.toBe('/api')
+    }
+    expect(routes.map((r) => r.path)).toEqual(['/gmail/connect', '/gmail/callback'])
+  })
+})
+
+describe('GET /gmail/connect', () => {
   it('503s when the connector is not configured — no flow can start', async () => {
     const handler = await connectHandler(buildEnv({ GMAIL_OAUTH_CLIENT_ID: undefined }))
     const res = (await handler(ctxFor({ tenantId: TENANT, userId: USER }))) as { kind: string; status?: number }
@@ -126,7 +149,7 @@ describe('GET /api/gmail/connect', () => {
   })
 })
 
-describe('GET /api/gmail/callback', () => {
+describe('GET /gmail/callback', () => {
   it('400s when Google reports an error (user clicked Cancel)', async () => {
     const handler = await callbackHandler(buildEnv())
     const res = (await handler(

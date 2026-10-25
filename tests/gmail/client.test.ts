@@ -70,7 +70,7 @@ describe('consent URL', () => {
 
   it('falls back to the localhost callback URI when GMAIL_REDIRECT_URI is unset', () => {
     const creds = gmailOAuthConfigured(gmailEnv())
-    expect(creds?.redirectUri).toBe('http://localhost:4111/api/gmail/callback')
+    expect(creds?.redirectUri).toBe('http://localhost:4111/gmail/callback')
     const custom = gmailOAuthConfigured(gmailEnv({ GMAIL_REDIRECT_URI: 'https://crm.example.com/cb' }))
     expect(custom?.redirectUri).toBe('https://crm.example.com/cb')
   })

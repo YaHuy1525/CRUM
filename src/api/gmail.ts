@@ -4,14 +4,14 @@
 // api routes (they ride the same server as /chat/crm, so the redirect URI is
 // the port the Mastra server listens on — 4111 by default).
 //
-//   GET /api/gmail/connect?tenantId=<uuid>&userId=<uuid>
+//   GET /gmail/connect?tenantId=<uuid>&userId=<uuid>
 //       → 302 to Google's consent screen. The tenant/user pair travels in a
 //         HMAC-signed, expiring `state`, so the callback can attribute the
 //         incoming code without a server-side session (Context7 of §13.8:
 //         identity that cannot be verified at request time must fail closed —
 //         an unverifiable state is a hard 400, never a "default tenant").
 //
-//   GET /api/gmail/callback?code=...&state=...
+//   GET /gmail/callback?code=...&state=...
 //       → verifies state, exchanges the code, learns the mailbox address from
 //         the fresh token, stores the refresh token encrypted, and answers a
 //         minimal HTML page (this response is browser-facing).
@@ -19,6 +19,10 @@
 // `requiresAuth: false` on both: Google's redirect cannot present Mastra's own
 // auth, and the browser clicking "connect" is the same user whose identity is
 // already carried (and signed) in the state parameter.
+//
+// The paths sit at the TOP level, NOT under `/api`: @mastra/server reserves the
+// built-in apiPrefix and validateCustomRoutePaths throws at boot for any custom
+// route starting with it (see DEFAULT_REDIRECT_URI in src/gmail/client.ts).
 import { registerApiRoute } from '@mastra/core/server'
 import type { ApiRoute } from '@mastra/core/server'
 import { z } from 'zod'
@@ -41,7 +45,7 @@ function requireStateSecret(env: CrumEnv): string | null {
 }
 
 export function createGmailConnectRoute(env: CrumEnv): ApiRoute {
-  return registerApiRoute('/api/gmail/connect', {
+  return registerApiRoute('/gmail/connect', {
     method: 'GET',
     requiresAuth: false,
     handler: async (c) => {
@@ -65,7 +69,7 @@ export function createGmailConnectRoute(env: CrumEnv): ApiRoute {
 }
 
 export function createGmailCallbackRoute(env: CrumEnv): ApiRoute {
-  return registerApiRoute('/api/gmail/callback', {
+  return registerApiRoute('/gmail/callback', {
     method: 'GET',
     requiresAuth: false,
     handler: async (c) => {
@@ -86,7 +90,7 @@ export function createGmailCallbackRoute(env: CrumEnv): ApiRoute {
 
       const verified = readState(state, secret)
       if (!verified) {
-        return c.html(resultPage(false, 'The login attempt expired or was tampered with. Start again from /api/gmail/connect.'), 400)
+        return c.html(resultPage(false, 'The login attempt expired or was tampered with. Start again from /gmail/connect.'), 400)
       }
 
       try {

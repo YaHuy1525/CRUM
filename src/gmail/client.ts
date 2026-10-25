@@ -30,7 +30,11 @@ export const GMAIL_SCOPES = [
   'https://www.googleapis.com/auth/gmail.compose',
 ] as const
 
-export const DEFAULT_REDIRECT_URI = 'http://localhost:4111/api/gmail/callback'
+// The route lives at the TOP level (`/gmail/callback`), not under `/api`. @mastra/server
+// reserves the built-in apiPrefix (`/api`, deployer index.js:4905) and validateCustomRoutePaths
+// (server-adapter index.js:1066) THROWS at boot for any custom route starting with it.
+// `/chat/crm` follows the same rule.
+export const DEFAULT_REDIRECT_URI = 'http://localhost:4111/gmail/callback'
 
 /** OAuth state lifetime: a consent round-trip that takes >10 minutes is abandoned. */
 export const STATE_TTL_MS = 10 * 60 * 1000

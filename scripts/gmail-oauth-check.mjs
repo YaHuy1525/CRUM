@@ -37,7 +37,7 @@ const res = await fetch('https://oauth2.googleapis.com/token', {
     client_secret: clientSecret,
     code: 'probe-invalid-code',
     grant_type: 'authorization_code',
-    redirect_uri: 'http://localhost:4111/api/gmail/callback',
+    redirect_uri: 'http://localhost:4111/gmail/callback',
   }),
 });
 const json = await res.json();

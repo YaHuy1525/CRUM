@@ -154,7 +154,7 @@ export const EnvSchema = z.object({
 
   // Gmail connector. OAuth client credentials from Google Cloud Console; the
   // redirect URI must exactly match one registered on the client. Absent, the
-  // /api/gmail/connect route refuses to start a flow (fail open to safe).
+  // /gmail/connect route refuses to start a flow (fail open to safe).
   GMAIL_OAUTH_CLIENT_ID: optionalString,
   GMAIL_OAUTH_CLIENT_SECRET: optionalString,
   GMAIL_REDIRECT_URI: optionalString,
