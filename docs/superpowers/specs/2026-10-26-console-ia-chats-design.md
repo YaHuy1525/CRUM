@@ -1,0 +1,132 @@
+# CRUM Console Redesign: Information Architecture and Chats Section
+
+Date: 2026-10-26
+Status: design approved in brainstorming, pending written spec review
+Scope: the Next.js console under `console/` and the read and manage API surface for conversations and CRM records under `src/api/`
+
+## Purpose
+
+The console today puts the whole workbench on Home. One page holds the thread list, the live chat, the greeting, quick actions, the customer context bind, and two live metric cards. Saved conversations cannot be reopened because the stored transcript is never served back to the browser. Picking an old conversation remounts an empty pane.
+
+This redesign gives the console a production grade information architecture. Conversations get their own section where they are launched, saved, listed, searched, renamed, deleted, and reopened with their full transcript. Governance, knowledge, and CRM records get focused pages. Home becomes a dashboard of pointers. The visual language evolves the existing graphite and emerald token system onto a real component foundation, learning from the calm density and honest states of the reference product Cedar without copying it.
+
+## Approved decisions
+
+1. Grouped sidebar with a Pages group (Home, Governance, Knowledge, Records) and a Chats group (New chat action, All conversations entry). The sidebar holds navigation only. Conversation history lives inside the Chats section.
+2. Route per conversation. `/chats` is the searchable history index, `/chats/new` is the launch view, `/chats/[id]` is one reopenable and deep linkable conversation.
+3. Launch pages are Home, Governance, Knowledge, Records, and the Chats section. Usage stays a live route entered from the Home quick launchers and by URL, and is not in the sidebar at launch.
+4. UI foundation is shadcn/ui primitives on Radix with Tailwind mapped onto CRUM design tokens, plus lucide-react icons. TanStack Query owns server state.
+5. Visual language evolves the current graphite and emerald tokens into a documented design system. Dark only. No light theme in this project.
+6. Migration is phased: baseline and hygiene, foundation, Chats backend, Chats UI, page migrations, polish. Every phase stays shippable and verified.
+7. History scope is per user at launch because storage isolates threads by tenant and user. A workspace wide conversation view is a future backend decision and is not promised here.
+8. New capability arrives as HTTP endpoints only. No new Mastra tools, so the governed tool registry and its four file test fan-out stay untouched.
+
+## Route map
+
+| Route | Purpose |
+|---|---|
+| `/` | Home dashboard. Greeting header, awaiting decision card, today digest card, recent conversations card, quick launcher row. No composer, no transcript, no session column, no context bind form. |
+| `/chats` | Chats section home. Search field, history rows with title and relative last activity, per row rename and delete menu, New chat action. Search hits carry matching snippets. |
+| `/chats/new` | Launch view. Centered composer with the single reserved prompt gradient and starter prompt cards. Sending mints the thread and redirects into it. |
+| `/chats/[id]` | One conversation. Stored transcript hydrates first, live streaming continues in place. Inline title rename, customer context side panel, feedback thumbs on assistant answers, Stop wired to the interrupt signal. |
+| `/governance` | Approval queue and receipts. Pending and decided tabs, draft level decisions, signature verdicts, queue count badge in the page header. Replaces `/approvals`. |
+| `/knowledge` | Document upload, list, delete, re-ingest with honest duplicate messaging. Behavior unchanged from today. |
+| `/records` | CRM objects with sub-tabs: Customers, Contacts, Follow-ups, Tasks, Schedules. Backed by new read only list endpoints. |
+| `/records/new` | Capture flow, formerly `/new`. Paste text, parser previews fields honestly, hand off to a new chat prefilled with them. Never creates rows silently. |
+| `/records/customers/[id]` | Customer detail with related contacts, follow-ups, and tasks beneath. Replaces the orphaned `/customer/[id]`. |
+| `/usage` | Token, cost, and tool metrics. Not in sidebar. Entered from Home launchers and by URL. |
+
+Redirects keep old links working: `/approvals` to `/governance`, `/today` to `/`, `/new` to `/records/new`, `/customer/[id]` to `/records/customers/[id]`. The standalone `/today` page retires and its digest folds into Home.
+
+## App shell
+
+One `AppShell` renders the sidebar and a main column. The sidebar shows the brand, the Pages group, the Chats group, and a footer with workspace and user identity read from the real injected identity instead of the hard coded dev chip used today. Each page renders its own header row with title and contextual actions inside a consistent max width content column. Nested route layouts give the Chats section its own shell so list and conversation views share context. Route level `loading.tsx`, `error.tsx`, `not-found.tsx`, and `global-error.tsx` appear for the first time.
+
+## Design system foundation
+
+Tokens stay the source of truth. `console/app/theme.css` keeps every token and Tailwind maps colors, spacing, radii, typography, shadows, and motion onto those variables, so utilities consume one language. The 1810 line global stylesheet shrinks as components migrate and is deleted in the polish phase. The token import becomes impossible to drop silently because the Tailwind theme layer references the token file explicitly.
+
+Initial primitive batch from shadcn/ui: button, input, textarea, label, tabs, dialog, dropdown-menu, tooltip, skeleton, separator, badge, toast, avatar. Dialogs and menus provide accessible rename and delete confirmations and row actions. Icons move from duplicated inline SVG fragments to lucide-react.
+
+Typography and density: 14px base for information density, light weight serif display headings in Source Serif 4, Inter for UI, JetBrains Mono for ids and metrics, all self hosted through `next/font` instead of a blocking external request.
+
+State recipes as written rules: skeleton while reading, honest error with retry that names the unreachable plane and port, distinct empty copy per entity, streaming cursor as a 2px accent block, tool calls as a collapsed mono inspector, assistant messages quiet and unbubbled capped near 68ch, user messages as right aligned pills.
+
+Motion: 120ms and 180ms durations on the existing easing curve, with `prefers-reduced-motion` respected.
+
+Accessibility bar: visible focus ring on every interactive element, labels on icon only buttons, focus trapped dialogs, keyboard reachable nav and thread list, `role="log"` transcript with live region preserved.
+
+Testing contract: components expose stable roles, labels, and test ids. Existing tests migrate off raw class name selectors as each component moves.
+
+## Chats section
+
+### Backend
+
+One new Hono router mounted into `createApiRouter` in `src/api/index.ts`, served on the REST plane and proxied by the existing console rewrite. No database migration and no new dependency. The pinned memory layer already exposes recall, getThreadById, updateThread, deleteThread, and searchMessages, reachable through the established `mastra.getMemory('coreMemory')` accessor.
+
+| Endpoint | Behavior |
+|---|---|
+| `GET /api/agent/threads` | Existing. History index list for the caller's resource. |
+| `GET /api/agent/threads/:id` | Thread metadata and existence check so stale links resolve to not-found. |
+| `GET /api/agent/threads/:id/messages` | Paginated stored messages converted from the framework storage shape into the chat UI message shape by a new unit tested mapping module. Tool call and reasoning parts are the hard cases. |
+| `PATCH /api/agent/threads/:id` | Rename title with `metadata.titlePinned` set so auto titling never overwrites a user rename. |
+| `DELETE /api/agent/threads/:id` | Delete thread and its messages. UI confirms with a dialog naming the conversation. |
+| `GET /api/agent/search?query=` | Semantic message search scoped to the caller's resource, returning thread hits with snippets. |
+
+Every endpoint resolves identity from the request, derives the resource id from it, accepts no client supplied resource id, and re-filters results by owner, matching the defense already proven on the thread list. Another user's thread reads as not-found, never as data.
+
+Auto-title: when the first turn of a thread lands on the chat route, the server sets the title from a truncation of the first user message unless a pinned title exists. No LLM summarization in this project.
+
+### Frontend
+
+`/chats` lists history through TanStack Query with skeleton rows, honest error with retry, and a distinct empty state. Rows show title and relative last activity while search results show matching snippets. Search debounces into the search endpoint. Row menus offer rename and delete. Delete and rename mutations invalidate the list, and rename applies optimistically.
+
+`/chats/new` shows the launch composer and starter prompt cards drawn from a curated static set in a single console config module. Sending mints the thread id in the browser as today, navigates to `/chats/[id]`, and starts streaming there.
+
+`/chats/[id]` hydrates the stored transcript through the messages endpoint into `useChat` via `setMessages`, shows a skeleton while loading, then continues live streaming with the resume flag for in flight runs. It renders quiet assistant messages, user pills, the collapsed tool inspector, the streaming cursor, thumbs feedback posting to the existing `/api/feedback` endpoint using trace and span ids extracted from stored message metadata by the mapping module, and if the pinned storage shape lacks those ids then Phase 2 records the limitation and the control defers to the backlog rather than shipping a fake vote, Stop wired to `/api/signals/interrupt`, inline title rename, and the customer context bind as a conversation side panel moved off Home.
+
+## Page migrations and Home dashboard
+
+Home composes three named and testable card components extracted from the current inline home file: an awaiting decision card reading pending approvals, a today card reading the digest, and a recent conversations card reading the thread list. A quick launcher row offers New chat, Capture from text, Knowledge, and Usage. The two live metric fetchers that sit inline in the home file today become these components and gain tests.
+
+Governance and Knowledge migrate their existing components with behavior unchanged and styling moved onto primitives.
+
+Records gains read only list endpoints for customers, contacts, follow-ups, tasks, and schedules under a new `/api/crm` router. They reuse the same visibility predicates the agent read tools enforce, are paginated, and support simple filters. The customer detail page shows related objects beneath the header. The Capture flow keeps its honest preview and gains a hand off button that opens `/chats/new` prefilled with the parsed text.
+
+## States and error handling
+
+Every route gains loading, error, and not-found surfaces. Identity misconfiguration surfaces once as a setup instruction banner using the existing error description convention instead of scattered card failures. Mutations show in flight state, confirm dialogs gate destructive acts, and toasts report outcomes. A failure never renders as empty anywhere in the console.
+
+## Testing strategy
+
+Unit tests cover the message shape mapping including tool and reasoning parts and pagination, every new endpoint including the cross user not-found property, and title derivation.
+
+Console tests cover each new page across loading, empty, and error states, the launch and conversation views, dashboard cards, and Records tabs. Existing chat and session tests migrate to role and label selectors as their components move. The currently empty shell test gap gains real tests for sidebar groups, active states, and redirects.
+
+Gates per phase: console typecheck clean, console suite green, root suites unaffected because endpoints are additive.
+
+## Phasing
+
+Phase 0: commit the current uncommitted theme work as a clean baseline and clear the pre-existing root typecheck debt so later gates mean something.
+
+Phase 1: foundation. Tailwind on tokens, primitive batch, icons, self hosted fonts, new app shell with grouped sidebar, route skeleton with redirects, route level state trio, TanStack Query provider.
+
+Phase 2: conversation backend. Messages read, metadata read, rename, delete, search, auto-title, mapping module, and their tests.
+
+Phase 3: Chats UI. Index, launch view, conversation view with hydration, feedback, tool inspector, and context panel.
+
+Phase 4: page migrations. Governance, Knowledge, Records with list endpoints, Home dashboard, retired pages behind redirects.
+
+Phase 5: polish. Delete the legacy global stylesheet, accessibility pass, responsive pass to the specified breakpoints, reduced motion audit, final verification.
+
+## Verification and definition of done
+
+Each phase ends with console typecheck and console suite green. The project ends with live stack verification: boot the real stack, start a conversation with a real model turn, reopen it from history to prove the transcript restores, and exercise rename, delete, and search in a browser with screenshots. Delivery reports state the proven runnability tier and list every unmet external requirement such as missing keys or unset environment variables. Green tests alone are never presented as a working system.
+
+## Out of scope
+
+Light theme. Workspace wide conversation history. LLM based thread summarization. Mail and Telegram channels. Observational memory enablement. Zustand. Visual regression infrastructure. Rebuilding the containerized console image, which remains a separate ops task.
+
+## Risks and assumptions
+
+The message mapping is new code with no vendor helper, so its unit tests are the contract. Auto-title is deterministic truncation, which is honest but plain. The root typecheck starts red with pre-existing errors and Phase 0 must clear it before gates are trusted. The working tree carries uncommitted theme work that Phase 0 commits first. Records list endpoints must reuse tool visibility predicates or governance parity breaks. The chat transport, identity middleware, and storage isolation conventions are unchanged by this design.
