@@ -115,7 +115,10 @@ export function createApiApp(deps: {
 export function startApiServer(options: ApiServerOptions): Promise<ApiServerHandle> {
   const { env } = options
   const port = options.port ?? env.CRUM_REST_PORT
-  const hostname = options.hostname ?? '127.0.0.1'
+  // Loopback by default (unchanged local behaviour); a container sets
+  // CRUM_REST_HOST=0.0.0.0 so the console service's /api/* rewrite is reachable
+  // across the Compose network. See src/config/env.ts.
+  const hostname = options.hostname ?? env.CRUM_REST_HOST ?? '127.0.0.1'
   const app = createApiApp({
     env,
     getMastra: () => options.mastra,

@@ -103,6 +103,13 @@ export const EnvSchema = z.object({
   /** The Mastra HTTP server port (chat route + Studio). */
   CRUM_API_PORT: z.coerce.number().int().min(1).max(65535).default(4111),
   /**
+   * The interface the Mastra HTTP server binds. Unset keeps the framework
+   * default (loopback on a developer machine). A container sets `0.0.0.0` so the
+   * console service can reach `http://api:4111` over the Compose network; a
+   * loopback-only bind is invisible across the container boundary.
+   */
+  CRUM_API_HOST: optionalString,
+  /**
    * The hand-rolled Hono REST plane (`/api/*`: approvals, knowledge, signals,
    * agent threads). It cannot live on `CRUM_API_PORT` because Mastra reserves the
    * `/api` prefix for its own routes, and `registerApiRoute` documents `:param`
@@ -114,6 +121,12 @@ export const EnvSchema = z.object({
    * storage but never see the run a signal is meant to reach.
    */
   CRUM_REST_PORT: z.coerce.number().int().min(1).max(65535).default(4113),
+  /**
+   * The interface the REST plane binds. Unset keeps the current loopback default
+   * (`127.0.0.1`). A container sets `0.0.0.0` so the console service's server-side
+   * rewrite of `/api/*` reaches `http://api:4113` across the Compose network.
+   */
+  CRUM_REST_HOST: optionalString,
 
   // Mastra runtime (§13.3)
   MASTRA_OBSERVABILITY: booleanish.prefault('false'),

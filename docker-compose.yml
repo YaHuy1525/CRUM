@@ -1,0 +1,139 @@
+# CRUM local stack. Four services on one bridge network:
+#
+#   db        pgvector Postgres (mirrors the CI service image + password)
+#   migrate   one-shot: applies migrations/ then exits (runtime never CREATEs)
+#   api       the Mastra server + in-process REST plane (4111 / 4113)
+#   console   the Next.js console (:3000); its server-side rewrites reach api
+#
+# Development shape, deliberately: NODE_ENV=development and CRUM_AUTH_MODE=dev so
+# the stack boots with no Supabase. parseEnv refuses production+dev (§13.2), so a
+# production JWT stack is a different set of secrets, not a flag here. Model
+# calls still need OPENROUTER_API_KEY. This file has no ${VAR} that reads the
+# project .env, on purpose: Compose would auto-parse ./.env for interpolation and
+# the developer .env is not a Compose concern. Put model keys in .env.compose
+# (copy .env.compose.example) and run with `docker compose --env-file
+# .env.compose up --build`, or the npm scripts below. Without a model key every
+# plane still boots; only a live chat turn lacks a model.
+
+name: crum
+
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: changeme
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - crum_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: "no"
+    command: ["npm", "run", "db:migrate"]
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://postgres:changeme@db:5432/postgres
+      # A non-loopback host would force TLS; the in-network db is plaintext.
+      MASTRA_PG_SSL: "false"
+      # Only the migration job may create tables (§14.2).
+      MASTRA_DB_DISABLE_INIT: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    # Exec the compiled bundle directly (see Dockerfile CMD note): `mastra start`
+    # would force NODE_ENV=production and reject the dev identity profile.
+    command: ["sh", "-c", "cd .mastra/output && exec node index.mjs"]
+    environment:
+      NODE_ENV: development
+      CRUM_AUTH_MODE: dev
+      DATABASE_URL: postgresql://postgres:changeme@db:5432/postgres
+      MASTRA_PG_SSL: "false"
+      MASTRA_DB_DISABLE_INIT: "true"
+      MASTRA_PG_POOL_MAX: "4"
+      # Bind the wildcard interfaces so the console container can reach both
+      # halves of this plane over the network (see src/config/env.ts).
+      CRUM_API_HOST: "0.0.0.0"
+      CRUM_REST_HOST: "0.0.0.0"
+      CRUM_API_PORT: "4111"
+      CRUM_REST_PORT: "4113"
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      CRUM_MODEL_MAIN: ${CRUM_MODEL_MAIN:-}
+      CRUM_MODEL_LIGHT: ${CRUM_MODEL_LIGHT:-}
+      EMBEDDING_MODEL_ID: ${EMBEDDING_MODEL_ID:-}
+      # The eager registry builds the embedding model at boot with the pinned id
+      # `openai/text-embedding-3-small` (src/mastra/embeddings.ts). Through the
+      # model router that id wants OPENAI_API_KEY, which this OpenRouter-only
+      # stack does not have. Route it via OpenRouter's OpenAI-compatible endpoint
+      # instead — the config-object branch in embeddings.ts — so a single
+      # OPENROUTER_API_KEY boots the whole plane (agent ids are already openrouter/*).
+      EMBEDDING_BASE_URL: https://openrouter.ai/api/v1
+      EMBEDDING_API_KEY: ${OPENROUTER_API_KEY:-}
+      # Dev-only fallbacks so the planes boot with no host .env. Both must be >=
+      # 32 bytes (env.ts). Override them with your own values for anything real.
+      APPROVAL_HMAC_SECRET: ${APPROVAL_HMAC_SECRET:-dev-only-approval-hmac-secret-change-me-0123}
+      MCP_REQUEST_STATE_KEY: ${MCP_REQUEST_STATE_KEY:-dev-only-mcp-request-state-key-change-me-01}
+    ports:
+      # Host sides are parameterized because 4111/4113 may already be held by
+      # another local project (the container always listens on 4111/4113).
+      - "${CRUM_API_HOST_PORT:-4111}:4111"
+      - "${CRUM_REST_HOST_PORT:-4113}:4113"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  console:
+    build:
+      context: ./console
+      dockerfile: Dockerfile
+      args:
+        # Baked into the Next rewrite table at build time.
+        CRUM_MASTRA_ORIGIN: http://api:4111
+        CRUM_REST_ORIGIN: http://api:4113
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}
+        # Edge middleware reads only build-inlined NEXT_PUBLIC_* at runtime, so the
+        # dev identity is baked here (mirroring the runtime environment block below).
+        # Override in .env.compose and rebuild the console to change the identity.
+        NEXT_PUBLIC_CRUM_AUTH_MODE: dev
+        NEXT_PUBLIC_CRUM_DEV_TENANT_ID: ${CRUM_DEV_TENANT_ID:-00000000-0000-4000-8000-000000000001}
+        NEXT_PUBLIC_CRUM_DEV_USER_ID: ${CRUM_DEV_USER_ID:-00000000-0000-4000-8000-000000000002}
+        NEXT_PUBLIC_CRUM_DEV_USER_ROLE: ${CRUM_DEV_USER_ROLE:-admin}
+    restart: unless-stopped
+    environment:
+      CRUM_MASTRA_ORIGIN: http://api:4111
+      CRUM_REST_ORIGIN: http://api:4113
+      # Dev identity the console middleware injects as x-tenant-id/x-user-id/
+      # x-user-role on every proxied /chat and /api call, mirroring the api's
+      # CRUM_AUTH_MODE=dev. Fixed demo UUIDs so `up` works unattended; override
+      # them to speak as a different tenant. They are non-secret local fixtures.
+      CRUM_AUTH_MODE: dev
+      CRUM_DEV_TENANT_ID: ${CRUM_DEV_TENANT_ID:-00000000-0000-4000-8000-000000000001}
+      CRUM_DEV_USER_ID: ${CRUM_DEV_USER_ID:-00000000-0000-4000-8000-000000000002}
+      CRUM_DEV_USER_ROLE: ${CRUM_DEV_USER_ROLE:-admin}
+    ports:
+      # Host port is configurable because :3000 is the common local Next dev port.
+      - "${CRUM_CONSOLE_PORT:-3000}:3000"
+    depends_on:
+      - api
+
+volumes:
+  crum_pgdata:

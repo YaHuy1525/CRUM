@@ -1,6 +1,9 @@
 node_modules/
 .env
 .env.local
+# Compose-only interpolation values (model keys, dev HMAC fallbacks). Copy
+# .env.compose.example to .env.compose and fill it; never commit real values.
+.env.compose
 dist/
 /build/
 *.log

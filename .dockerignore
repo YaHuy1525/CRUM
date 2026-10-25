@@ -1,0 +1,40 @@
+# Build-context exclusions for the api image (root context).
+#
+# The Dockerfile copies an explicit allow-list into the runner, so these only
+# keep the context small and keep host-only artifacts out of the bundle.
+
+# Host toolchains and VCS.
+node_modules
+**/node_modules
+.git
+.gitignore
+.github
+.devcontainer
+.superpowers
+.worktrees
+.qoder
+
+# Generated / build output that the image rebuilds from source.
+dist
+.mastra
+.next
+**/.next
+coverage
+
+# The console builds from its own context; it is not needed in the api image.
+console
+
+# Secrets and scratch. The .env is never baked; runtime config comes from the
+# Compose environment. .env.example is kept (it is the shipped contract).
+.env
+.env.*
+!.env.example
+lint.json
+lint.txt
+tmp-*.mjs
+*.log
+
+# Docker files themselves never belong inside the image they define.
+Dockerfile
+.dockerignore
+docker-compose.yml

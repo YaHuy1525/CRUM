@@ -113,6 +113,10 @@ export function buildCrumServerConfig(env: CrumEnv): ServerConfig {
 
   return {
     port: env.CRUM_API_PORT,
+    // Undefined keeps the framework default (loopback locally); a container sets
+    // CRUM_API_HOST=0.0.0.0 so the console service reaches this plane over the
+    // Compose network. See src/config/env.ts.
+    host: env.CRUM_API_HOST,
     middleware: [identityMiddleware],
     apiRoutes: [
       chatRoute({

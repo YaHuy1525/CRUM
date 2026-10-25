@@ -27,7 +27,10 @@
     "eval:seed": "tsx scripts/eval-seed.ts",
     "eval:run": "vitest run tests/evals/golden-gate.test.ts --reporter=verbose",
     "test:load": "vitest run tests/load --reporter=verbose",
-    "verify": "npm run typecheck && npm run lint && npm run test"
+    "verify": "npm run typecheck && npm run lint && npm run test",
+    "docker:up": "docker compose --env-file .env.compose up --build -d",
+    "docker:down": "docker compose --env-file .env.compose down",
+    "docker:logs": "docker compose --env-file .env.compose logs -f"
   },
   "dependencies": {
     "@ai-sdk/openai": "4.0.101",

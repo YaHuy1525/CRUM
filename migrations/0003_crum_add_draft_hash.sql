@@ -13,10 +13,12 @@ ALTER TABLE pending_writes
 UPDATE pending_writes SET draft_hash = encode(sha256(payload::text::bytea), 'hex')
   WHERE draft_hash IS NULL;
 
--- Make the column non-null going forward.
+-- Make the column non-null going forward. The application always supplies
+-- draft_hash on INSERT (src/db/pending-writes.ts), so no column DEFAULT is
+-- needed. A DEFAULT may not reference another column of the same row anyway
+-- (`encode(sha256(payload...))` is rejected by Postgres), so none is set here.
 ALTER TABLE pending_writes
-  ALTER COLUMN draft_hash SET NOT NULL,
-  ALTER COLUMN draft_hash SET DEFAULT encode(sha256(payload::text::bytea), 'hex');
+  ALTER COLUMN draft_hash SET NOT NULL;
 
 -- The idempotency guard: same tenant + same draft hash = same write.
 -- Partial: only undecided drafts participate (a decided draft cannot be replayed).
