@@ -1,0 +1,78 @@
+/* console/app/tailwind.css — Tailwind v4 utility layer mapped onto CRUM tokens.
+ *
+ * theme.css stays the single source of truth for every design decision. This
+ * file only teaches Tailwind's utility namespaces (--color-*, --radius-*,
+ * --font-*, --shadow-*, --spacing-*) to point at those existing variables, so
+ * `bg-bg-card` and the legacy `.rail-card` rule resolve to the same
+ * `var(--bg-card)`. Nothing here redeclares a token value: every mapping is a
+ * `var(--token)` reference and the `inline` option means Tailwind writes the
+ * reference straight into the generated utility instead of minting a competing
+ * custom property that could shadow theme.css.
+ *
+ * Import order in layout.tsx is deliberate and must not change:
+ *   theme.css (tokens)  ->  tailwind.css (this)  ->  globals.css (legacy rules)
+ */
+@import 'tailwindcss';
+
+@theme inline {
+  /* ── Surfaces ─────────────────────────────────────────────────────── */
+  --color-bg-base: var(--bg-base);
+  --color-bg-sunken: var(--bg-sunken);
+  --color-bg-card: var(--bg-card);
+  --color-bg-raised: var(--bg-raised);
+  --color-bg-elevated: var(--bg-elevated);
+  --color-bg-hover: var(--bg-hover);
+  --color-bg-active-pill: var(--bg-active-pill);
+
+  /* ── Text ─────────────────────────────────────────────────────────── */
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+
+  /* ── Accent (emerald, decision-only) ──────────────────────────────── */
+  --color-accent: var(--accent);
+  --color-accent-bright: var(--accent-bright);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-line: var(--accent-line);
+
+  /* ── Lines ────────────────────────────────────────────────────────── */
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-border-focus: var(--border-focus);
+
+  /* ── Semantic states (base / soft / line) ─────────────────────────── */
+  --color-danger: var(--state-danger);
+  --color-danger-soft: var(--state-danger-soft);
+  --color-danger-line: var(--state-danger-line);
+  --color-warning: var(--state-warning);
+  --color-warning-soft: var(--state-warning-soft);
+  --color-warning-line: var(--state-warning-line);
+  --color-success: var(--state-success);
+  --color-success-soft: var(--state-success-soft);
+  --color-success-line: var(--state-success-line);
+  --color-info: var(--state-info);
+  --color-info-soft: var(--state-info-soft);
+
+  /* ── Radii ────────────────────────────────────────────────────────── */
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+  --radius-pill: var(--radius-pill);
+
+  /* ── Typography ───────────────────────────────────────────────────── */
+  --font-sans: var(--font-sans);
+  --font-display: var(--font-display);
+  --font-mono: var(--font-mono);
+
+  /* ── Elevation ────────────────────────────────────────────────────── */
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+  --shadow-accent: var(--shadow-accent);
+
+  /* ── Motion ───────────────────────────────────────────────────────── */
+  --ease-crum: var(--ease);
+  --default-transition-duration: var(--dur);
+}
