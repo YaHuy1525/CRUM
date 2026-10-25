@@ -59,7 +59,7 @@ const APPROVAL_SCOPE = 'crm:write'
  * for runs started with `generate()`; if a turn is started with `stream()`, the
  * streaming `approveToolCall` is the documented counterpart.
  */
-interface SuspendedRunAgent {
+export interface SuspendedRunAgent {
   listSuspendedRuns(options?: {
     threadId?: string
     resourceId?: string

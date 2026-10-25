@@ -24,6 +24,7 @@ import { createCrumMcpServer } from './mcp-server'
 import { buildScorers } from '../evals/scorers'
 import { buildScheduleHooks } from './schedule-hooks'
 import { resolveIdentity, IdentityError } from './identity'
+import { CRUM_AGENT_CONTROLLER_ID, resourceIdFor } from './sessions'
 import { createGmailConnectRoute, createGmailCallbackRoute } from '../api/gmail'
 
 export interface CrumMastraOptions {
@@ -91,8 +92,9 @@ export function buildCrumServerConfig(env: CrumEnv): ServerConfig {
       rc.set('userRole', identity.userRole)
 
       // Memory/resource scoping: a tenant-qualified resource id keeps threads
-      // isolated per user within a tenant (§4.2).
-      rc.set(MASTRA_RESOURCE_ID_KEY, `${identity.tenantId}:${identity.userId}`)
+      // isolated per user within a tenant (§4.2). The same helper builds the
+      // resource for the signal and session routes, so the three cannot drift.
+      rc.set(MASTRA_RESOURCE_ID_KEY, resourceIdFor(identity))
 
       // Thread id comes from a header, not the body, so identity resolution
       // never has to read (or buffer) the streamed request body. When it is
@@ -151,7 +153,7 @@ export function createCrumMastra(env: CrumEnv, options: CrumMastraOptions = {}):
   // controller inherits the parent Mastra's storage via __registerMastra,
   // called internally when the controller is passed in agentControllers.
   const crmController = new AgentController({
-    id: 'crm-assistant',
+    id: CRUM_AGENT_CONTROLLER_ID,
     modes: [{ id: 'default', name: 'Default' }],
     agent: crmAssistant,
     subagents: CRUM_SUBAGENTS,
@@ -191,7 +193,7 @@ export function createCrumMastra(env: CrumEnv, options: CrumMastraOptions = {}):
     },
     observability: buildObservability(env),
     agentControllers: {
-      'crm-assistant': crmController,
+      [CRUM_AGENT_CONTROLLER_ID]: crmController,
     },
     server: buildCrumServerConfig(env),
   })
@@ -204,6 +206,8 @@ export { assertMcpRequestStateKey, resolveMcpRequestState } from './mcp-guard'
 export { crmAssistant } from './agent'
 export { buildCrumMemory } from './memory'
 export { createSession, listSessions, queryThreads } from './sessions'
+export { CRUM_AGENT_CONTROLLER_ID, resourceIdFor, resolveSession } from './sessions'
+export type { ResolvedSession, ResolveSessionOptions } from './sessions'
 export type { CreateSessionOptions, ListSessionsOptions } from './sessions'
 
 /**
