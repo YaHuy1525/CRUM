@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { TenantRequestContextSchema } from '../tenant-context'
 import { loadPolicy } from '../../governance/policy'
 import { scoreRisk } from '../../governance/risk'
-import { getOrCreateDraft } from '../../db/pending-writes'
+import { getOrCreateDraft, commitAutoWrite } from '../../db/pending-writes'
 import { parseEnv } from '../../config/env'
 import { createGmailDraft, resolveGmailAccess } from '../../gmail/client'
 
@@ -49,11 +49,17 @@ export const logFollowupTool = createTool({
         idempotencyKey: inputData.correlationId,
       })
 
+      // The auto gate needs no human decision, but it still needs the write.
+      // Staging alone left the followups table empty while this tool answered
+      // "logged"; commitAutoWrite applies it and is a no-op on a replay of the
+      // same correlationId, so a retried tool call cannot log twice.
+      const applied = await commitAutoWrite(draft)
+
       return {
-        pendingWriteId: draft.id,
+        pendingWriteId: applied.id,
         riskScore: assessment.score,
         gate: 'auto' as const,
-        message: `Followup logged (draft ${draft.id}).`,
+        message: `Followup logged (followup ${applied.committedRecordId}).`,
       }
     })
   },
@@ -95,11 +101,13 @@ export const createTaskTool = createTool({
         idempotencyKey: inputData.correlationId,
       })
 
+      const applied = await commitAutoWrite(draft)
+
       return {
-        pendingWriteId: draft.id,
+        pendingWriteId: applied.id,
         riskScore: assessment.score,
         gate: 'auto' as const,
-        message: `Task created (draft ${draft.id}).`,
+        message: `Task created (task ${applied.committedRecordId}).`,
       }
     })
   },
@@ -129,7 +137,10 @@ export const draftMailTool = createTool({
       const draft = await getOrCreateDraft({
         tenantId: rc.tenantId,
         runId: 'auto',
-        objectType: 'knowledge_document',
+        // An email draft is not a knowledge document. The queue renders this
+        // column, and calling a mail draft a document upload put a lie in the
+        // approval UI (migration 0007 adds the 'email' type).
+        objectType: 'email',
         operation: 'create',
         payload: inputData,
         riskScore: assessment.score,
@@ -138,11 +149,15 @@ export const draftMailTool = createTool({
         idempotencyKey: inputData.draftHash,
       })
 
+      // The staged draft IS the artifact: nothing to apply to a business table,
+      // but it must still leave the queue, so the auto path marks it settled.
+      const applied = await commitAutoWrite(draft)
+
       // Best-effort mirror into the caller's connected Gmail as a real draft.
       // Nothing is sent: the compose scope can only create drafts, and sending
       // stays reserved for mail.send behind the approval gate. A failure here
       // never unrolls the staged write — the CRUM draft is the record of truth.
-      let message = `Email draft saved (draft ${draft.id}).`
+      let message = `Email draft saved (draft ${applied.id}).`
       try {
         const env = parseEnv()
         const access = await resolveGmailAccess(env, rc.tenantId, rc.userId)

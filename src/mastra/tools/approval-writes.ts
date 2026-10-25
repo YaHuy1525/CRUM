@@ -193,7 +193,11 @@ export const sendMailTool = createTool({
       const assessment = scoreRisk(inputData, policy.risk, 'mail.send')
       const draft = await getOrCreateDraft({
         tenantId: rc.tenantId, runId: 'pending',
-        objectType: 'knowledge_document',
+        // See mail.draft: an email is not a knowledge document (migration 0007).
+        // Committing this draft is deliberately unimplemented — applyDraft
+        // refuses `email` anything but `create`, and sending needs a connected
+        // mailbox plus a real send scope that CRUM does not request yet.
+        objectType: 'email',
         operation: 'create', payload: inputData,
         riskScore: assessment.score, gate: 'approval',
         requestedBy: rc.userId, idempotencyKey: inputData.draftHash,

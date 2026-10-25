@@ -1,81 +1,78 @@
 import { Workflow, createStep } from '@mastra/core/workflows'
 import { z } from 'zod'
-import { commitWithReceipt } from '../../db/pending-writes'
+import { commitWithReceipt, getPendingWrite } from '../../db/pending-writes'
+import type { PendingWrite } from '../../db/pending-writes'
 
+/**
+ * The approval commit is keyed on the draft id and the tenant that owns it.
+ *
+ * The payload, runId, object type and operation all used to be supplied by the
+ * caller and re-staged as a hard-coded `customer`/`create` draft, which meant an
+ * approver could commit bytes that were never the ones the tool staged, and every
+ * non-customer draft committed as a customer. `pending_writes` is the record of
+ * what was staged (§11.3), so this reads it back instead of trusting the request.
+ */
 const ApprovalInputSchema = z.object({
   pendingWriteId: z.string().uuid(),
-  runId: z.string(),
   tenantId: z.string().uuid(),
   approvedBy: z.string().uuid(),
   scope: z.string(),
-  payload: z.unknown(),
 })
 
-const validateStep = createStep({
+const ValidatedSchema = z.object({
+  pendingWriteId: z.string().uuid(),
+  tenantId: z.string().uuid(),
+  approvedBy: z.string().uuid(),
+  scope: z.string(),
+  draft: z.unknown(),
+})
+
+/** Exported so its read-back-and-verify behaviour is testable without a run engine. */
+export const validateStep = createStep({
   id: 'validate-approval',
   inputSchema: ApprovalInputSchema,
-  outputSchema: z.object({
-    pendingWriteId: z.string(),
-    runId: z.string(),
-    tenantId: z.string(),
-    approvedBy: z.string(),
-    scope: z.string(),
-    payload: z.unknown(),
-    valid: z.boolean(),
-  }),
-  execute: ({ inputData }) => {
-    // The receipt signature is verified by the REST route before invoking
-    // the workflow. This step validates the input shape and confirms the
-    // data is well-formed for the commit step.
-    return Promise.resolve({
-      ...inputData,
-      valid: true,
-    })
+  outputSchema: ValidatedSchema,
+  execute: async ({ inputData }) => {
+    // Tenant-scoped by construction: a uuid is not an authorization.
+    const draft = await getPendingWrite(inputData.pendingWriteId, inputData.tenantId)
+    if (!draft) {
+      throw new Error(
+        `approvalFlow: draft ${inputData.pendingWriteId} does not exist for this tenant`,
+      )
+    }
+    if (draft.receiptId) {
+      throw new Error(`approvalFlow: draft ${draft.id} is already approved`)
+    }
+    if (draft.rejectedAt) {
+      throw new Error(`approvalFlow: draft ${draft.id} was rejected`)
+    }
+    // §12.1: a staged draft expires so a replayed approval token cannot commit
+    // against a business state that has since changed.
+    if (new Date(draft.expiresAt).getTime() < Date.now()) {
+      throw new Error(`approvalFlow: draft ${draft.id} expired at ${draft.expiresAt}`)
+    }
+    return { ...inputData, draft }
   },
 })
 
-const commitStep = createStep({
-  id: 'commit-write',
-  inputSchema: z.object({
-    pendingWriteId: z.string(),
-    runId: z.string(),
-    tenantId: z.string(),
-    approvedBy: z.string(),
-    scope: z.string(),
-    payload: z.unknown(),
-    valid: z.boolean(),
-  }),
-  outputSchema: z.object({
-    committedId: z.string(),
-    receiptId: z.string(),
-    pendingWriteId: z.string(),
-  }),
-  execute: async ({ inputData }) => {
-    if (!inputData.valid) {
-      throw new Error('Approval validation failed')
-    }
+const CommitOutputSchema = z.object({
+  committedId: z.string().nullable(),
+  receiptId: z.string(),
+  pendingWriteId: z.string(),
+  objectType: z.string(),
+  operation: z.string(),
+})
 
-    // Build a minimal PendingWrite-shaped object for commitWithReceipt.
-    // In production, this would be loaded from the database.
-    const draft = {
-      id: inputData.pendingWriteId,
-      tenantId: inputData.tenantId,
-      runId: inputData.runId,
-      threadId: null,
-      objectType: 'customer',
-      operation: 'create',
-      targetId: null,
-      payload: inputData.payload,
-      riskScore: 0,
-      gate: 'approval',
-      draftHash: '',
-      receiptId: null,
-      rejectedAt: null,
-      rejectionReason: null,
-      requestedBy: inputData.approvedBy,
-      createdAt: new Date().toISOString(),
-      expiresAt: new Date().toISOString(),
-    }
+/** Exported so its "commit what was staged, not what was asked for" rule is testable. */
+export const commitStep = createStep({
+  id: 'commit-write',
+  inputSchema: ValidatedSchema,
+  outputSchema: CommitOutputSchema,
+  execute: async ({ inputData }) => {
+    // The validated step read this row back from the database, so the object
+    // type and payload are the ones the tool staged, not the ones a caller
+    // repeated.
+    const draft = inputData.draft as PendingWrite
 
     const result = await commitWithReceipt(draft, {
       approvedBy: inputData.approvedBy,
@@ -85,15 +82,11 @@ const commitStep = createStep({
     return {
       committedId: result.committedId,
       receiptId: result.receiptId,
-      pendingWriteId: inputData.pendingWriteId,
+      pendingWriteId: draft.id,
+      objectType: draft.objectType,
+      operation: draft.operation,
     }
   },
-})
-
-const CommitOutputSchema = z.object({
-  committedId: z.string(),
-  receiptId: z.string(),
-  pendingWriteId: z.string(),
 })
 
 export const approvalFlow = new Workflow({
