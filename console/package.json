@@ -11,9 +11,11 @@
     "test:unit": "vitest run"
   },
   "dependencies": {
-    "next": "15.0.0",
-    "react": "19.0.0",
-    "react-dom": "19.0.0"
+    "@ai-sdk/react": "4.0.157",
+    "ai": "7.0.150",
+    "next": "15.1.12",
+    "react": "19.0.1",
+    "react-dom": "19.0.1"
   },
   "devDependencies": {
     "@testing-library/dom": "10.4.0",

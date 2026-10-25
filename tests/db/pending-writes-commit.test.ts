@@ -116,6 +116,7 @@ import {
   getOrCreateDraft,
   getPendingWrite,
   getReceipt,
+  listDecidedWrites,
   listPendingWrites,
   rejectPendingWrite,
   UnsupportedCommitError,
@@ -543,6 +544,30 @@ describe('queue readers', () => {
     expect(select.text).toMatch(/committed_at IS NULL/)
     expect(select.text).toMatch(/ORDER BY risk_score DESC/)
     expect(select.values).toEqual([TENANT])
+  })
+
+  it('hides nothing from the decided history that the pending list hides, and bounds the window', async () => {
+    env.state.queueRows = [
+      {
+        id: DRAFT_ID, tenant_id: TENANT, run_id: 'pending', object_type: 'customer',
+        operation: 'create', payload: {}, risk_score: 55, gate: 'approval', draft_hash: 'x',
+        receipt_id: 'aaaaaaaa-0000-0000-0000-000000000009', rejected_at: null,
+        committed_at: '2026-10-24T09:30:00.000Z', committed_record_id: TARGET_ID,
+        requested_by: USER, created_at: '2026-10-24T09:00:00.000Z',
+        expires_at: '2026-10-24T10:00:00.000Z',
+      },
+    ]
+
+    const decided = await listDecidedWrites(TENANT, 25)
+
+    const select = onlyStep(/^SELECT \* FROM pending_writes WHERE tenant_id =/)
+    // The exact inverse of the pending predicate: any one of the three markers
+    // puts a draft in history, so all three have to be ORed.
+    expect(select.text).toMatch(/receipt_id IS NOT NULL OR rejected_at IS NOT NULL OR committed_at IS NOT NULL/)
+    expect(select.text).not.toMatch(/receipt_id IS NULL/)
+    expect(select.text).toMatch(/LIMIT \$2/)
+    expect(select.values).toEqual([TENANT, 25])
+    expect(decided).toHaveLength(1)
   })
 
   it('reads one draft scoped to the tenant in the same predicate as the id', async () => {

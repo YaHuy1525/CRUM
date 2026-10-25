@@ -27,9 +27,11 @@ const MOUNTED: Array<{ method: 'GET' | 'POST'; path: string }> = [
   { method: 'GET', path: '/api/usage' },
   { method: 'GET', path: '/api/digest' },
   { method: 'POST', path: '/api/crm/prefill/customer' },
+  { method: 'GET', path: '/api/crm/customers/550e8400-e29b-41d4-a716-446655440000' },
   { method: 'POST', path: '/api/signals/interrupt' },
   { method: 'GET', path: '/api/agent/threads' },
   { method: 'GET', path: '/api/approvals/pending' },
+  { method: 'GET', path: '/api/approvals/resolved' },
   { method: 'POST', path: '/api/knowledge/upload' },
   { method: 'GET', path: '/api/knowledge/documents' },
 ]

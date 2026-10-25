@@ -8,6 +8,7 @@ import {
   commitWithReceipt,
   getPendingWrite,
   getReceipt,
+  listDecidedWrites,
   listPendingWrites,
   rejectPendingWrite,
   UnsupportedCommitError,
@@ -19,6 +20,7 @@ import { computeActionHash, verifyReceipt } from '../governance/receipt'
  * Approval REST routes. §10.2.
  *
  * GET  /api/approvals/pending                        risk-ranked queue, joined to suspended runs (§11.3)
+ * GET  /api/approvals/resolved                       decided drafts, newest decision first
  * GET  /api/approvals/suspended-runs                 proxy over agent.listSuspendedRuns()
  * POST /api/approvals/drafts/:pendingWriteId/decision  record the human decision and commit the draft
  * POST /api/approvals/:runId/decision                native gate: resume/decline the suspended tool call
@@ -104,6 +106,11 @@ const QueueQuerySchema = z.object({
   resourceId: z.string().min(1).optional(),
   page: z.coerce.number().int().min(1).default(1),
   perPage: z.coerce.number().int().min(1).max(100).default(50),
+})
+
+/** The decided-history window. Bounded so the Resolved tab cannot ask for a full table scan. */
+const ResolvedQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).default(50),
 })
 
 /**
@@ -228,6 +235,37 @@ export function createApprovalRouter(deps: ApprovalRouterDeps): Hono {
 
     return c.json({
       items: drafts.map((d) => queueItem(d, matchSuspension(d.runId, runs))),
+      total: drafts.length,
+    })
+  })
+
+  /**
+   * The Resolved side of the queue. Kept as its own endpoint rather than a flag on
+   * `/pending`, because the two queries have genuinely opposite predicates and the
+   * console renders them in different tabs; folding them together would make the
+   * pending list's contract depend on a query parameter.
+   *
+   * `gate` is returned (via queueItem) and not filtered: an `auto` draft that
+   * committed itself appears here, and a reviewer auditing what humans approved
+   * needs to see that distinction rather than a silently shorter list.
+   */
+  app.get('/resolved', async (c) => {
+    const gate = await auth(c)
+    if ('error' in gate) return gate.error
+
+    const parsed = ResolvedQuerySchema.safeParse({
+      limit: c.req.query('limit'),
+    })
+    if (!parsed.success) {
+      return c.json({ error: 'invalid query', detail: parsed.error.issues.map((i) => i.message) }, 400)
+    }
+
+    const drafts = await listDecidedWrites(gate.identity.tenantId, parsed.data.limit)
+
+    // No suspension join here: a decided draft is by definition no longer a live
+    // pause, so the column would always be null.
+    return c.json({
+      items: drafts.map((d) => queueItem(d, null)),
       total: drafts.length,
     })
   })

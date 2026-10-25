@@ -5,3 +5,9 @@ build/
 dist/
 *.tsbuildinfo
 next-env.d.ts
+
+# Secrets and dev identity claims stay out of the bundle and out of git; only the
+# example file is committed. See console/.env.example for the names.
+.env
+.env.*
+!.env.example

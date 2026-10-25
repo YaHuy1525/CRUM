@@ -470,3 +470,429 @@ html, body {
 .today-error button:hover {
   background: color-mix(in srgb, var(--accent) 85%, var(--crum-black-950));
 }
+
+/* ── Wave 2A: chat tool chips, errors, governance panels ── §11.1, §11.3 */
+
+/* A tool call rendered inline in the transcript. Readable as a chip, not as a
+   collapsed debug blob: the name is the subject, the state is the verb, and the
+   full input stays in the tooltip. */
+.tool-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 6px 4px 0;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-raised);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.tool-chip .tool-state {
+  color: var(--text-muted);
+}
+
+.tool-chip.state-result .tool-state {
+  color: var(--state-success);
+}
+
+.tool-chip.state-output-error .tool-state,
+.tool-chip.state-output-denied .tool-state {
+  color: var(--state-danger);
+}
+
+/* A gated call parked in the stream: the decision happens on /approvals, so the
+   chip has to say where to go rather than pretend to be a spinner. */
+.tool-chip.state-approval-requested .tool-state {
+  color: var(--state-warning);
+}
+
+.token.reasoning {
+  display: block;
+  color: var(--text-muted);
+  font-style: italic;
+  white-space: pre-wrap;
+}
+
+.status-line {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  padding: 8px;
+}
+
+/* One error treatment for every panel. The old components swallowed failures into
+   an empty list, so this is the visible half of that fix. */
+.error-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--state-danger);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--state-danger) 12%, transparent);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}
+
+.error-banner button {
+  padding: 4px 10px;
+  background: transparent;
+  color: var(--text-primary);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: var(--text-xs);
+}
+
+.hint {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  margin-top: 6px;
+}
+
+.hint.ok {
+  color: var(--state-success);
+}
+
+.hint.bad {
+  color: var(--state-danger);
+}
+
+.session-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Header controls (New / Reload) sit inside a pane header, so they inherit the
+   header's muted look rather than the OS default button. */
+.pane-header button {
+  margin-left: 8px;
+  padding: 2px 10px;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: var(--text-xs);
+  font-weight: 400;
+}
+
+.pane-header button:hover {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+/* Approval queue ------------------------------------------------ ============ */
+
+.approval-queue {
+  padding: 16px;
+}
+
+.approval-queue .tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.approval-queue .tabs button {
+  padding: 6px 14px;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: var(--text-sm);
+}
+
+.approval-queue .tabs button.active {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: transparent;
+}
+
+.approval-queue ul {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.queue-item {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-raised);
+}
+
+.queue-item .risk-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--state-warning) 20%, transparent);
+  color: var(--state-warning);
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+}
+
+.queue-item .object-info {
+  margin: 8px 0;
+  font-weight: 600;
+}
+
+.queue-item .payload-preview pre {
+  padding: 10px;
+  border-radius: var(--radius-md);
+  background: var(--bg-base);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+
+.queue-item .meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 10px;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.queue-item .actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.queue-item .actions button {
+  padding: 6px 16px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: var(--text-sm);
+}
+
+.queue-item .actions .approve {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.queue-item .actions .reject {
+  background: transparent;
+  color: var(--state-danger);
+  border-color: var(--state-danger);
+}
+
+.queue-item .actions button:disabled {
+  opacity: 0.5;
+  cursor: progress;
+}
+
+.receipt-toggle {
+  margin-top: 12px;
+}
+
+.receipt-toggle > button {
+  padding: 4px 10px;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: var(--text-xs);
+}
+
+/* The verdict for a decision just made. The draft itself has left the queue by
+   now, so this block - not a row - carries the evidence. */
+.just-decided {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--state-success);
+  border-radius: var(--radius-md);
+}
+
+.just-decided code {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.receipt-view {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-base);
+}
+
+.receipt-view h4 {
+  margin-bottom: 8px;
+  font-size: var(--text-sm);
+}
+
+.receipt-view dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 12px;
+  font-size: var(--text-xs);
+}
+
+.receipt-view dt {
+  color: var(--text-muted);
+}
+
+.receipt-view dd {
+  font-family: var(--font-mono);
+  word-break: break-all;
+}
+
+.receipt-view .verdict-valid {
+  color: var(--state-success);
+}
+
+.receipt-view .verdict-invalid {
+  color: var(--state-danger);
+}
+
+.receipt-view .verdict-unavailable {
+  color: var(--state-warning);
+}
+
+/* Knowledge manager, new-record form, customer page ======================== */
+
+.console-page {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 24px 16px 64px;
+}
+
+.console-page h1 {
+  font-size: 18px;
+  margin-bottom: 4px;
+}
+
+.console-page .lede {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  margin-bottom: 20px;
+}
+
+.console-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-raised);
+  margin-bottom: 24px;
+}
+
+.console-form input,
+.console-form select,
+.console-form textarea {
+  padding: 8px 10px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  font-family: inherit;
+  font-size: var(--text-sm);
+}
+
+.console-form textarea {
+  resize: vertical;
+}
+
+.console-form button[type='submit'] {
+  align-self: flex-start;
+  padding: 8px 20px;
+  background: var(--accent);
+  color: var(--accent-fg);
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: var(--text-sm);
+}
+
+.console-form button[type='submit']:disabled {
+  opacity: 0.5;
+  cursor: progress;
+}
+
+.console-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.console-table th,
+.console-table td {
+  text-align: left;
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.console-table th {
+  color: var(--text-muted);
+  font-weight: 500;
+  font-size: var(--text-xs);
+}
+
+.console-table td button {
+  padding: 3px 8px;
+  margin-right: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: var(--text-xs);
+}
+
+.status-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: var(--text-xs);
+  background: color-mix(in srgb, var(--text-muted) 20%, transparent);
+  color: var(--text-secondary);
+}
+
+.status-pill.ready {
+  background: color-mix(in srgb, var(--state-success) 18%, transparent);
+  color: var(--state-success);
+}
+
+.status-pill.processing,
+.status-pill.pending {
+  background: color-mix(in srgb, var(--state-warning) 18%, transparent);
+  color: var(--state-warning);
+}
+
+.status-pill.failed {
+  background: color-mix(in srgb, var(--state-danger) 18%, transparent);
+  color: var(--state-danger);
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 16px;
+  font-size: var(--text-sm);
+}
+
+.field-grid dt {
+  color: var(--text-muted);
+}
+
+.field-grid dd {
+  font-family: var(--font-mono);
+  word-break: break-all;
+}

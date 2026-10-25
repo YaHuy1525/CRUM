@@ -42,9 +42,11 @@ export function TodayView() {
     setError(null)
 
     const params = new URLSearchParams({ date })
-    fetch(`/api/digest?${params}`, {
-      headers: { 'x-tenant-id': 'default' },
-    })
+    // No `x-tenant-id` here. It used to be hardcoded to 'default', which was both
+    // an identity claim sitting in the browser bundle (§13.6) and a tenant id that
+    // does not exist — the column is a uuid. The middleware attaches the real
+    // claims server-side on the way to the digest route.
+    fetch(`/api/digest?${params}`)
       .then((res) => {
         if (!res.ok) {
           return res.json().then((body) => {

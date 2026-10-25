@@ -14,6 +14,7 @@ import type { Hono } from 'hono'
  */
 const db = vi.hoisted(() => ({
   listPendingWrites: vi.fn(),
+  listDecidedWrites: vi.fn(),
   getPendingWrite: vi.fn(),
   getReceipt: vi.fn(),
   commitWithReceipt: vi.fn(),
@@ -252,6 +253,34 @@ describe('GET /api/approvals/pending', () => {
 
     expect(body.total).toBe(1)
     expect(body.items[0]!.suspension).toBeNull()
+  })
+})
+
+describe('GET /api/approvals/resolved', () => {
+  it('reads the decided half of the queue as the caller\'s tenant', async () => {
+    db.listDecidedWrites.mockResolvedValue([draft({ receiptId: RECORD_ID, committedAt: FUTURE })])
+
+    const res = await router().request('/api/approvals/resolved', { headers: AUTH })
+    expect(res.status).toBe(200)
+    const body = await json<{ items: QueueRow[]; total: number }>(res)
+    expect(body.total).toBe(1)
+    expect(db.listDecidedWrites).toHaveBeenCalledWith(TENANT, 50)
+  })
+
+  it('never claims a suspension for something already decided', async () => {
+    db.listDecidedWrites.mockResolvedValue([draft({ runId: RUN_ID, receiptId: RECORD_ID })])
+
+    const res = await router(() => fakeAgent()).request('/api/approvals/resolved', { headers: AUTH })
+    const body = await json<{ items: QueueRow[] }>(res)
+    // A decided draft is no longer a live pause, so the join column stays null
+    // even when the run id looks matchable.
+    expect(body.items[0]!.suspension).toBeNull()
+  })
+
+  it('refuses a window larger than the cap instead of scanning the table', async () => {
+    const res = await router().request('/api/approvals/resolved?limit=500', { headers: AUTH })
+    expect(res.status).toBe(400)
+    expect(db.listDecidedWrites).not.toHaveBeenCalled()
   })
 })
 

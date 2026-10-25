@@ -47,6 +47,12 @@ vi.mock('../../src/mastra/boot', () => ({
 async function importEntry(nodeEnv: string): Promise<{ mastra: Mastra }> {
   vi.resetModules()
   vi.stubEnv('NODE_ENV', nodeEnv)
+  // The default is the assertion, so the variable has to be absent. Without this
+  // the test reads whatever the developer's shell exports: a `CRUM_REST_PORT=4124`
+  // left over from running the built bundle by hand turned a passing tree red
+  // (`expected 4124 to be 4113`). `undefined` deletes the key for the duration of
+  // the stub, and `unstubAllEnvs()` below puts it back.
+  vi.stubEnv('CRUM_REST_PORT', undefined)
   try {
     return await import('../../src/mastra/index')
   } finally {

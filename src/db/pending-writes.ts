@@ -711,3 +711,30 @@ export async function listPendingWrites(tenantId: string): Promise<PendingWrite[
   )
   return r.rows.map(rowToPendingWrite)
 }
+
+/**
+ * Decided drafts for a tenant, newest decision first. The other half of the
+ * queue's §11.3 view: `listPendingWrites` deliberately hides anything with a
+ * receipt, so without this the console's Resolved tab has no data source and
+ * shows a sentence instead of a history.
+ *
+ * The predicate is the exact inverse of the pending one — a draft is `auto`-gated
+ * and committed the moment its tool runs, so this list also contains the
+ * low-risk writes nobody was asked to approve. Callers that mean "decisions a
+ * human made" have to filter on `gate`, which is why the route returns the gate
+ * rather than pre-filtering here (an approval audit must not silently drop rows).
+ */
+export async function listDecidedWrites(tenantId: string, limit = 50): Promise<PendingWrite[]> {
+  const db = getDbClient()
+  const r = await db.query<Record<string, unknown>>(
+    `SELECT * FROM pending_writes
+     WHERE tenant_id = $1
+       AND (receipt_id IS NOT NULL OR rejected_at IS NOT NULL OR committed_at IS NOT NULL)
+     ORDER BY GREATEST(COALESCE(committed_at, '-infinity'::timestamptz),
+                       COALESCE(rejected_at, '-infinity'::timestamptz),
+                       created_at) DESC
+     LIMIT $2`,
+    [tenantId, limit],
+  )
+  return r.rows.map(rowToPendingWrite)
+}
