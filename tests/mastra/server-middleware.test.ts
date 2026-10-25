@@ -131,6 +131,8 @@ describe('CRUM server middleware', () => {
   it('serves the chat route outside the /api prefix', () => {
     const paths = (devConfig.apiRoutes ?? []).map((r) => (r as { path?: string }).path)
     expect(paths).toContain('/chat/crm')
-    expect(paths.some((p) => p && p.startsWith('/api'))).toBe(false)
+    // The chat route must be a top-level route, not proxied under /api.
+    // The Gmail OAuth routes intentionally live under /api, so check chat only.
+    expect(paths).not.toContain('/api/chat/crm')
   })
 })

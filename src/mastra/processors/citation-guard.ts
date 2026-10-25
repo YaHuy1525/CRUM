@@ -4,9 +4,17 @@ import type {
   ProcessToolResultArgs,
 } from '@mastra/core/processors'
 import type { MastraDBMessage } from '@mastra/core/agent'
+import { providerToolName } from '../active-tools'
 
 const CITATION_PATTERN = /\[[\w-]+:\d+\]/
+/**
+ * The registry id, and the name the hook actually reports. `processToolResult`
+ * receives `toolName` after Agent#formatTools rewrote the dotted registry key
+ * (verified against the shipped 1.79.0 bundle), so the dotted id alone could
+ * never match and this guard would never fire. §6.3.6.
+ */
 const RETRIEVAL_TOOL_ID = 'knowledge.retrieve'
+const RETRIEVAL_TOOL_NAME = providerToolName(RETRIEVAL_TOOL_ID)
 const SOURCES_STATE_KEY = 'crumRetrievalHasSources'
 
 function returnedSources(result: unknown): boolean {
@@ -36,7 +44,12 @@ export class CitationGuardProcessor implements Processor<'crum-citation-guard'> 
   readonly name = 'Citation Guard Processor'
 
   async processToolResult(args: ProcessToolResultArgs): Promise<void> {
-    if (args.toolName === RETRIEVAL_TOOL_ID && returnedSources(args.result)) {
+    // Accept either spelling: the registry id is the vocabulary CRUM authors,
+    // the rewritten key is what the framework actually reports.
+    if (
+      (args.toolName === RETRIEVAL_TOOL_ID || args.toolName === RETRIEVAL_TOOL_NAME) &&
+      returnedSources(args.result)
+    ) {
       args.state[SOURCES_STATE_KEY] = true
     }
   }

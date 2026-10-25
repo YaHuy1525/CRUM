@@ -13,16 +13,17 @@ import { listTasksTool, myOpenItemsTool } from './tools/tasks'
 import { listSchedulesTool } from './tools/schedules'
 import { searchTool } from './tools/search'
 import { knowledgeRetrieveTool } from './tools/knowledge'
+import { searchThreadsTool } from './tools/gmail'
 import { logFollowupTool, createTaskTool, draftMailTool } from './tools/auto-writes'
 import { createCustomerTool, updateCustomerTool, deleteCustomerTool } from './tools/customer-writes'
 import { createContactTool, createScheduleTool, transferOwnerTool, sendMailTool } from './tools/approval-writes'
 import { approvalFlow } from './workflows/approval-flow'
-import { resolveActiveTools } from './active-tools'
+import { resolveActiveTools, providerToolName } from './active-tools'
 import { CRUM_MAIN_MODEL, CRUM_LIGHT_MODEL } from './models'
 import type { TenantRequestContext } from './tenant-context'
 
 const crumToolRegistry = {
-  // read-only (9)
+  // read-only (10)
   'crm.list_customers': listCustomersTool,
   'crm.get_customer': getCustomerTool,
   'crm.find_contacts': findContactsTool,
@@ -32,6 +33,7 @@ const crumToolRegistry = {
   'crm.my_open_items': myOpenItemsTool,
   'crm.search': searchTool,
   'knowledge.retrieve': knowledgeRetrieveTool,
+  'mail.search_threads': searchThreadsTool,
   // auto (3)
   'crm.log_followup': logFollowupTool,
   'crm.create_task': createTaskTool,
@@ -91,7 +93,10 @@ export const crmAssistant = new Agent({
       return { activeTools: [] }
     }
     return {
-      activeTools: resolveActiveTools(tenantContext),
+      // Spelled in the provider-facing form: `activeTools` is filtered against
+      // the keys AFTER Agent#formatTools rewrites them, so the dotted registry
+      // ids would match nothing and hand the model an empty tool list.
+      activeTools: resolveActiveTools(tenantContext).map(providerToolName),
     }
   },
 

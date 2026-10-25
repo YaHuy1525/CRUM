@@ -42,3 +42,38 @@ export function resolveActiveTools(context: TenantRequestContext): string[] {
   }
   return [...names].filter((name) => !(policy.toolByName.get(name)?.scope ?? '').includes('{'))
 }
+
+/**
+ * Translate a registry tool id into the name the model is actually shown.
+ *
+ * `activeTools` is NOT matched against registry ids. Agent#formatTools
+ * (@mastra/core 1.79.0, dist/agent-tuAMgHe3.js:45913) rewrites every tool key
+ * in place — `[^a-zA-Z0-9_-]` becomes `_`, a non-letter first character gets a
+ * `_` prefix, and the result is truncated to 63 — and it does so BEFORE the
+ * step's `activeTools` filter (`prepareToolsAndToolChoice`, :799, which is a
+ * plain `activeTools.includes(name)` over the already-rewritten keys). The
+ * registry ids are all dotted (`crm.search`), so handing their dotted spelling
+ * to `activeTools` matches nothing and the model is silently sent an EMPTY tool
+ * list: the agent answers by inventing tool calls in prose (`crmAPI`,
+ * `pg_vector`, `accounts_search`) and no tool ever executes. That is why this
+ * mapping is applied at the agent boundary rather than inside
+ * `resolveActiveTools`, whose dotted output is the governance vocabulary
+ * (policy/tools.yaml, tests/mastra/active-tools.test.ts).
+ *
+ * The same rewritten name is what a dataset experiment's `toolMocks[].toolName`
+ * is matched against, so the golden fixtures map through here too.
+ */
+const INVALID_TOOL_CHAR = /[^a-zA-Z0-9_-]/
+const TOOL_START_CHAR = /[a-zA-Z_]/
+const MAX_TOOL_NAME_LENGTH = 63
+
+export function providerToolName(name: string): string {
+  const needsRewrite =
+    name.length > MAX_TOOL_NAME_LENGTH ||
+    INVALID_TOOL_CHAR.test(name) ||
+    !TOOL_START_CHAR.test(name[0] ?? '')
+  if (!needsRewrite) return name
+  let rewritten = name.replaceAll(/[^a-zA-Z0-9_-]/g, '_')
+  if (!TOOL_START_CHAR.test(rewritten[0] ?? '')) rewritten = `_${rewritten}`
+  return rewritten.slice(0, MAX_TOOL_NAME_LENGTH)
+}
