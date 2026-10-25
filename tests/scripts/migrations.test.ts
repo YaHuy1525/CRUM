@@ -153,6 +153,21 @@ describe('migration discovery', () => {
     expect(names).toEqual([...names].sort())
   })
 
+  /**
+   * crum_schema_migrations.version is the PRIMARY KEY and the runner derives it
+   * from the 4-digit filename prefix ALONE, so two files sharing a prefix cannot
+   * both be applied: the first INSERT lands, the second collides, the transaction
+   * rolls back, and `npm run db:migrate` fails for every environment after it.
+   * Nothing else detects this, because both files are individually valid and the
+   * collision only appears at apply time against a real database.
+   */
+  it('gives every migration a distinct version prefix', () => {
+    const versions = listMigrations(MIGRATIONS_DIR).map((m) => m.version)
+    expect(new Set(versions).size, `duplicate version in ${versions.join(', ')}`).toBe(
+      versions.length,
+    )
+  })
+
   it('ignores subdirectories and non-SQL files', () => {
     const names = listMigrations(MIGRATIONS_DIR).map((m) => m.filename)
     expect(names.every((n) => n.endsWith('.sql'))).toBe(true)

@@ -1,4 +1,11 @@
--- migrations/0005_crum_gmail_connections.sql
+-- migrations/0006_crum_gmail_connections.sql
+--
+-- Version 0006, not 0005: scripts/db-migrate.ts derives the recorded version from
+-- the 4-digit filename prefix alone, and crum_schema_migrations.version is a
+-- PRIMARY KEY. Two files sharing a prefix therefore cannot both be applied --
+-- the second INSERT collides, the transaction rolls back, and the whole migration
+-- run fails. 0005_crum_parity.sql (Wave 1B, referenced by the phase-8 handoff)
+-- holds 0005; this one was added later and moves to the next free number.
 -- Per-user Gmail connections for the mail connector.
 --
 -- One mailbox per (tenant, user): a re-consent replaces the token rather than
