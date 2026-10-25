@@ -71,11 +71,17 @@ function rowToPendingWrite(row: Record<string, unknown>): PendingWrite {
 /**
  * Insert a draft or return the existing one with the same idempotency key.
  * Uses ON CONFLICT on the partial unique index uq_pending_draft_hash.
- * The TTL for expires_at uses RUNS_RECEIPT_RECORD_TTL_SECONDS (default 86400s).
+ *
+ * expires_at is the window during which a human may still approve this draft, so
+ * it is RUNS_APPROVAL_TOKEN_TTL_SECONDS (default 3600s) — NOT the receipt-record
+ * TTL. TECHNICAL_PLAN §12.3 names the collapse of the two into one knob as "a
+ * classic bug": the record TTL has to outlive the effect so the effect stays
+ * applied exactly once, while a stale approval window keeps authorising writes
+ * that nobody meant to authorise a day later.
  */
 export async function getOrCreateDraft(params: CreateDraftParams): Promise<PendingWrite> {
   const db = getDbClient()
-  const ttlSeconds = parseInt(process.env.RUNS_RECEIPT_RECORD_TTL_SECONDS ?? '86400', 10)
+  const ttlSeconds = parseInt(process.env.RUNS_APPROVAL_TOKEN_TTL_SECONDS ?? '3600', 10)
 
   const result = await db.query<Record<string, unknown>>(
     `INSERT INTO pending_writes
@@ -444,11 +450,14 @@ export async function commitWithReceipt(
       approvedBy: scope.approvedBy,
     })
 
+    // `scope` is part of the HMAC input, so it has to be persisted. A receipt
+    // read back without its scope can only be verified by guessing, and guessing
+    // wrong reports a valid signature as invalid.
     const receiptResult = await client.query<{ id: string }>(
-      `INSERT INTO audit_receipts (tenant_id, pending_write_id, run_id, signature, committed_record_id, approved_by, decision)
-       VALUES ($1, $2, $3, $4, $5, $6, 'approved')
+      `INSERT INTO audit_receipts (tenant_id, pending_write_id, run_id, signature, scope, committed_record_id, approved_by, decision)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'approved')
        RETURNING id`,
-      [draft.tenantId, draft.id, draft.runId, signature, committedId, scope.approvedBy],
+      [draft.tenantId, draft.id, draft.runId, signature, scope.scope, committedId, scope.approvedBy],
     )
     const receiptId = receiptResult.rows[0]!.id
 
@@ -543,6 +552,8 @@ export interface Receipt {
   signature: string
   committedRecordId: string | null
   approvedBy: string
+  /** The scope the signature covers; required to recompute it. */
+  scope: string
   decision: 'approved' | 'rejected'
   reason: string | null
   createdAt: string
@@ -559,7 +570,7 @@ export async function getReceipt(id: string, tenantId: string): Promise<Receipt 
   const db = getDbClient()
   const result = await db.query<Record<string, unknown>>(
     `SELECT r.id, r.tenant_id, r.pending_write_id, r.run_id, r.signature,
-            r.committed_record_id, r.approved_by, r.decision, r.reason, r.created_at,
+            r.committed_record_id, r.approved_by, r.scope, r.decision, r.reason, r.created_at,
             p.payload, p.run_id AS draft_run_id
        FROM audit_receipts r
        JOIN pending_writes p ON p.id = r.pending_write_id
@@ -576,6 +587,7 @@ export async function getReceipt(id: string, tenantId: string): Promise<Receipt 
     signature: row.signature as string,
     committedRecordId: (row.committed_record_id as string | null) ?? null,
     approvedBy: row.approved_by as string,
+    scope: row.scope as string,
     decision: row.decision as 'approved' | 'rejected',
     reason: (row.reason as string | null) ?? null,
     createdAt: row.created_at as string,
@@ -585,6 +597,8 @@ export async function getReceipt(id: string, tenantId: string): Promise<Receipt 
 
 /**
  * Reject a pending write. Writes an audit_receipt with decision='rejected'.
+ * Returns the receipt id, or null when the draft is not this tenant's — the
+ * caller turns that into a 404 rather than a receipt for nothing.
  */
 export async function rejectPendingWrite(
   draftId: string,
@@ -592,16 +606,25 @@ export async function rejectPendingWrite(
   runId: string,
   approvedBy: string,
   reason: string,
-): Promise<string> {
+): Promise<string | null> {
   const db = getDbClient()
   const client = await db.connect()
   try {
     await client.query('BEGIN')
 
-    await client.query(
-      `UPDATE pending_writes SET rejected_at = now(), rejection_reason = $1 WHERE id = $2`,
-      [reason, draftId],
+    // The draft is addressed by uuid, so the tenant has to be part of the same
+    // predicate — otherwise one tenant could reject another tenant's draft by
+    // guessing the id. The UPDATE is also what makes the call a no-op for a draft
+    // that does not belong to this tenant.
+    const mark = await client.query(
+      `UPDATE pending_writes SET rejected_at = now(), rejection_reason = $1
+        WHERE id = $2 AND tenant_id = $3`,
+      [reason, draftId, tenantId],
     )
+    if (mark.rowCount === 0) {
+      await client.query('ROLLBACK')
+      return null
+    }
 
     const actionHash = computeActionHash({ rejected: true, draftId })
     const signature = signReceipt({
@@ -612,11 +635,13 @@ export async function rejectPendingWrite(
       approvedBy,
     })
 
+    // Same reasoning as the approval path: the scope is half of the signature.
+    // Hard-coded here because this is the only scope the reject path signs.
     const r = await client.query<{ id: string }>(
-      `INSERT INTO audit_receipts (tenant_id, pending_write_id, run_id, signature, approved_by, decision, reason)
-       VALUES ($1, $2, $3, $4, $5, 'rejected', $6)
+      `INSERT INTO audit_receipts (tenant_id, pending_write_id, run_id, signature, scope, approved_by, decision, reason)
+       VALUES ($1, $2, $3, $4, $5, $6, 'rejected', $7)
        RETURNING id`,
-      [tenantId, draftId, runId, signature, approvedBy, reason],
+      [tenantId, draftId, runId, signature, 'crm:write', approvedBy, reason],
     )
 
     await client.query('COMMIT')

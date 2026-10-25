@@ -1,5 +1,5 @@
 // tests/db/pending-writes-commit.test.ts
-import { beforeEach, describe, expect, it, beforeAll, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, beforeAll, vi } from 'vitest'
 
 /**
  * The commit layer turns a `pending_writes` row into a real business record.
@@ -26,6 +26,10 @@ const env = vi.hoisted(() => {
     queueRows: [] as Record<string, unknown>[],
     /** Rows for the receipt join select. */
     receiptRow: null as Record<string, unknown> | null,
+    /** Rows for `INSERT INTO pending_writes ... RETURNING *`. */
+    draftInsertRow: null as Record<string, unknown> | null,
+    /** rowCount for a statement with no RETURNING, so a no-op can be simulated. */
+    updateRowCount: 1,
     /** Id an INSERT/UPDATE/DELETE ... RETURNING id hands back; null = no row. */
     returnedId: 'aaaaaaaa-0000-0000-0000-000000000001' as string | null,
     released: 0,
@@ -40,23 +44,47 @@ const env = vi.hoisted(() => {
     return id === null ? [] : [{ id }]
   }
 
-  function resolve(text: string, values: unknown[]): { rows: Record<string, unknown>[] } {
+  /**
+   * pg hands back `rows` AND `rowCount`, and the two are not the same thing: an
+   * UPDATE without RETURNING produces zero rows but a meaningful rowCount, which
+   * is exactly how the reject path detects a draft owned by a different tenant.
+   * So the fake computes both rather than deriving one from the other.
+   */
+  function resolve(text: string, values: unknown[]): { rows: Record<string, unknown>[]; rowCount: number } {
     const t = norm(text)
     state.steps.push({ text: t, values })
 
-    if (/^BEGIN$/.test(t) || /^COMMIT$/.test(t)) return { rows: [] }
+    if (/^BEGIN$/.test(t) || /^COMMIT$/.test(t)) return { rows: [], rowCount: 0 }
     if (/^ROLLBACK$/.test(t)) {
       state.rolledBack = true
-      return { rows: [] }
+      return { rows: [], rowCount: 0 }
     }
-    if (t.startsWith('SELECT receipt_id, rejected_at, committed_at')) return { rows: state.recheck }
+    if (t.startsWith('SELECT receipt_id, rejected_at, committed_at')) {
+      return { rows: state.recheck, rowCount: state.recheck.length }
+    }
     if (t.startsWith('SELECT * FROM pending_writes WHERE id =')) {
-      return { rows: state.draftRow ? [state.draftRow] : [] }
+      const rows = state.draftRow ? [state.draftRow] : []
+      return { rows, rowCount: rows.length }
     }
-    if (t.startsWith('SELECT * FROM pending_writes WHERE tenant_id =')) return { rows: state.queueRows }
-    if (t.startsWith('SELECT r.id,')) return { rows: state.receiptRow ? [state.receiptRow] : [] }
+    if (t.startsWith('SELECT * FROM pending_writes WHERE tenant_id =')) {
+      return { rows: state.queueRows, rowCount: state.queueRows.length }
+    }
+    if (t.startsWith('SELECT r.id,')) {
+      const rows = state.receiptRow ? [state.receiptRow] : []
+      return { rows, rowCount: rows.length }
+    }
+    // The reject path marks the draft before it signs anything, and must be able
+    // to see that it marked nothing.
+    if (t.startsWith('UPDATE pending_writes SET rejected_at')) {
+      return { rows: [], rowCount: state.updateRowCount }
+    }
+    if (t.startsWith('INSERT INTO pending_writes')) {
+      const rows = state.draftInsertRow ? [state.draftInsertRow] : []
+      return { rows, rowCount: rows.length }
+    }
     if (t.startsWith('INSERT INTO') || t.startsWith('UPDATE') || t.startsWith('DELETE')) {
-      return { rows: rows(state.returnedId) }
+      const out = rows(state.returnedId)
+      return { rows: out, rowCount: out.length }
     }
     throw new Error(`pending-writes test fake received unhandled SQL: ${t}`)
   }
@@ -85,9 +113,11 @@ vi.mock('../../src/db/client', () => ({
 import {
   commitAutoWrite,
   commitWithReceipt,
+  getOrCreateDraft,
   getPendingWrite,
   getReceipt,
   listPendingWrites,
+  rejectPendingWrite,
   UnsupportedCommitError,
   type PendingWrite,
 } from '../../src/db/pending-writes'
@@ -211,6 +241,8 @@ beforeEach(() => {
   env.state.draftRow = null
   env.state.queueRows = []
   env.state.receiptRow = null
+  env.state.draftInsertRow = null
+  env.state.updateRowCount = 1
   env.state.returnedId = 'aaaaaaaa-0000-0000-0000-000000000001'
   env.state.released = 0
   env.state.rolledBack = false
@@ -254,7 +286,10 @@ describe('commitWithReceipt — object types the queue actually holds', () => {
     const receipt = onlyStep(/^INSERT INTO audit_receipts/)
     expect(receipt.values[0]).toBe(TENANT)
     expect(receipt.values[1]).toBe(DRAFT_ID)
-    expect(receipt.values[5]).toBe(APPROVER)
+    // The scope is half of the HMAC input, so it has to travel with the signature
+    // or `GET /receipts/:id` cannot recompute it without guessing.
+    expect(receipt.values[4]).toBe('crm:write')
+    expect(receipt.values[6]).toBe(APPROVER)
     expect(receipt.text).toMatch(/'approved'/)
 
     const stamp = onlyStep(/^UPDATE pending_writes SET receipt_id/)
@@ -537,6 +572,7 @@ describe('queue readers', () => {
     env.state.receiptRow = {
       id: 'rr000000-0000-0000-0000-000000000000', tenant_id: TENANT, pending_write_id: DRAFT_ID,
       run_id: 'pending', signature: 'sig', committed_record_id: TARGET_ID, approved_by: APPROVER,
+      scope: 'crm:write',
       decision: 'approved', reason: null, created_at: '2026-10-24T09:00:00.000Z',
       payload: { name: 'Acme Industrial' },
     }
@@ -548,11 +584,99 @@ describe('queue readers', () => {
     expect(select.text).toMatch(/r\.id = \$1 AND r\.tenant_id = \$2/)
     expect(receipt!.payload).toEqual({ name: 'Acme Industrial' })
     expect(receipt!.committedRecordId).toBe(TARGET_ID)
+    expect(receipt!.scope).toBe('crm:write')
     expect(receipt!.reason).toBeNull()
   })
 
   it('returns null for a receipt the tenant cannot see', async () => {
     env.state.receiptRow = null
     expect(await getReceipt('rr000000-0000-0000-0000-000000000000', OTHER_TENANT)).toBeNull()
+  })
+})
+
+/**
+ * The other half of the decision surface. A rejection is signed and recorded just
+ * like an approval, so it carries the same two hazards: a receipt that cannot be
+ * re-verified, and a draft addressed by uuid with no tenant in the predicate.
+ */
+describe('rejectPendingWrite', () => {
+  function reject(tenant = TENANT) {
+    return rejectPendingWrite(DRAFT_ID, tenant, 'run-1', APPROVER, 'Wrong company')
+  }
+
+  it('records the rejection with the scope its signature covers', async () => {
+    expect(await reject()).toBe('aaaaaaaa-0000-0000-0000-000000000001')
+
+    const receipt = onlyStep(/^INSERT INTO audit_receipts/)
+    expect(receipt.values[0]).toBe(TENANT)
+    expect(receipt.values[1]).toBe(DRAFT_ID)
+    expect(receipt.values[4]).toBe('crm:write')
+    expect(receipt.values[5]).toBe(APPROVER)
+    expect(receipt.text).toMatch(/'rejected'/)
+  })
+
+  /**
+   * The isolation hole this closes: the mark-by-uuid UPDATE used to carry no
+   * `tenant_id`, so tenant A could park tenant B's draft out of the queue by
+   * guessing the id. Now the UPDATE matches nothing and no receipt is signed.
+   */
+  it('marks nothing and signs nothing for another tenant draft', async () => {
+    env.state.updateRowCount = 0
+
+    expect(await reject(OTHER_TENANT)).toBeNull()
+
+    expect(onlyStep(/^UPDATE pending_writes SET rejected_at/).values)
+      .toEqual(['Wrong company', DRAFT_ID, OTHER_TENANT])
+    expect(onlyStep(/^UPDATE pending_writes SET rejected_at/).text).toMatch(/tenant_id = \$3/)
+    expect(steps(/^INSERT INTO audit_receipts/)).toHaveLength(0)
+    expect(env.state.rolledBack).toBe(true)
+    expect(env.state.released).toBe(1)
+  })
+})
+
+/**
+ * §12.3 keeps two clocks apart: how long a human may still approve a draft, and
+ * how long the record of the effect is kept so the effect cannot happen twice.
+ * `getOrCreateDraft` used to read the 86400s record TTL for the approval window,
+ * which left drafts approvable for a full day after the run that made them had
+ * become irrelevant.
+ */
+describe('getOrCreateDraft — the approval window', () => {
+  function seed(ttl?: string) {
+    if (ttl === undefined) delete process.env.RUNS_APPROVAL_TOKEN_TTL_SECONDS
+    else process.env.RUNS_APPROVAL_TOKEN_TTL_SECONDS = ttl
+
+    env.state.draftInsertRow = {
+      id: DRAFT_ID, tenant_id: TENANT, run_id: 'pending', object_type: 'customer',
+      operation: 'create', payload: {}, risk_score: 55, gate: 'approval', draft_hash: 'x',
+      receipt_id: null, rejected_at: null, committed_at: null, requested_by: USER,
+      created_at: '2026-10-24T09:00:00.000Z', expires_at: '2026-10-24T10:00:00.000Z',
+    }
+    return getOrCreateDraft({
+      tenantId: TENANT, runId: 'pending', objectType: 'customer', operation: 'create',
+      payload: { name: 'Acme' }, riskScore: 55, gate: 'approval',
+      requestedBy: USER, idempotencyKey: 'hash-1',
+    })
+  }
+
+  afterEach(() => {
+    delete process.env.RUNS_APPROVAL_TOKEN_TTL_SECONDS
+  })
+
+  it('defaults the window to the approval-token TTL, not the record TTL', async () => {
+    // The other knob is deliberately set to a different number, so a route that
+    // reads the wrong one cannot pass by coincidence.
+    process.env.RUNS_RECEIPT_RECORD_TTL_SECONDS = '86400'
+
+    const created = await seed()
+
+    const insert = onlyStep(/^INSERT INTO pending_writes/)
+    expect(insert.values[11]).toBe(3600)
+    expect(created.id).toBe(DRAFT_ID)
+  })
+
+  it('honours an explicit window', async () => {
+    await seed('600')
+    expect(onlyStep(/^INSERT INTO pending_writes/).values[11]).toBe(600)
   })
 })
