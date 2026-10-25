@@ -12,6 +12,7 @@ import { createCustomerRouter } from './customers'
 import { createApprovalRouter, type SuspendedRunAgent } from './approvals'
 import { createKnowledgeRouter, type IngestWorkflowLike } from './knowledge'
 import { createAgentRouter } from './agent'
+import { createThreadsRouter } from './threads'
 
 /**
  * Aggregate API router. Mounts all sub-routers under their respective
@@ -83,6 +84,7 @@ export function createApiRouter(deps: ApiRouterDeps): Hono {
   app.route('/', createCustomerRouter({ env }))
   app.route('/', createSignalsRouter({ env, getMastra: deps.getMastra }))
   app.route('/', createAgentRouter({ env, getMastra: deps.getMastra }))
+  app.route('/', createThreadsRouter({ env, getMastra: deps.getMastra }))
   app.route('/', createApprovalRouter({ env, getAgent: agentGetter(deps.getMastra) }))
   app.route('/', createKnowledgeRouter({ env, getIngestWorkflow: ingestGetter(deps.getMastra) }))
 
