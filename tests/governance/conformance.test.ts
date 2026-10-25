@@ -20,6 +20,7 @@ const SPEC_TOOL_SURFACE: ReadonlyArray<readonly [name: string, klass: string, id
   ['crm.my_open_items', 'read-only', null],
   ['crm.search', 'read-only', null],
   ['knowledge.retrieve', 'read-only', null],
+  ['mail.search_threads', 'read-only', null],
   ['crm.create_customer', 'approval', 'draftHash'],
   ['crm.update_customer', 'approval', 'draftHash'],
   ['crm.delete_customer', 'approval', 'draftHash'],
@@ -69,7 +70,7 @@ describe('tools.yaml conforms to §4.6.2', () => {
     expect(extra).toEqual([])
   })
 
-  it('has exactly the twenty spec tools plus run.side-effect', () => {
+  it('has exactly the twenty-one spec tools plus run.side-effect', () => {
     expect(policy.tools.tools).toHaveLength(SPEC_TOOL_SURFACE.length + TEMPLATE_TOOLS.size)
   })
 })
@@ -127,8 +128,8 @@ describe('class invariants', () => {
     expect(offenders).toEqual([])
   })
 
-  it('has exactly nine read-only tools', () => {
-    expect(policy.toolsByClass('read-only')).toHaveLength(9)
+  it('has exactly ten read-only tools', () => {
+    expect(policy.toolsByClass('read-only')).toHaveLength(10)
   })
 
   it('has exactly one refuse-class tool', () => {

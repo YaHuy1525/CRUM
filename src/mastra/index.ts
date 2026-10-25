@@ -24,6 +24,7 @@ import { createCrumMcpServer } from './mcp-server'
 import { buildScorers } from '../evals/scorers'
 import { buildScheduleHooks } from './schedule-hooks'
 import { resolveIdentity, IdentityError } from './identity'
+import { createGmailConnectRoute, createGmailCallbackRoute } from '../api/gmail'
 
 export interface CrumMastraOptions {
   /**
@@ -118,6 +119,9 @@ export function buildCrumServerConfig(env: CrumEnv): ServerConfig {
         version: 'v7',
         heartbeatMs: 10000,
       }),
+      // Gmail connector: OAuth consent start + callback (src/api/gmail.ts).
+      createGmailConnectRoute(env),
+      createGmailCallbackRoute(env),
     ],
   }
 }

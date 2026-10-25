@@ -4,6 +4,8 @@ import { TenantRequestContextSchema } from '../tenant-context'
 import { loadPolicy } from '../../governance/policy'
 import { scoreRisk } from '../../governance/risk'
 import { getOrCreateDraft } from '../../db/pending-writes'
+import { parseEnv } from '../../config/env'
+import { createGmailDraft, resolveGmailAccess } from '../../gmail/client'
 
 const AutoWriteOutputSchema = z.object({
   pendingWriteId: z.string().uuid(),
@@ -136,11 +138,33 @@ export const draftMailTool = createTool({
         idempotencyKey: inputData.draftHash,
       })
 
+      // Best-effort mirror into the caller's connected Gmail as a real draft.
+      // Nothing is sent: the compose scope can only create drafts, and sending
+      // stays reserved for mail.send behind the approval gate. A failure here
+      // never unrolls the staged write — the CRUM draft is the record of truth.
+      let message = `Email draft saved (draft ${draft.id}).`
+      try {
+        const env = parseEnv()
+        const access = await resolveGmailAccess(env, rc.tenantId, rc.userId)
+        if (access.ok) {
+          const gmailDraft = await createGmailDraft(access.accessToken, {
+            to: inputData.to,
+            subject: inputData.subject,
+            body: inputData.body,
+          })
+          message += ` Gmail draft ${gmailDraft.id} created in ${access.email}.`
+        } else {
+          message += ` (${access.reason}: staged in CRUM only.)`
+        }
+      } catch {
+        message += ' (Gmail mirror unavailable: staged in CRUM only.)'
+      }
+
       return {
         pendingWriteId: draft.id,
         riskScore: assessment.score,
         gate: 'auto' as const,
-        message: `Email draft saved (draft ${draft.id}).`,
+        message,
       }
     })
   },
