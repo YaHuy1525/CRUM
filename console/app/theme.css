@@ -2,68 +2,80 @@
  *
  * Structure borrows from Cedar (sidebar shell, serif display voice, card rail,
  * one gradient reserved for the composer), but the color identity stays ours:
- * graphite surfaces with a single emerald accent, used only where a decision or
+ * a single emerald accent on a light paper canvas, used only where a decision or
  * a primary action lives. Every token below is a name for a decision;
  * components reference names and never reach for raw colors.
+ *
+ * The canvas is light by decision (the graphite pass was reversed on request).
+ * Because every surface in the console resolves to a token here rather than to a
+ * literal, the whole theme moves with these values and no component file changes.
+ * The two exceptions are the accent text on emerald fills (`--accent-fg`) and the
+ * standalone `app/global-error.tsx`, which inlines its own colors so it can render
+ * before this sheet loads — it is updated alongside these tokens.
  */
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 
   /* ── Brand primitives ───────────────────────────────────────────── */
   --crum-white: #ffffff;
   --cedar-900: #06402c;
-  --cedar-700: #10b981;
-  --cedar-500: #34d399;
-  --cedar-100: rgba(16, 185, 129, 0.14);
+  --cedar-700: #047857;
+  /* `--cedar-500` is the bright step, and it is used for *text* (a 404 marker, a
+   * "start a new chat" link, a nav icon). On paper that means it has to clear
+   * 4.5:1 against a white card, so the bright step sits at emerald 600 rather
+   * than the old graphite-era 400; the gradient logo still reads as a bright-to-
+   * deep sweep because `--cedar-900` anchors its far end. */
+  --cedar-500: #059669;
+  --cedar-100: rgba(4, 120, 87, 0.10);
   /* Retained for compatibility with any older var references. */
   --crum-emerald-500: var(--cedar-700);
   --crum-emerald-400: var(--cedar-500);
 
-  /* ── Graphite surfaces ──────────────────────────────────────────── */
-  --bg-base: #0b0e14;      /* app canvas */
-  --bg-sunken: #070910;    /* inputs, wells, tracks */
-  --bg-card: #12161f;      /* card and pane surface */
-  --bg-raised: #1a1f2b;    /* focus fills, hover fills */
-  --bg-elevated: #232b3a;  /* floating elements */
-  --bg-hover: rgba(255, 255, 255, 0.04);
-  --bg-active-pill: #1a1f2b; /* sidebar/tab active track */
+  /* ── Paper surfaces ─────────────────────────────────────────────── */
+  --bg-base: #f6f7f9;      /* app canvas */
+  --bg-sunken: #eceef2;    /* inputs, wells, tracks */
+  --bg-card: #ffffff;      /* card and pane surface */
+  --bg-raised: #f1f3f7;    /* focus fills, hover fills */
+  --bg-elevated: #ffffff;  /* floating elements */
+  --bg-hover: rgba(11, 14, 20, 0.05);
+  --bg-active-pill: #e7ebf1; /* sidebar/tab active track */
 
   /* ── Text ──────────────────────────────────────────────────────── */
-  --text-primary: #e7ecf3;
-  --text-secondary: #aab4c4;
-  --text-muted: #6c7789;
+  --text-primary: #11161f;
+  --text-secondary: #3f4a5a;
+  --text-muted: #6b7686;
 
   /* ── Accent: emerald, decision-only ─────────────────────────────── */
   --accent: var(--cedar-700);
   --accent-bright: var(--cedar-500);
-  --accent-fg: #04120c;
+  --accent-fg: #ffffff;
   --accent-soft: var(--cedar-100);
-  --accent-line: rgba(16, 185, 129, 0.32);
+  --accent-line: rgba(4, 120, 87, 0.34);
 
   /* ── Lines ──────────────────────────────────────────────────────── */
-  --border: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.16);
+  --border: rgba(17, 22, 31, 0.12);
+  --border-strong: rgba(17, 22, 31, 0.22);
   --border-focus: var(--accent);
 
   /* ── Semantic states ────────────────────────────────────────────── */
-  --state-danger: #f8717a;
-  --state-danger-soft: rgba(248, 113, 122, 0.14);
-  --state-danger-line: rgba(248, 113, 122, 0.35);
-  --state-warning: #f5b445;
-  --state-warning-soft: rgba(245, 180, 69, 0.14);
-  --state-warning-line: rgba(245, 180, 69, 0.35);
-  --state-success: var(--cedar-500);
-  --state-success-soft: rgba(52, 211, 153, 0.14);
-  --state-success-line: rgba(52, 211, 153, 0.35);
-  --state-info: #6ea8fe;
-  --state-info-soft: rgba(110, 168, 254, 0.14);
+  --state-danger: #b4232f;
+  --state-danger-soft: rgba(180, 35, 47, 0.10);
+  --state-danger-line: rgba(180, 35, 47, 0.30);
+  --state-warning: #9a6206;
+  --state-warning-soft: rgba(154, 98, 6, 0.12);
+  --state-warning-line: rgba(154, 98, 6, 0.32);
+  --state-success: var(--cedar-700);
+  --state-success-soft: rgba(4, 120, 87, 0.10);
+  --state-success-line: rgba(4, 120, 87, 0.30);
+  --state-info: #1f5fd6;
+  --state-info-soft: rgba(31, 95, 214, 0.10);
 
-  /* ── The one gradient: the composer, tinted to sit on graphite ──── */
+  /* ── The one gradient: the composer, tinted to sit on paper ─────── */
   --grad-composer: linear-gradient(
     115deg,
-    rgba(110, 168, 254, 0.09) 0%,
-    rgba(16, 185, 129, 0.08) 48%,
-    rgba(245, 180, 69, 0.07) 100%
+    rgba(31, 95, 214, 0.07) 0%,
+    rgba(4, 120, 87, 0.07) 48%,
+    rgba(154, 98, 6, 0.06) 100%
   );
 
   /* ── Typography ──────────────────────────────────────────────────
@@ -112,10 +124,12 @@
   --radius-pill: 999px;
 
   /* ── Elevation ──────────────────────────────────────────────────── */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.30);
-  --shadow-md: 0 4px 16px -6px rgba(0, 0, 0, 0.55);
-  --shadow-lg: 0 18px 48px -18px rgba(0, 0, 0, 0.70);
-  --shadow-accent: 0 6px 22px -8px rgba(16, 185, 129, 0.55);
+  /* On paper, elevation reads as a soft shadow rather than a lighter fill, so
+   * the alpha budget drops to roughly half the graphite values. */
+  --shadow-sm: 0 1px 2px rgba(17, 22, 31, 0.08);
+  --shadow-md: 0 4px 16px -6px rgba(17, 22, 31, 0.18);
+  --shadow-lg: 0 18px 48px -18px rgba(17, 22, 31, 0.26);
+  --shadow-accent: 0 6px 22px -8px rgba(4, 120, 87, 0.42);
   --ring: 0 0 0 2px var(--bg-base), 0 0 0 4px var(--accent);
 
   /* ── Motion ─────────────────────────────────────────────────────── */

@@ -33,7 +33,7 @@ export default function GlobalError({
         <style>{`
           button:focus-visible,
           a:focus-visible {
-            outline: 2px solid #34d399;
+            outline: 2px solid #047857;
             outline-offset: 2px;
           }
         `}</style>
@@ -45,8 +45,8 @@ export default function GlobalError({
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          background: '#0b0e14',
-          color: '#e6e9ef',
+          background: '#f6f7f9',
+          color: '#11161f',
           fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
           padding: 24,
         }}
@@ -55,8 +55,8 @@ export default function GlobalError({
           style={{
             maxWidth: 560,
             width: '100%',
-            border: '1px solid rgba(248, 113, 113, 0.35)',
-            background: 'rgba(248, 113, 113, 0.08)',
+            border: '1px solid rgba(180, 35, 47, 0.30)',
+            background: 'rgba(180, 35, 47, 0.06)',
             borderRadius: 16,
             padding: 32,
           }}
@@ -65,7 +65,7 @@ export default function GlobalError({
           <h1 style={{ margin: 0, fontSize: 24, fontWeight: 500 }}>
             The console hit an unexpected problem.
           </h1>
-          <p style={{ marginTop: 8, fontSize: 14, color: '#a7b0c0' }}>
+          <p style={{ marginTop: 8, fontSize: 14, color: '#3f4a5a' }}>
             Something broke while rendering the app shell. Try again, or reload the page if it keeps
             happening. No changes were made on your behalf.
           </p>
@@ -76,13 +76,13 @@ export default function GlobalError({
                 marginTop: 16,
                 maxHeight: 160,
                 overflow: 'auto',
-                border: '1px solid #232b3a',
-                background: '#070910',
+                border: '1px solid #dce1e8',
+                background: '#eceef2',
                 borderRadius: 8,
                 padding: 12,
                 fontFamily: 'JetBrains Mono, ui-monospace, monospace',
                 fontSize: 12,
-                color: '#8b95a7',
+                color: '#3f4a5a',
               }}
             >
               {error.message}
@@ -94,8 +94,8 @@ export default function GlobalError({
               type="button"
               onClick={reset}
               style={{
-                background: '#10b981',
-                color: '#04120c',
+                background: '#047857',
+                color: '#ffffff',
                 border: 'none',
                 borderRadius: 10,
                 padding: '9px 16px',
@@ -111,8 +111,8 @@ export default function GlobalError({
               onClick={() => window.location.reload()}
               style={{
                 background: 'transparent',
-                color: '#e6e9ef',
-                border: '1px solid #232b3a',
+                color: '#11161f',
+                border: '1px solid #cdd5df',
                 borderRadius: 10,
                 padding: '9px 16px',
                 fontSize: 14,
