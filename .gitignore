@@ -15,7 +15,7 @@ coverage/
 .mastra
 docs
 .preview
-
+fixtures
 # Local-only pnpm artifacts. CI installs with npm (package-lock.json is the
 # authoritative lockfile per PHASE-8-HANDOFF section 2/3), and this workspace
 # file exists only to let a local `pnpm install` build esbuild. Handoff section 8

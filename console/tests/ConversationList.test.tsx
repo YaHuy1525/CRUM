@@ -3,19 +3,6 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
 
-/**
- * `/chats` is a read surface with three honest states (rows, nothing yet, the read
- * failed) and one debounced second read (search). Those are what this file proves.
- *
- * `next/link` is reduced to an anchor here for the same reason `shell.test.tsx`
- * does it: there is no App Router mounted in a bare `render()`, and the component
- * only ever needs `href` out of a link.
- *
- * The rename and delete *menu interactions* are not driven here. Radix's dropdown
- * opens on a pointer event that jsdom does not implement without a polyfill
- * harness; the mutations behind them are one `PATCH` and one `DELETE` on the same
- * `lib/api` client that `api.test.ts` covers at the request layer.
- */
 vi.mock('next/link', () => ({
   default: ({
     href,
@@ -52,8 +39,6 @@ let client: QueryClient
 
 function mount(children: ReactNode) {
   client = new QueryClient({
-    // No retries: a failing read should surface as the component's error state on
-    // the first attempt, not disappear into a default three-strike retry.
     defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: 0 } },
   })
   return render(<QueryClientProvider client={client}>{children}</QueryClientProvider>)
@@ -84,8 +69,6 @@ describe('ConversationList', () => {
     const link = await screen.findByRole('link', { name: /Quarterly pipeline review/ })
     expect(link).toHaveAttribute('href', '/chats/11111111-1111-4111-8111-111111111111')
     expect(link.textContent).toContain('Active')
-    // A row with no title is named, not left blank: an empty row is unclickable in
-    // practice even when it links somewhere real.
     expect(screen.getByRole('link', { name: /Untitled conversation/ })).toHaveAttribute(
       'href',
       '/chats/33333333-3333-4333-8333-333333333333',
@@ -139,11 +122,9 @@ describe('ConversationList', () => {
     await screen.findByRole('link', { name: /Quarterly pipeline review/ })
     fireEvent.change(screen.getByLabelText('Search conversations'), { target: { value: 'nordwind' } })
 
-    // 300ms debounce, so the search read is not fired per keystroke.
     const results = await screen.findByRole('list', { name: 'Search results' }, { timeout: 2000 })
     expect(results.textContent).toContain('Nordwind asked for pricing next week.')
     expect(server.last('/api/agent/search')?.url).toContain('query=nordwind')
-    // The history list is not live underneath the results: one read at a time.
     expect(screen.queryByRole('link', { name: /Quarterly pipeline review/ })).toBeNull()
   })
 

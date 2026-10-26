@@ -4,20 +4,6 @@ import { findContactsTool } from './tools/contacts'
 import { myOpenItemsTool } from './tools/tasks'
 import { knowledgeRetrieveTool } from './tools/knowledge'
 
-/**
- * §10.3 — CRUM MCP 2.0 server.
- *
- * Exposes read tools only. Writes are NOT exposed: an external MCP host never
- * sees CRUM's approval gate as an approval — it sees a tool that refuses with
- * an explanation (§10.3.2). The server speaks MCP 2026-07-28 only; 2025-era
- * clients receive an unsupported-protocol error on negotiation (§10.3.5).
- *
- * `requestState.key` comes from `resolveMcpRequestState()` in `mcp-guard.ts`,
- * which throws in production when `MCP_REQUEST_STATE_KEY` is unset (§13.8).
- *
- * OAuth middleware is created separately via `createCrumOAuthMiddleware()` and
- * mounted by the Mastra server at `/api/mcp/crum-crm/mcp`.
- */
 export function createCrumMcpServer(requestStateKey: string): MCPServer {
   return new MCPServer({
     id: 'crum-crm',
@@ -53,17 +39,6 @@ export function createCrumMcpServer(requestStateKey: string): MCPServer {
   })
 }
 
-/**
- * §10.3.4 — OAuth middleware factory.
- *
- * Returns the configuration for the Mastra server to mount at
- * `/api/mcp/crum-crm/mcp`. Uses `createOAuthMiddleware` from `@mastra/mcp`
- * with `createIntrospectionValidator` for token validation.
- *
- * In development without `CRM_OIDC_ISSUER`, returns undefined so the server
- * can start without OAuth (the MCP guard's ephemeral key still signs
- * continuations).
- */
 export function createCrumOAuthMiddleware() {
   const issuer = process.env.CRM_OIDC_ISSUER
   if (!issuer) return undefined

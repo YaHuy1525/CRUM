@@ -2,16 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
-/**
- * The conversation context panel, moved off Home and into the side column of
- * `/chats/[id]` (and the rail of Home, from one implementation).
- *
- * These cases came across from `ObjectPanel.test.tsx` when the duplicate reading
- * half was deleted there. The contract is unchanged and is what matters: the row
- * is read over HTTP on the same visibility rule as the agent tool, a refusal never
- * renders as "nothing selected", and the bind is a signal addressed by the thread
- * id rather than a header the client could point anywhere.
- */
 import { CustomerPanel, ContextPanel } from '@/components/chats/ContextPanel'
 import { route, stubFetch, type FetchStub, type Reply, type Rule } from './fetchStub'
 import type { CustomerRow } from '@/lib/types'
@@ -71,8 +61,6 @@ describe('CustomerPanel', () => {
   })
 
   it('a row the caller may not see is reported as a refusal, not as an empty panel', async () => {
-    // The route answers 404 for "no such row" and "not yours" alike, so the panel
-    // must not turn either into the not-selected state.
     mount([route('/api/crm/customers/', { status: 404, body: { error: 'not_found' } })])
     render(<CustomerPanel customerId={CUSTOMER_ID} threadId={THREAD_ID} />)
 
@@ -105,9 +93,6 @@ describe('CustomerPanel', () => {
     const call = server.last('/api/signals/rebind')
     expect(call?.method).toBe('POST')
     expect(call?.body).toEqual({ objectType: 'customer', objectId: CUSTOMER_ID })
-    // There is no `x-crm-object-id` header in this build: the binding is retained
-    // session state, so the thread id is what makes it land on the right
-    // conversation, and `lib/api` must not swallow it.
     expect(call?.headers['x-session-id']).toBe(THREAD_ID)
     expect(call?.headers['x-tenant-id']).toBeUndefined()
 
@@ -142,8 +127,6 @@ describe('ContextPanel', () => {
     mount([route('/api/crm/customers/', loaded)])
     render(<ContextPanel threadId={THREAD_ID} />)
 
-    // Nothing is read until an id exists: a panel that guessed would fetch a row
-    // nobody asked for.
     expect(screen.getByText(/no customer selected/i)).toBeInTheDocument()
     expect(server.calls).toHaveLength(0)
 

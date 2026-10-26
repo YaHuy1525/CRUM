@@ -25,39 +25,25 @@ function buildRetryProcessor(): StreamErrorRetryProcessor {
   })
 }
 
-/**
- * Build a judge model from env vars. Returns null when no API key is configured,
- * which signals the eval runner to skip rather than fail.
- *
- * Two provider paths:
- * - JEV (TypeSafe AI decision model): JUDGE_PROVIDER=jev, JUDGE_MODEL=jev-latest, JEV_API_KEY
- * - Chat model (OpenRouter): JUDGE_CHAT_BASE_URL, JUDGE_CHAT_MODEL, JUDGE_CHAT_API_KEY
- *
- * JEV takes precedence when both keys are set.
- */
 function buildJudgeModel(): LanguageModel | null {
-  const provider = getEnv('JUDGE_PROVIDER')
+  const chatKey = getEnv('JUDGE_CHAT_API_KEY') ?? getEnv('OPENROUTER_API_KEY')
+  if (chatKey) {
+    const baseUrl = getEnv('JUDGE_CHAT_BASE_URL') ?? 'https://openrouter.ai/api/v1'
+    const model = getEnv('JUDGE_CHAT_MODEL') ?? 'openai/gpt-4o-mini'
+    const openai = createOpenAI({ apiKey: chatKey, baseURL: baseUrl })
+    return openai(model)
+  }
 
-  if (provider === 'jev') {
+  if (getEnv('JUDGE_PROVIDER') === 'jev') {
     const apiKey = getEnv('JEV_API_KEY')
     if (!apiKey) return null
     const model = getEnv('JUDGE_MODEL') ?? 'jev-latest'
-    // JEV uses the TypeSafe AI provider — decision model only
-    // For eval judge purposes we use a chat-compatible model via the same key
-    // Since @ai-sdk/typesafe-ai doesn't support language factories (§6.5.2),
-    // we fall through to the chat model path with JEV's base URL if available.
     const baseUrl = getEnv('JUDGE_CHAT_BASE_URL') ?? 'https://api.typesafe.ai/v1'
     const openai = createOpenAI({ apiKey, baseURL: baseUrl })
     return openai(model)
   }
 
-  // Chat model path
-  const apiKey = getEnv('JUDGE_CHAT_API_KEY')
-  if (!apiKey) return null
-  const baseUrl = getEnv('JUDGE_CHAT_BASE_URL') ?? 'https://openrouter.ai/api/v1'
-  const model = getEnv('JUDGE_CHAT_MODEL') ?? 'openai/gpt-4o-mini'
-  const openai = createOpenAI({ apiKey, baseURL: baseUrl })
-  return openai(model)
+  return null
 }
 
 export interface JudgeConfig {

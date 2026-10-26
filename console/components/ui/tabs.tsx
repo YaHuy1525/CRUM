@@ -5,11 +5,6 @@ import * as TabsPrimitive from '@radix-ui/react-tabs'
 
 import { cn } from '@/lib/utils'
 
-/**
- * shadcn/ui `tabs` (new-york), adapted to CRUM tokens. The trigger track is a
- * sunken pill and the active trigger lifts to the card surface, matching the
- * legacy `.tabs` segmented control.
- */
 function Tabs({
   className,
   ...props

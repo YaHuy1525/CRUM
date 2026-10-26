@@ -1,15 +1,8 @@
-// src/api/digest.ts
 import { Hono } from 'hono'
 import { createCrumMastra } from '../mastra/index'
 import { parseEnv } from '../config/env'
 import { digestWorkflow } from '../mastra/workflows/digest'
 
-/**
- * §11 — Digest API: runs the crum-digest workflow and returns the result.
- *
- * GET /api/digest?date=YYYY-MM-DD&staleDays=N
- * Requires x-tenant-id header.
- */
 export function createDigestRouter(): Hono {
   const app = new Hono().basePath('/api/digest')
 

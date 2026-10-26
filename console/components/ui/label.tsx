@@ -5,10 +5,6 @@ import * as LabelPrimitive from '@radix-ui/react-label'
 
 import { cn } from '@/lib/utils'
 
-/**
- * shadcn/ui `label`, adapted to CRUM tokens. Mirrors the small-caps field label
- * the legacy `.console-form label` uses.
- */
 function Label({
   className,
   ...props

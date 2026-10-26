@@ -1,4 +1,3 @@
-// §4.3.4 — resource-scoped, carried as state signals under OM
 export const CRUM_WORKING_MEMORY_TEMPLATE = `
 # Working Memory
 

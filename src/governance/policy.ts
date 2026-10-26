@@ -1,5 +1,6 @@
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { parse as parseYaml } from 'yaml'
 import type { RiskAssessment } from './risk'
 import {
@@ -12,7 +13,6 @@ import {
   type ToolsFile,
 } from './schema'
 
-/** Raised for every policy loading failure, so callers can catch one type. */
 export class PolicyLoadError extends Error {
   readonly issues: unknown[]
 
@@ -23,23 +23,12 @@ export class PolicyLoadError extends Error {
   }
 }
 
-/**
- * Caller-supplied context for a gate decision.
- *
- * `workflow` and `step` resolve the `{workflow}:{step}` scope template that
- * policy/tools.yaml declares on `run.side-effect`. `requestContext` is a plain
- * record rather than a RequestContext instance on purpose: a tool-level
- * `requireApproval` predicate receives `requestContext?: Record<string, unknown>`
- * per @mastra/core@1.79.0/dist/tools/types.d.ts:655, so governance code that
- * assumed a Map-like `.get()` would work from `execute` and throw from the gate.
- */
 export interface GovernanceContext {
   workflow?: string
   step?: string
   requestContext?: Record<string, unknown>
 }
 
-/** Gate severity ordering. Floors only ever raise; they never lower a refuse. */
 const GATE_RANK: Record<Gate, number> = { auto: 0, approval: 1, refuse: 2 }
 
 function raise(current: Gate, floor: Gate): Gate {
@@ -47,8 +36,6 @@ function raise(current: Gate, floor: Gate): Gate {
 }
 
 function declaredGate(klass: ToolClass | undefined): Gate {
-  // An unknown tool name has no declared class. Refusing is the only safe
-  // default: a typo in a tool id must not silently produce an ungated write.
   if (klass === undefined) return 'refuse'
   if (klass === 'read-only' || klass === 'auto') return 'auto'
   if (klass === 'approval') return 'approval'
@@ -60,20 +47,8 @@ export interface Policy {
   readonly tools: ToolsFile
   readonly toolByName: ReadonlyMap<string, ToolPolicyEntry>
 
-  /**
-   * Resolve the permission gate for one call.
-   *
-   * Starts from the declared class, then raises it by score band, then raises it
-   * again by the sensitive-marker floor. Never lowers. TECHNICAL_PLAN.md §12.2.
-   */
   gateFor(toolName: string, risk: RiskAssessment, context?: GovernanceContext): Gate
 
-  /**
-   * Resolve the audit scope string for one call. For every tool except
-   * `run.side-effect` this is the declared `scope`. For `run.side-effect` the
-   * `{workflow}:{step}` template is filled from `context`, and an incomplete
-   * context throws rather than emitting a scope with a literal brace in it.
-   */
   scopeFor(toolName: string, context?: GovernanceContext): string
 
   toolsByClass(klass: ToolClass): string[]
@@ -106,15 +81,26 @@ function parseOrThrow<T>(schema: { safeParse(data: unknown): { success: boolean;
   throw new PolicyLoadError(`${path} failed validation:\n${summary}`, issues)
 }
 
-/**
- * Load and validate the governance policy from a directory holding risk.yaml
- * and tools.yaml. Defaults to `<cwd>/policy`, overridable with POLICY_DIR (§13.4).
- *
- * Pure and side-effect free apart from two file reads, so tests can point it at
- * a temporary directory.
- */
+function findPolicyRoot(from: string): string | undefined {
+  let dir = resolve(from)
+  for (;;) {
+    const candidate = join(dir, 'policy')
+    if (existsSync(join(candidate, 'risk.yaml')) && existsSync(join(candidate, 'tools.yaml'))) {
+      return candidate
+    }
+    const parent = dirname(dir)
+    if (parent === dir) return undefined
+    dir = parent
+  }
+}
+
+function defaultPolicyDir(): string {
+  const moduleDir = dirname(fileURLToPath(import.meta.url))
+  return findPolicyRoot(process.cwd()) ?? findPolicyRoot(moduleDir) ?? join(process.cwd(), 'policy')
+}
+
 export function loadPolicy(dir?: string): Policy {
-  const root = dir ?? join(process.cwd(), 'policy')
+  const root = dir ?? defaultPolicyDir()
   const riskPath = join(root, 'risk.yaml')
   const toolsPath = join(root, 'tools.yaml')
 
@@ -130,7 +116,7 @@ export function loadPolicy(dir?: string): Policy {
     toolByName,
 
     gateFor(toolName, assessment, context) {
-      void context // reserved for per-tenant overrides, Phase 3
+      void context
       let gate = declaredGate(toolByName.get(toolName)?.class)
       if (assessment.score >= gates.refuse_at) gate = raise(gate, 'refuse')
       else if (assessment.score >= gates.approval_at) gate = raise(gate, 'approval')

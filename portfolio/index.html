@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gia Huy — AI Systems Engineer</title>
+  <meta name="description" content="AI systems engineer in Melbourne. Building agentic workflows with Mastra, TypeScript, and Postgres.">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+  <nav class="navbar">
+    <div class="nav-links">
+      <a href="index.html" class="active">home</a>
+      <a href="projects.html">projects</a>
+      <a href="contact.html">contact</a>
+    </div>
+    <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">
+      <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="5"/>
+        <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+      </svg>
+      <svg class="moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+      </svg>
+    </button>
+  </nav>
+
+  <main>
+    <!-- Hero Section -->
+    <section class="hero">
+      <div class="hero-content">
+        <h1 class="hero-title">hi, i'm gia huy. <span class="wave">👋</span></h1>
+        <p class="hero-subtitle">AI Systems Engineer · Melbourne, Australia</p>
+        <p class="hero-bio">
+          I build the orchestration, backend services, approval gates, and audit trails between a model and a product people act on. AI agents that hold up when real work depends on them.
+        </p>
+        <div class="hero-links">
+          <a href="contact.html" class="btn-primary">Get in Touch</a>
+          <a href="https://github.com/YaHuy1525" target="_blank" rel="noopener" class="btn-secondary">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+            GitHub
+          </a>
+          <a href="mailto:huytrian2005@gmail.com" class="btn-secondary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+            Email
+          </a>
+        </div>
+      </div>
+      <div class="hero-image">
+        <div class="photo-frame">
+          <div class="photo-placeholder">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+              <circle cx="12" cy="7" r="4"/>
+            </svg>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Work/Education Tabs -->
+    <section class="experience">
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="work">Work</button>
+        <button class="tab-btn" data-tab="education">Education</button>
+      </div>
+
+      <div class="tab-content" id="work">
+        <div class="timeline-item">
+          <div class="timeline-header">
+            <div class="company-logo">
+              <div class="logo-placeholder">K</div>
+            </div>
+            <div class="company-info">
+              <h3>KMS Technology</h3>
+              <p class="role">Software Engineer · Ho Chi Minh City</p>
+            </div>
+            <span class="date">Dec 2025 — Mar 2026</span>
+          </div>
+          <ul class="timeline-details">
+            <li>Owned three AI agent workflows on Velox, an enterprise AI orchestration platform, turning model capability into repeatable engineering processes with human-in-the-loop validation</li>
+            <li>Built the services and REST APIs behind agent orchestration, context management, tool execution, and approval state, so runs stay recoverable and reviewable</li>
+            <li>Shipped operator interfaces in React and TypeScript, working across Python and Node.js services through to containerised deployment</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="tab-content hidden" id="education">
+        <div class="timeline-item">
+          <div class="timeline-header">
+            <div class="company-logo">
+              <div class="logo-placeholder">D</div>
+            </div>
+            <div class="company-info">
+              <h3>Deakin University</h3>
+              <p class="role">BS, Artificial Intelligence · Victoria, Australia</p>
+            </div>
+            <span class="date">Jul 2025 — Jun 2027</span>
+          </div>
+          <ul class="timeline-details">
+            <li>Completing a BS in Artificial Intelligence with focus on agentic AI and software engineering</li>
+            <li>Building expertise in multi-agent workflows, human-in-the-loop validation, and audit trails</li>
+            <li>Open to Agentic AI and software engineering roles</li>
+          </ul>
+        </div>
+
+        <div class="timeline-item">
+          <div class="timeline-header">
+            <div class="company-logo">
+              <div class="logo-placeholder">I</div>
+            </div>
+            <div class="company-info">
+              <h3>International University, VNU</h3>
+              <p class="role">BS, Information Technology · Ho Chi Minh City</p>
+            </div>
+            <span class="date">Sep 2023 — Jun 2025</span>
+          </div>
+          <ul class="timeline-details">
+            <li>Studied information technology with focus on software development and systems design</li>
+            <li>Built foundation in programming, databases, and web development</li>
+          </ul>
+        </div>
+
+        <div class="timeline-item">
+          <div class="timeline-header">
+            <div class="company-logo">
+              <div class="logo-placeholder">A</div>
+            </div>
+            <div class="company-info">
+              <h3>Awards</h3>
+              <p class="role">Competitions & Recognition</p>
+            </div>
+          </div>
+          <ul class="timeline-details">
+            <li><strong>DataStorm 2025</strong> — 3rd place, Ton Duc Thang University · Nov 2025</li>
+            <li><strong>Lancelot</strong> — 2nd place, Solana Superteam Vietnam · Jun 2025</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- Featured Projects -->
+    <section class="projects-section">
+      <div class="section-header">
+        <h2>featured projects</h2>
+        <a href="projects.html" class="view-more">view more →</a>
+      </div>
+
+      <div class="projects-grid">
+        <div class="project-card">
+          <div class="project-image">
+            <div class="image-placeholder">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                <circle cx="8.5" cy="8.5" r="1.5"/>
+                <polyline points="21 15 16 10 5 21"/>
+              </svg>
+            </div>
+          </div>
+          <div class="project-content">
+            <h3>CRUM</h3>
+            <p>A multi-tenant AI CRM where every write is drafted, approved, and receipted. Streaming chat, saved sessions, and a record panel bound to the conversation.</p>
+            <div class="tech-tags">
+              <span>Mastra</span>
+              <span>TypeScript</span>
+              <span>Next.js</span>
+              <span>Postgres</span>
+              <span>PgVector</span>
+            </div>
+            <div class="project-links">
+              <a href="https://github.com/YaHuy1525/CRUM" target="_blank" rel="noopener" class="link-btn">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                Source
+              </a>
+            </div>
+          </div>
+        </div>
+
+        <div class="project-card">
+          <div class="project-image">
+            <div class="image-placeholder">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                <circle cx="8.5" cy="8.5" r="1.5"/>
+                <polyline points="21 15 16 10 5 21"/>
+              </svg>
+            </div>
+          </div>
+          <div class="project-content">
+            <h3>AllRounderAgent</h3>
+            <p>Takes a Jira request from triage to done, with human approval and evidence attached. Routes tracked requests across coding, finance, and support.</p>
+            <div class="tech-tags">
+              <span>Mastra</span>
+              <span>TypeScript</span>
+              <span>Jira</span>
+              <span>MCP</span>
+            </div>
+            <div class="project-links">
+              <a href="https://github.com/YaHuy1525/AllRounderAgents" target="_blank" rel="noopener" class="link-btn">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                Source
+              </a>
+            </div>
+          </div>
+        </div>
+
+        <div class="project-card">
+          <div class="project-image">
+            <div class="image-placeholder">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                <circle cx="8.5" cy="8.5" r="1.5"/>
+                <polyline points="21 15 16 10 5 21"/>
+              </svg>
+            </div>
+          </div>
+          <div class="project-content">
+            <h3>OpenVid</h3>
+            <p>Watches external content signals, writes scripts and narration, renders short-form video, and publishes on a schedule, end to end on open-source models.</p>
+            <div class="tech-tags">
+              <span>Python</span>
+              <span>Multi-agent</span>
+              <span>Open-source Models</span>
+            </div>
+            <div class="project-links">
+              <a href="https://github.com/YaHuy1525/OpenVid" target="_blank" rel="noopener" class="link-btn">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                Source
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Toolkit Section -->
+    <section class="toolkit-section">
+      <div class="section-header">
+        <h2>toolkit</h2>
+      </div>
+
+      <div class="toolkit-grid">
+        <div class="toolkit-item">
+          <h3>Languages</h3>
+          <p>Python · TypeScript · JavaScript · Java · SQL</p>
+        </div>
+        <div class="toolkit-item">
+          <h3>Backend & Systems</h3>
+          <p>Node.js · Express · REST API design · PostgreSQL · MongoDB · Redis · JWT · ETL pipelines · scheduled jobs</p>
+        </div>
+        <div class="toolkit-item">
+          <h3>AI & Agentic</h3>
+          <p>Mastra · LangGraph · LLM function and tool calling · MCP · multi-agent workflows · human-in-the-loop validation · JSON Schema · prompt engineering</p>
+        </div>
+        <div class="toolkit-item">
+          <h3>Frontend</h3>
+          <p>React · Next.js · TypeScript · HTML · CSS</p>
+        </div>
+        <div class="toolkit-item">
+          <h3>DevOps & Cloud</h3>
+          <p>Docker · docker-compose · Kubernetes · GCP · CircleCI · Git</p>
+        </div>
+        <div class="toolkit-item">
+          <h3>Languages Spoken</h3>
+          <p>Vietnamese (native) · English (professional)</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-content">
+      <div class="footer-links">
+        <a href="https://github.com/YaHuy1525" target="_blank" rel="noopener" aria-label="GitHub">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+        </a>
+        <a href="mailto:huytrian2005@gmail.com" aria-label="Email">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+        </a>
+      </div>
+      <div class="footer-info">
+        <span>© 2026 Gia Huy</span>
+        <span>|</span>
+        <span>Melbourne, Australia</span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>

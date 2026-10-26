@@ -7,48 +7,18 @@ import type { DynamicToolUIPart, ToolUIPart, UIMessage } from 'ai'
 import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 
-/**
- * The collapsed tool inspector. §"Design system foundation" ("tool calls as a
- * collapsed mono inspector") and §"Chats section / Frontend".
- *
- * A tool call is evidence, not prose: it belongs in a mono, collapsed drawer the
- * operator opens when they want to see what the agent actually invoked, with what
- * arguments, and what came back — not in the reading flow of the answer. So the
- * default is a single quiet row (chevron, tool name, state badge) that expands to
- * the input, the output, and any error text.
- *
- * The row is a real `<button>` with `aria-expanded`, so it is keyboard operable
- * and its accessible name (tool name + state) is what the migrated tests address
- * by role, replacing the old `[data-tool=…]` class selector. `data-tool` is kept
- * as a stable hook for anything that still wants it, but nothing depends on it.
- */
 
-/** A tool part is either a static `tool-<name>` or a `dynamic-tool`. */
 export type ToolPart = ToolUIPart | DynamicToolUIPart
 
-/**
- * Whether a message part is a tool call. A static tool part is typed
- * `tool-${NAME}` and a dynamic one is `dynamic-tool` with a `toolName` field, so
- * both are covered by these two tests rather than a name list that would go stale
- * the next time a tool is added to the agent.
- */
 export function isToolPart(part: UIMessage['parts'][number]): part is ToolPart {
   return part.type === 'dynamic-tool' || part.type.startsWith('tool-')
 }
 
-/** The tool's display name, from whichever of the two shapes the part has. */
 export function toolNameOf(part: UIMessage['parts'][number]): string {
   if (part.type === 'dynamic-tool') return part.toolName
   return part.type.slice('tool-'.length)
 }
 
-/**
- * A short human verdict on the state, in the vocabulary of the framework's own
- * `state` union (`input-streaming`, `input-available`, `result`, `output-error`,
- * and the two approval states). Unknown states render as themselves instead of
- * being mapped onto a guess. The stored-transcript mapping only ever produces four
- * of these, but a *live* stream can carry the approval and result states too.
- */
 export function stateLabel(state: string): string {
   switch (state) {
     case 'input-streaming':
@@ -71,7 +41,6 @@ export function stateLabel(state: string): string {
   }
 }
 
-/** Badge tone per state: failures red, in-flight amber, completion green. */
 function stateVariant(state: string): 'default' | 'secondary' | 'success' | 'warning' | 'danger' {
   switch (state) {
     case 'result':
@@ -88,7 +57,6 @@ function stateVariant(state: string): 'default' | 'secondary' | 'success' | 'war
   }
 }
 
-/** Pretty-print a tool input/output for the mono drawer, tolerating anything. */
 function stringify(value: unknown): string {
   if (value === undefined) return ''
   if (typeof value === 'string') return value
@@ -103,11 +71,6 @@ export function ToolInspector({ part }: { part: ToolPart }) {
   const [open, setOpen] = useState(false)
   const panelId = useId()
   const name = toolNameOf(part)
-  // The framework types each tool state as its own variant (an `output-available`
-  // part forbids `errorText`, an `output-error` part forbids `output`, and so on).
-  // Read the fields through one structural view instead: `isToolPart` already
-  // proved this is a tool call, and the inspector renders whatever is present
-  // rather than branching on the state discriminant a second time.
   const view = part as { state: string; input?: unknown; output?: unknown; errorText?: string }
   const state = view.state
   const label = stateLabel(state)

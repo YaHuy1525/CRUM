@@ -2,16 +2,6 @@
 
 import { Toaster as Sonner, type ToasterProps } from 'sonner'
 
-/**
- * shadcn/ui `sonner` toaster, adapted for a dark-only console.
- *
- * The stock shadcn wrapper reads the active theme from `next-themes`; CRUM has no
- * theme provider (the design spec is explicit: dark only, no light theme), so
- * pulling in `next-themes` would be a dependency with nothing to switch. The
- * toaster is pinned to `dark` and its surfaces are styled through the CRUM
- * tokens via `classNames`, so toasts match the elevated floating layer the rest
- * of the console uses.
- */
 const Toaster = ({ ...props }: ToasterProps) => {
   return (
     <Sonner

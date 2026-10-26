@@ -6,11 +6,6 @@ import { XIcon } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
 
-/**
- * shadcn/ui `dialog` (new-york), adapted to CRUM tokens. Overlay dims the
- * canvas; the panel floats on `--bg-elevated` with the lg shadow. Focus is
- * trapped by Radix, satisfying the a11y bar in the design spec.
- */
 function Dialog({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Root>) {

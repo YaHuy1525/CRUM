@@ -2,17 +2,6 @@ import type { ReactNode } from 'react'
 
 import { cn } from '@/lib/utils'
 
-/**
- * Every page's header row: a serif title, an optional muted subline, and an
- * `actions` slot for contextual controls. §"App shell" ("Each page renders its
- * own header row with title and contextual actions inside a consistent max width
- * content column").
- *
- * A server-safe presentational component (no hooks), so a page can render it
- * from either a server or client component. Styled with the Tailwind token
- * utilities rather than the legacy `.console-page h1` rules so it does not
- * depend on the stylesheet that Phase 5 deletes.
- */
 export function PageHeader({
   title,
   description,

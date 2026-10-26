@@ -6,11 +6,6 @@ import { CheckIcon, ChevronRightIcon, CircleIcon } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
 
-/**
- * shadcn/ui `dropdown-menu` (new-york), adapted to CRUM tokens. Menus float on
- * `--bg-elevated`. These back the row actions (rename / delete) the Chats
- * section adds in a later phase.
- */
 function DropdownMenu({
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Root>) {

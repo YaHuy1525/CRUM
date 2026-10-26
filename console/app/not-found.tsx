@@ -1,11 +1,5 @@
 import Link from 'next/link'
 
-/**
- * 404 surface. §"Route map": routes moved during the IA redesign all keep
- * redirects, so landing here means the path genuinely does not exist rather than
- * that a bookmark broke. Honest copy, a way home, and the real section links —
- * no fabricated content.
- */
 export default function NotFound() {
   return (
     <main className="mx-auto w-full max-w-2xl px-4 py-10 md:px-8 md:py-16" data-testid="not-found">

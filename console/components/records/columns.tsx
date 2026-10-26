@@ -6,19 +6,6 @@ import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
 import type { CrmContact, CrmFollowup, CrmSchedule, CrmTask, CustomerRow } from '@/lib/types'
 
-/**
- * Column sets for the Records tables.
- *
- * Kept in one module because the same five object types are rendered in two
- * places — the `/records` browser and the customer detail page — and a second
- * copy of "what a task row shows" is how the two drift apart. A column is a
- * header plus a cell renderer, not a JSON config, because half of these cells are
- * links and badges and a serialisable config would only be a worse JSX.
- *
- * Dates print as absolute timestamps with a stable locale argument. `undefined`
- * shows an em dash: an unknown time is not the same fact as "now", and a row
- * missing a deadline should say so rather than borrow today's date.
- */
 
 export interface Column<T> {
   header: string
@@ -41,7 +28,6 @@ function abbreviated(id: string | null | undefined): string {
   return id ? id.slice(0, 8) : '—'
 }
 
-/** A customer id rendered as the one place a reader can usefully go next. */
 function CustomerLink({ id }: { id: string | null | undefined }) {
   if (!id) return <span className="text-text-muted">No customer</span>
   return (
@@ -57,11 +43,6 @@ function CustomerLink({ id }: { id: string | null | undefined }) {
 
 type BadgeVariant = 'success' | 'warning' | 'danger' | 'secondary'
 
-/**
- * Status colour follows meaning, not vocabulary: a cancelled slot and a failed
- * document are both terminal-and-bad, an open task and a confirmed slot are both
- * live. Anything unrecognised stays neutral instead of being coloured as good.
- */
 function statusVariant(status: string | null | undefined): BadgeVariant {
   switch (status) {
     case 'done':

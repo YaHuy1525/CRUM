@@ -4,16 +4,6 @@ import { useEffect } from 'react'
 
 import { Button } from '@/components/ui/button'
 
-/**
- * Route-level error boundary. §"App shell" (each page owns its header; errors get
- * an honest, recoverable surface).
- *
- * Must be a client component — Next renders it when a segment below throws. It
- * says plainly that this page failed, offers `reset()` to re-attempt the same
- * segment without a full reload, and a link home as the escape hatch. The error's
- * own message is shown in a muted mono block so the failure is diagnosable rather
- * than hidden behind a generic wall; nothing here fabricates a cause.
- */
 export default function RouteError({
   error,
   reset,
@@ -22,7 +12,6 @@ export default function RouteError({
   reset: () => void
 }) {
   useEffect(() => {
-    // Surface to the console for whoever is debugging; no telemetry is wired.
     console.error(error)
   }, [error])
 

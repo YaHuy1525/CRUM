@@ -1,4 +1,3 @@
-// src/api/threads.ts
 import { Hono } from 'hono'
 import type { Context } from 'hono'
 import { z } from 'zod'
@@ -8,33 +7,9 @@ import { IdentityError, resolveIdentity } from '../mastra/identity'
 import { resourceIdFor } from '../mastra/sessions'
 import { mapRecallPage, type RecallPage } from './message-mapping'
 
-/**
- * Conversation read-and-manage plane. §Chats/Backend.
- *
- * The existing agent router lists the caller's threads; this router makes one
- * conversation readable and manageable: fetch its metadata, page through its
- * stored transcript (converted to the chat-UI shape by `message-mapping`),
- * rename it, delete it, and search across it.
- *
- * Scoping mirrors `src/api/agent.ts` exactly, because a thread id is a bearer
- * token if it is the only thing checked:
- * - identity is resolved from the request (dev headers or a verified JWT),
- * - `resourceId` is derived server-side from that identity via `resourceIdFor`,
- * - no client-supplied `resourceId` is ever read,
- * - every thread is fetched with `getThreadById({ threadId, resourceId })` AND
- *   re-checked against the caller's resource before any data is returned, so a
- *   cross-user or missing id answers `404 not_found` — never a leak, never a
- *   distinguishable "exists but not yours".
- *
- * `searchMessages` is scoped by passing `resourceId` to the memory layer; it
- * returns no per-hit resource to re-filter on, so the server-side scope is the
- * isolation boundary (the same defense the thread list already relies on).
- */
 
-/** Registry key of the Memory instance registered in `createCrumMastra`. */
 const CORE_MEMORY_KEY = 'coreMemory'
 
-/** The stored thread row shape `Memory.getThreadById` / `updateThread` resolve to. */
 export interface StoredThread {
   id: string
   title?: string
@@ -51,13 +26,6 @@ export interface SearchHit {
   observedAt?: Date
 }
 
-/**
- * The slice of the pinned `Memory` class this router uses. Declared structurally
- * (rather than importing the concrete class) because `mastra.getMemory` is typed
- * to the abstract `MastraMemory`, whose `getThreadById` omits the `resourceId`
- * parameter and which does not declare `searchMessages` at all — both of which
- * the concrete class does have. The cast lives in one place, `readMemory`.
- */
 export interface ConversationMemory {
   getThreadById(args: { threadId: string; resourceId?: string }): Promise<StoredThread | null>
   recall(args: {
@@ -74,7 +42,6 @@ export interface ConversationMemory {
 
 export interface ThreadsRouterDeps {
   env: CrumEnv
-  /** Null before the Mastra registry exists, answered as a real 503. */
   getMastra?: () => Mastra | null
 }
 
@@ -83,7 +50,6 @@ const PatchBody = z.object({
   source: z.enum(['user', 'auto']),
 })
 
-/** Page defaults and caps for the messages route. */
 const DEFAULT_PAGE = 1
 const DEFAULT_PER_PAGE = 50
 const MAX_PER_PAGE = 200
@@ -95,7 +61,6 @@ function clampInt(raw: string | undefined, fallback: number, min: number, max: n
   return Math.min(max, Math.max(min, parsed))
 }
 
-/** Snake_case, like the rest of this plane: the row mirrors the stored thread. */
 function threadRow(thread: StoredThread) {
   return {
     id: thread.id,
@@ -122,10 +87,6 @@ export function createThreadsRouter(deps: ThreadsRouterDeps): Hono {
     }
   }
 
-  /**
-   * Resolve the memory instance, or null. Kept separate from `getMastra` so the
-   * two wiring faults (no instance vs. no memory registered) answer differently.
-   */
   const readMemory = (mastra: Mastra): ConversationMemory | null => {
     try {
       const memory = mastra.getMemory(CORE_MEMORY_KEY)
@@ -135,11 +96,6 @@ export function createThreadsRouter(deps: ThreadsRouterDeps): Hono {
     }
   }
 
-  /**
-   * Shared preamble: authenticate, require the instance and its memory, derive
-   * the caller's resource, and load + owner-check the thread. Returns either a
-   * ready `{ resourceId, memory, thread }` or a JSON error response to return.
-   */
   const loadOwnedThread = async (c: Context, threadId: string) => {
     const gate = await auth(c)
     if ('error' in gate) return { response: gate.error }
@@ -164,11 +120,9 @@ export function createThreadsRouter(deps: ThreadsRouterDeps): Hono {
       }
     }
 
-    // Derived from the verified identity, never from a client parameter.
     const resourceId = resourceIdFor(gate.identity)
 
     const thread = await memory.getThreadById({ threadId, resourceId })
-    // Belt to the storage filter: a row from another resource is 404, not data.
     if (!thread || thread.resourceId !== resourceId) {
       return { response: c.json({ error: 'not_found' }, 404) }
     }
@@ -190,13 +144,11 @@ export function createThreadsRouter(deps: ThreadsRouterDeps): Hono {
     const page = clampInt(c.req.query('page'), DEFAULT_PAGE, 1, Number.MAX_SAFE_INTEGER)
     const perPage = clampInt(c.req.query('perPage'), DEFAULT_PER_PAGE, 1, MAX_PER_PAGE)
 
-    // `recall` pages are zero-indexed; the caller's page is one-indexed.
     const recalled = await owned.memory.recall({
       threadId,
       resourceId: owned.resourceId,
       page: page - 1,
       perPage,
-      // System reminders and reactive signals are plumbing, not transcript.
       hideSignals: true,
     })
 
@@ -204,7 +156,6 @@ export function createThreadsRouter(deps: ThreadsRouterDeps): Hono {
     return c.json({
       messages: mapped.messages,
       total: mapped.total,
-      // Report the caller's one-indexed page, not recall's zero-indexed echo.
       page,
       perPage,
       hasMore: mapped.hasMore,
@@ -228,11 +179,9 @@ export function createThreadsRouter(deps: ThreadsRouterDeps): Hono {
     const pinned = owned.thread.metadata?.titlePinned === true
 
     if (source === 'user') {
-      // A manual rename must carry a name; an empty title is a client mistake.
       if (title === '') {
         return c.json({ error: 'invalid_title', detail: 'title must not be empty for source "user"' }, 400)
       }
-      // Pin so a later auto-title never overwrites a name the user chose.
       const updated = await owned.memory.updateThread({
         id: owned.thread.id,
         title,
@@ -241,8 +190,6 @@ export function createThreadsRouter(deps: ThreadsRouterDeps): Hono {
       return c.json(threadRow(updated))
     }
 
-    // source === 'auto': apply only to an unnamed, unpinned thread. Otherwise it
-    // is a no-op and the current title stands — auto-titling never clobbers.
     if (storedTitle !== '' || pinned) {
       return c.json(threadRow(owned.thread))
     }

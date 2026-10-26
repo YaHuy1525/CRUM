@@ -259,4 +259,32 @@ describe('the lists', () => {
     expect(res.status).toBe(400)
     expect(queries.querySchedulesPage).toHaveBeenCalledOnce()
   })
+
+  it('passes a validated inclusive week range through to the schedules read', async () => {
+    queries.querySchedulesPage.mockResolvedValue(page([]))
+    const app = router()
+
+    await app.request('/api/crm/schedules?from=2026-10-26&to=2026-11-01&limit=100', {
+      headers: AUTH,
+    })
+    expect(queries.querySchedulesPage.mock.calls[0]![1]).toEqual({
+      customerId: undefined,
+      date: undefined,
+      from: '2026-10-26',
+      to: '2026-11-01',
+    })
+
+    // The same date discipline as `date`: a timestamp truncates to a silently
+    // different day west of UTC, and an inverted range is a caller bug rather
+    // than an empty page.
+    const ts = await app.request('/api/crm/schedules?from=2026-10-26T00:00:00Z', {
+      headers: AUTH,
+    })
+    expect(ts.status).toBe(400)
+    const inverted = await app.request('/api/crm/schedules?from=2026-11-02&to=2026-10-26', {
+      headers: AUTH,
+    })
+    expect(inverted.status).toBe(400)
+    expect(queries.querySchedulesPage).toHaveBeenCalledOnce()
+  })
 })

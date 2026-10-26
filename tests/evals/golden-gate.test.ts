@@ -37,18 +37,23 @@
  * the surface — nothing in a golden run may send email — and it is declared by
  * no item, so `deny` already blocks it and this gate is the independent signal.
  *
- * Honesty: this test calls the live model (openrouter/openrouter/free via
- * OPENROUTER_API_KEY in .env — Vitest loads no .env itself, so we do it
- * explicitly). The free model over-calls and 429s (§3), so we never assert
- * exact final text; assertions are on gates the fixtures make deterministic.
+ * Honesty: this test calls the live model configured in .env via
+ * OPENROUTER_API_KEY (Vitest loads no .env itself, so `import './load-env'`
+ * below does it explicitly, before src/mastra bakes its model ids). Even a
+ * paid model can over-call or 429 (§3), so we never assert exact final text;
+ * assertions are on gates the fixtures make deterministic.
  * With no model key there is nothing to run, so the suite is skipped the way
  * `tests/integration` skips without a DB — a reported skip, never a stub.
  * `persistence: { experiments: 'none', scores: 'none' }` plus an injected
  * InMemoryStore keep the run outside any DB.
+ *
+ * The agent lane must resolve to the SAME models the dev server uses: .env is
+ * loaded before any src/mastra import (see tests/evals/load-env.ts), otherwise
+ * models.ts bakes the `:free` defaults at import time and the run dies on the
+ * OpenRouter free-model daily cap while the dev server stays healthy.
  */
+import './load-env'
 import { describe, it, expect, beforeAll } from 'vitest'
-import { existsSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
 import { MASTRA_RESOURCE_ID_KEY } from '@mastra/core/request-context'
 import { runExperiment } from '@mastra/core/datasets'
 import type { DataItem, ExperimentSummary } from '@mastra/core/datasets'
@@ -61,14 +66,9 @@ import { getGoldenItems, GOLDEN_TENANT } from '../../src/evals/golden-items'
 import { buildScorers } from '../../src/evals/scorers'
 import { isJudgeAvailable } from '../../src/evals/judge'
 
-// Vitest inline projects load no .env (no dotenv dependency in this repo), so
-// the gate reads the same project .env the dev server does. Absent file is not
-// an error — parseEnv treats every secret as optional outside production.
-const envPath = fileURLToPath(new URL('../../.env', import.meta.url))
-if (existsSync(envPath)) {
-  process.loadEnvFile(envPath)
-}
-
+// .env is loaded by the `import './load-env'` above — BEFORE src/mastra is
+// evaluated, which is what pins the agent's model ids. parseEnv treats every
+// secret as optional outside production, so an absent file is not an error.
 const modelAvailable = Boolean(process.env.OPENROUTER_API_KEY)
 
 /** Scorer instances whose per-item scores must all be exactly 1. */
@@ -219,7 +219,7 @@ describe.skipIf(!modelAvailable)(
       if (!isJudgeAvailable()) {
         // Honest gap, not a stub: no judge key ⇒ nothing to average. The gate
         // scorers above still ran; this row is reported as skipped in the log.
-        console.warn('[eval-gate] native threshold scorers skipped — JUDGE_CHAT_API_KEY/JEV_API_KEY unset')
+        console.warn('[eval-gate] native threshold scorers skipped — JUDGE_CHAT_API_KEY/OPENROUTER_API_KEY/JEV_API_KEY unset')
         return
       }
       const violations: string[] = []

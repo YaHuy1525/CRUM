@@ -3,17 +3,6 @@ import Link from 'next/link'
 import { PageHeader } from '@/components/PageHeader'
 import { LaunchView } from '@/components/chats/LaunchView'
 
-/**
- * New chat. §"Route map": `/chats/new` is the launch view — a centered composer
- * carrying the one reserved prompt gradient, plus the curated starter cards.
- *
- * Sending here does not stream: it mints the thread id, parks the first message
- * in `sessionStorage`, and navigates to `/chats/[id]`, where the single
- * conversation surface sends it. That keeps one transport for the whole section.
- *
- * `?prompt=` is the Capture hand-off (§"Route map", `/records/new`). The server
- * reads it and seeds the composer; it never sends on the operator's behalf.
- */
 
 const MAX_PROMPT = 4000
 

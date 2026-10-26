@@ -14,7 +14,6 @@ const AutoWriteOutputSchema = z.object({
   message: z.string(),
 })
 
-// crm.log_followup — auto class, correlationId idempotency
 export const logFollowupTool = createTool({
   id: 'crm.log_followup',
   title: 'Log Followup',
@@ -49,10 +48,6 @@ export const logFollowupTool = createTool({
         idempotencyKey: inputData.correlationId,
       })
 
-      // The auto gate needs no human decision, but it still needs the write.
-      // Staging alone left the followups table empty while this tool answered
-      // "logged"; commitAutoWrite applies it and is a no-op on a replay of the
-      // same correlationId, so a retried tool call cannot log twice.
       const applied = await commitAutoWrite(draft)
 
       return {
@@ -65,7 +60,6 @@ export const logFollowupTool = createTool({
   },
 })
 
-// crm.create_task — auto class, correlationId idempotency
 export const createTaskTool = createTool({
   id: 'crm.create_task',
   title: 'Create Task',
@@ -113,7 +107,6 @@ export const createTaskTool = createTool({
   },
 })
 
-// mail.draft — auto class, draftHash idempotency
 export const draftMailTool = createTool({
   id: 'mail.draft',
   title: 'Draft Email',
@@ -137,9 +130,6 @@ export const draftMailTool = createTool({
       const draft = await getOrCreateDraft({
         tenantId: rc.tenantId,
         runId: 'auto',
-        // An email draft is not a knowledge document. The queue renders this
-        // column, and calling a mail draft a document upload put a lie in the
-        // approval UI (migration 0007 adds the 'email' type).
         objectType: 'email',
         operation: 'create',
         payload: inputData,
@@ -149,14 +139,8 @@ export const draftMailTool = createTool({
         idempotencyKey: inputData.draftHash,
       })
 
-      // The staged draft IS the artifact: nothing to apply to a business table,
-      // but it must still leave the queue, so the auto path marks it settled.
       const applied = await commitAutoWrite(draft)
 
-      // Best-effort mirror into the caller's connected Gmail as a real draft.
-      // Nothing is sent: the compose scope can only create drafts, and sending
-      // stays reserved for mail.send behind the approval gate. A failure here
-      // never unrolls the staged write — the CRUM draft is the record of truth.
       let message = `Email draft saved (draft ${applied.id}).`
       try {
         const env = parseEnv()

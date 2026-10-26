@@ -5,14 +5,6 @@ import { ApprovalQueue } from '../components/ApprovalQueue'
 import { route, stubFetch, type FetchStub, type Reply, type Rule } from './fetchStub'
 import type { QueueItem } from '../lib/types'
 
-/**
- * The approval queue is the one panel in the console that writes a CRM row, so the
- * tests here are mostly about *which* endpoint a click reaches and what a refusal
- * looks like. Two failures are worth more than any rendering check: a button that
- * posts the run-level decision (approving the tool call and leaving the draft
- * uncommitted — a green screen over a write that never happened), and a 409/422
- * that renders as a generic failure the operator is invited to retry.
- */
 
 const DRAFT_ID = 'd1d1d1d1-1111-4111-8111-111111111111'
 const RUN_ID = 'run-4b4b4b4b'
@@ -32,7 +24,6 @@ function item(over: Partial<QueueItem> = {}): QueueItem {
     thread_id: 'thread-1',
     requested_by: 'user-1',
     created_at: '2026-10-25T09:00:00.000Z',
-    // Far future, so 'decidable' never depends on the clock of the run.
     expires_at: '2099-01-01T00:00:00.000Z',
     receipt_id: null,
     rejected_at: null,
@@ -88,8 +79,6 @@ describe('ApprovalQueue', () => {
 
     expect(await screen.findByText('Risk: 72')).toBeInTheDocument()
     expect(screen.getByText(/create customer · gate approval/)).toBeInTheDocument()
-    // The payload preview is the whole point of a human gate: the decider has to
-    // see the bytes being committed.
     expect(screen.getByText(/Nordwind Freight/)).toBeInTheDocument()
     expect(screen.getByText(/Requested by user-1/)).toBeInTheDocument()
     expect(server.calls.map((c) => c.url)).toEqual(['/api/approvals/pending'])
@@ -108,13 +97,7 @@ describe('ApprovalQueue', () => {
 
   it('Approve decides the draft, and never the run', async () => {
     const user = userEvent.setup()
-    // State, not call counting: a committed draft leaves the pending queue, so the
-    // queue answers empty once the decision has landed. That is what makes this
-    // test check the right thing - the evidence of an approval cannot live on a
-    // row that is gone, so the panel must keep it somewhere else.
     let decided = false
-    // A rule returns a reply ({status, body}), not a reply wrapped in a reply: the
-    // queue helper already is one, which is why it is returned directly here.
     mount([
       route('/api/approvals/pending', () => queue(decided ? [] : [item()])),
       route('/decision', () => {
@@ -128,23 +111,16 @@ describe('ApprovalQueue', () => {
     await user.click(await screen.findByRole('button', { name: 'Approve' }))
 
     const call = server.last('/decision')
-    // The run-level `/api/approvals/:runId/decision` only releases the pause; it
-    // does not write the row. If this ever points there, the queue is lying.
     expect(call?.url).toBe(`/api/approvals/drafts/${DRAFT_ID}/decision`)
     expect(call?.url).not.toContain(RUN_ID)
     expect(call?.method).toBe('POST')
     expect(call?.body).toEqual({ approved: true })
 
-    // The draft is out of the queue, and the signed verdict stayed on screen.
     await waitFor(() => expect(screen.getByText('Nothing waiting for a decision.')).toBeInTheDocument())
     expect(await screen.findByText('Signature verified')).toBeInTheDocument()
-    // Split across a text node and a <code>, so match the halves separately: a
-    // regex spanning both would never match, because RTL reads an element's own
-    // text nodes and not those of its children.
     expect(screen.getByText(/the signed receipt is the evidence/)).toBeInTheDocument()
     expect(screen.getByText('d1d1d1d1')).toBeInTheDocument()
     expect(server.last('/api/approvals/receipts/')?.url).toBe(`/api/approvals/receipts/${RECEIPT_ID}`)
-    // Read once on mount, once after the decision.
     expect(server.count('/api/approvals/pending')).toBe(2)
   })
 
@@ -174,8 +150,6 @@ describe('ApprovalQueue', () => {
     const note = await screen.findByRole('status')
     expect(note.textContent).toContain('Already decided')
 
-    // Refresh after a conflict, or the queue keeps offering a button that can only
-    // ever 409 again.
     await waitFor(() => expect(server.count('/api/approvals/pending')).toBe(2))
   })
 
@@ -191,7 +165,6 @@ describe('ApprovalQueue', () => {
     const note = await screen.findByRole('status')
     expect(note.textContent).toContain('cannot apply the draft')
     expect(note.textContent).toContain('no committer for invoice/update')
-    // Retrying cannot help a 422, so the queue must not have gone back out.
     expect(server.count('/api/approvals/pending')).toBe(1)
   })
 
@@ -236,7 +209,6 @@ describe('ApprovalQueue', () => {
 
     expect(await screen.findByText(/Record c-42/)).toBeInTheDocument()
     expect(server.last('/api/approvals/resolved')?.url).toBe('/api/approvals/resolved')
-    // Buttons belong to pending drafts only; a decided one is history.
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
 
     await user.click(screen.getByRole('button', { name: 'Show receipt' }))

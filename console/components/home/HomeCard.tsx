@@ -8,19 +8,6 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 
-/**
- * The shell the three Home cards share. §"Page migrations": "Home composes three
- * named and testable card components."
- *
- * One shell rather than three hand-rolled sections, because the states are a
- * contract: every card must be able to say "still reading", "the read failed",
- * and "nothing here" in the same visual language. A card that quietly rendered
- * an empty list over an unreachable plane would be the failure mode the state
- * recipes exist to prevent.
- *
- * `<section aria-label>` gives each card a named region, so the tests locate
- * them by what they are rather than by class names.
- */
 
 export function HomeCard({
   title,
@@ -29,7 +16,6 @@ export function HomeCard({
   className,
 }: {
   title: string
-  /** A small link in the corner, e.g. "Open governance". */
   action?: ReactNode
   children: ReactNode
   className?: string
@@ -51,7 +37,6 @@ export function HomeCard({
   )
 }
 
-/** The corner link. Deliberately quiet: a card is a pointer, not a page. */
 export function CardLink({ href, children }: { href: string; children: ReactNode }) {
   return (
     <Link
@@ -76,10 +61,6 @@ export function CardPending({ label }: { label: string }) {
   )
 }
 
-/**
- * A failed read. The message is the plane's own sentence, never a generic one,
- * and the retry re-runs the same query so the card can recover without a reload.
- */
 export function CardFailure({
   error,
   onRetry,
@@ -87,7 +68,6 @@ export function CardFailure({
 }: {
   error: unknown
   onRetry: () => void
-  /** Names what failed for screen readers: "Retry loading the approval queue". */
   label: string
 }) {
   return (

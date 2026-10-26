@@ -1,9 +1,6 @@
 import type { ScheduleHooks } from '@mastra/core/schedules'
 
 export function buildScheduleHooks(): ScheduleHooks {
-  // None of these await: the ScheduleHooks signatures accept a synchronous
-  // return (`Promise<T> | T`), so declaring them async would only promise work
-  // that never happens.
   return {
     prepare: ({ schedule }) => {
       return { threadId: schedule.threadId as string | undefined }

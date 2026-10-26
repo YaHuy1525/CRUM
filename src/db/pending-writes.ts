@@ -16,13 +16,6 @@ export interface PendingWrite {
   receiptId: string | null
   rejectedAt: string | null
   rejectionReason: string | null
-  /**
-   * Set when an `auto`-gate draft has been applied to its target table. Auto
-   * writes have no receipt (they are idempotent, not human-approved, §12.4), so
-   * without this column an auto draft would look undecided forever and flood the
-   * approval queue. Also the replay guard: a retry of the same correlationId
-   * recovers this row instead of applying the write twice.
-   */
   committedAt: string | null
   committedRecordId: string | null
   requestedBy: string
@@ -68,17 +61,6 @@ function rowToPendingWrite(row: Record<string, unknown>): PendingWrite {
   }
 }
 
-/**
- * Insert a draft or return the existing one with the same idempotency key.
- * Uses ON CONFLICT on the partial unique index uq_pending_draft_hash.
- *
- * expires_at is the window during which a human may still approve this draft, so
- * it is RUNS_APPROVAL_TOKEN_TTL_SECONDS (default 3600s) — NOT the receipt-record
- * TTL. TECHNICAL_PLAN §12.3 names the collapse of the two into one knob as "a
- * classic bug": the record TTL has to outlive the effect so the effect stays
- * applied exactly once, while a stale approval window keeps authorising writes
- * that nobody meant to authorise a day later.
- */
 export async function getOrCreateDraft(params: CreateDraftParams): Promise<PendingWrite> {
   const db = getDbClient()
   const ttlSeconds = parseInt(process.env.RUNS_APPROVAL_TOKEN_TTL_SECONDS ?? '3600', 10)
@@ -89,7 +71,7 @@ export async function getOrCreateDraft(params: CreateDraftParams): Promise<Pendi
         payload, risk_score, gate, draft_hash, requested_by, expires_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now() + interval '1 second' * $12)
      ON CONFLICT (tenant_id, draft_hash) WHERE receipt_id IS NULL AND rejected_at IS NULL
-     DO UPDATE SET pending_writes.run_id = pending_writes.run_id
+     DO UPDATE SET run_id = pending_writes.run_id
      RETURNING *`,
     [
       params.tenantId,
@@ -114,21 +96,10 @@ export interface CommitResult {
   receiptId: string
 }
 
-/**
- * A client that is already inside a transaction. `commitWithReceipt` opens the
- * transaction, so the committers below must not connect or release.
- */
 interface Queryable {
   query<T = Record<string, unknown>>(text: string, values?: unknown[]): Promise<{ rows: T[] }>
 }
 
-/**
- * Thrown when a draft describes work this module cannot perform: an object type
- * with no table, an operation with no column mapping, or a staged change whose
- * target row is gone. The approval route answers 422 for these rather than 500,
- * because a bad draft is a data problem the approver can act on, not a server
- * fault.
- */
 export class UnsupportedCommitError extends Error {
   constructor(message: string) {
     super(message)
@@ -136,25 +107,6 @@ export class UnsupportedCommitError extends Error {
   }
 }
 
-/**
- * One entry per object type: the table, and the payload key -> column map.
- *
- * The staged payload is the staging tool's Zod input (`tools/approval-writes.ts`,
- * `tools/customer-writes.ts`, `tools/auto-writes.ts`), so the keys are camelCase
- * while the columns are snake_case (`isPrimary` -> `is_primary`). `draftHash` and
- * `correlationId` are idempotency metadata and deliberately have no column.
- *
- * `ownerIdFrom` names the payload key that supplies `owner_id` on an update:
- * `crm.transfer_owner` stages `{ newOwnerId }` and nothing else, so a plain
- * column map cannot express it.
- *
- * `ownerColumn: false` marks a table that has no `owner_id` to write. Contacts
- * are the only one: migration 0002:47 deliberately omits it, because a contact's
- * visibility is its customer's visibility and a second owner column could
- * disagree with the first. Stamping an owner there would not just be redundant —
- * the INSERT would fail on an unknown column, so an approved contact could never
- * be committed at all.
- */
 const COMMIT_TARGETS: Record<
   string,
   {
@@ -180,8 +132,6 @@ const COMMIT_TARGETS: Record<
     },
   },
   contact: {
-    // No owner_id: contacts inherit visibility from the parent customer
-    // (migration 0002:47), so a transfer cannot be applied here at all.
     table: 'contacts',
     ownerColumn: false,
     columns: {
@@ -246,7 +196,6 @@ function placeholder(index: number): string {
   return `$${index}`
 }
 
-/** Inserts one row, always with the draft's tenant. Returns the new id. */
 async function insertRow(
   client: Queryable,
   table: string,
@@ -266,13 +215,6 @@ async function insertRow(
   return id
 }
 
-/**
- * Applies a partial update by id. Every column name comes from the reviewed map
- * above, never from the payload, so a staged payload cannot name a column it has
- * not earned (`owner_id`, `tenant_id`, `receipt_id`). The tenant predicate is
- * unconditional: an update keyed only on id would cross tenants the moment a
- * targetId leaked.
- */
 async function updateRow(
   client: Queryable,
   table: string,
@@ -320,13 +262,6 @@ async function deleteRow(
   return id
 }
 
-/**
- * Maps a staged payload onto one table's columns.
- *
- * `mode` decides how the owner is chosen: a create owns the record for the
- * requester (or an explicit `ownerId` in the payload), an update must never
- * invent an owner, and a transfer moves it from the payload key the target names.
- */
 function mapColumns(
   target: (typeof COMMIT_TARGETS)[string],
   payload: Record<string, unknown>,
@@ -340,9 +275,6 @@ function mapColumns(
   }
   if (mode === 'create') {
     if (hasOwner) out.owner_id = payload.ownerId ?? draft.requestedBy
-    // followups and tasks default their status in the schema, but the CHECK on
-    // followups ties 'completed' to completed_at, so a payload that claims
-    // completion without a timestamp must not reach the INSERT.
     if (
       target.table === 'followups'
       && out.status === 'completed'
@@ -356,25 +288,12 @@ function mapColumns(
   return out
 }
 
-/**
- * Applies a staged draft to its business table. This is the only place that
- * turns a `pending_writes` row into a real record, and it switches on the draft's
- * own `object_type`/`operation` rather than on a caller's assumption: the queue
- * holds five object types, and a committer that only understood customers made
- * every other approval a silent no-op.
- */
 async function applyDraft(
   client: Queryable,
   draft: PendingWrite,
 ): Promise<string | null> {
   const payload = (draft.payload ?? {}) as Record<string, unknown>
 
-  // An auto email draft is the artifact itself; there is no CRM row to create.
-  // An APPROVAL-gated email is a different promise — approving `mail.send` means
-  // the message goes out — and this layer cannot deliver it: sending needs a
-  // connected mailbox and the Gmail send scope CRUM does not request today.
-  // Refusing here is the honest answer; returning null would emit an approved
-  // receipt for an email nobody sent.
   if (draft.objectType === 'email') {
     if (draft.operation !== 'create') {
       throw new UnsupportedCommitError(`email supports only the create operation, not ${draft.operation}`)
@@ -402,9 +321,6 @@ async function applyDraft(
       )
     case 'delete':
       if (target.softDelete) {
-        // Soft delete: contacts/followups are ON DELETE CASCADE (migration
-        // 0002), so a hard delete would wipe a customer's entire history. The
-        // read layer filters `deleted_at IS NULL`.
         return updateRow(client, target.table, draft, { deleted_at: new Date() }, 'deleted_at IS NULL')
       }
       return deleteRow(client, target.table, draft)
@@ -413,10 +329,6 @@ async function applyDraft(
   }
 }
 
-/**
- * Commit a draft and write the audit receipt in one transaction.
- * The receipt signature binds pendingWriteId + runId + scope + actionHash + approvedBy.
- */
 export async function commitWithReceipt(
   draft: PendingWrite,
   scope: { approvedBy: string; scope: string },
@@ -426,7 +338,6 @@ export async function commitWithReceipt(
   try {
     await client.query('BEGIN')
 
-    // Re-check: has this draft already been decided?
     const existing = await client.query<{ receipt_id: string | null; rejected_at: string | null; committed_at: string | null }>(
       `SELECT receipt_id, rejected_at, committed_at FROM pending_writes WHERE id = $1`,
       [draft.id],
@@ -440,7 +351,6 @@ export async function commitWithReceipt(
 
     const committedId = await applyDraft(client, draft)
 
-    // Sign and write the receipt.
     const actionHash = computeActionHash(draft.payload)
     const signature = signReceipt({
       pendingWriteId: draft.id,
@@ -450,9 +360,6 @@ export async function commitWithReceipt(
       approvedBy: scope.approvedBy,
     })
 
-    // `scope` is part of the HMAC input, so it has to be persisted. A receipt
-    // read back without its scope can only be verified by guessing, and guessing
-    // wrong reports a valid signature as invalid.
     const receiptResult = await client.query<{ id: string }>(
       `INSERT INTO audit_receipts (tenant_id, pending_write_id, run_id, signature, scope, committed_record_id, approved_by, decision)
        VALUES ($1, $2, $3, $4, $5, $6, $7, 'approved')
@@ -461,7 +368,6 @@ export async function commitWithReceipt(
     )
     const receiptId = receiptResult.rows[0]!.id
 
-    // Link receipt to the pending write.
     await client.query(
       `UPDATE pending_writes SET receipt_id = $1, committed_at = now(), committed_record_id = $2 WHERE id = $3`,
       [receiptId, committedId, draft.id],
@@ -477,18 +383,6 @@ export async function commitWithReceipt(
   }
 }
 
-/**
- * Applies an `auto`-gate draft to its business table, with no receipt.
- *
- * The auto tools used to stop at `getOrCreateDraft` and then tell the user
- * "Followup logged" / "Task created" — the row existed only as a draft, and the
- * queue filled with writes nobody would ever approve. This is the other half of
- * that path. It is replay-safe by construction: `getOrCreateDraft` returns the
- * existing row for a repeated correlationId, and a draft already marked
- * `committed_at` is returned as-is instead of being applied a second time.
- *
- * Returns the draft with `committedAt`/`committedRecordId` reflecting reality.
- */
 export async function commitAutoWrite(draft: PendingWrite): Promise<PendingWrite> {
   if (draft.committedAt) return draft
 
@@ -497,8 +391,6 @@ export async function commitAutoWrite(draft: PendingWrite): Promise<PendingWrite
   try {
     await client.query('BEGIN')
 
-    // Read the row back inside the transaction: the draft we were handed may be
-    // a stale copy of one another request already committed.
     const current = await client.query<Record<string, unknown>>(
       `SELECT * FROM pending_writes WHERE id = $1 AND tenant_id = $2`,
       [draft.id, draft.tenantId],
@@ -529,11 +421,6 @@ export async function commitAutoWrite(draft: PendingWrite): Promise<PendingWrite
   }
 }
 
-/**
- * Loads one draft, scoped to the tenant that owns it. A decision route must not
- * be able to act on another tenant's draft by guessing a uuid, so this filters on
- * tenant_id in the same predicate that finds the id.
- */
 export async function getPendingWrite(id: string, tenantId: string): Promise<PendingWrite | null> {
   const db = getDbClient()
   const result = await db.query<Record<string, unknown>>(
@@ -552,20 +439,13 @@ export interface Receipt {
   signature: string
   committedRecordId: string | null
   approvedBy: string
-  /** The scope the signature covers; required to recompute it. */
   scope: string
   decision: 'approved' | 'rejected'
   reason: string | null
   createdAt: string
-  /** The draft payload, joined in so the signature can be re-computed. */
   payload: unknown
 }
 
-/**
- * Reads a receipt with the draft payload attached. `verifyReceipt` needs the
- * canonical payload to recompute the action hash, and a receipt read without it
- * can only echo its own signature back — which proves nothing.
- */
 export async function getReceipt(id: string, tenantId: string): Promise<Receipt | null> {
   const db = getDbClient()
   const result = await db.query<Record<string, unknown>>(
@@ -595,11 +475,6 @@ export async function getReceipt(id: string, tenantId: string): Promise<Receipt 
   }
 }
 
-/**
- * Reject a pending write. Writes an audit_receipt with decision='rejected'.
- * Returns the receipt id, or null when the draft is not this tenant's — the
- * caller turns that into a 404 rather than a receipt for nothing.
- */
 export async function rejectPendingWrite(
   draftId: string,
   tenantId: string,
@@ -612,10 +487,6 @@ export async function rejectPendingWrite(
   try {
     await client.query('BEGIN')
 
-    // The draft is addressed by uuid, so the tenant has to be part of the same
-    // predicate — otherwise one tenant could reject another tenant's draft by
-    // guessing the id. The UPDATE is also what makes the call a no-op for a draft
-    // that does not belong to this tenant.
     const mark = await client.query(
       `UPDATE pending_writes SET rejected_at = now(), rejection_reason = $1
         WHERE id = $2 AND tenant_id = $3`,
@@ -635,8 +506,6 @@ export async function rejectPendingWrite(
       approvedBy,
     })
 
-    // Same reasoning as the approval path: the scope is half of the signature.
-    // Hard-coded here because this is the only scope the reject path signs.
     const r = await client.query<{ id: string }>(
       `INSERT INTO audit_receipts (tenant_id, pending_write_id, run_id, signature, scope, approved_by, decision, reason)
        VALUES ($1, $2, $3, $4, $5, $6, 'rejected', $7)
@@ -665,9 +534,6 @@ export interface HumanTaskParams {
   requestedBy: string
 }
 
-/**
- * Create a human task for a refused write. §4.6.1 refuse path.
- */
 export async function createHumanTask(
   params: HumanTaskParams,
   kind: 'refusal' | 'escalation' | 'review',
@@ -692,15 +558,6 @@ export async function createHumanTask(
   return r.rows[0]!.id
 }
 
-/**
- * List undecided, unapplied pending writes for a tenant, highest risk first.
- * This is the data source for the approval queue (§11.3).
- *
- * `committed_at IS NULL` is what keeps the queue honest: an `auto`-gate draft is
- * applied the moment the tool runs, so without this predicate every low-risk
- * followup and task would sit in the approval queue looking like a decision
- * nobody has made yet.
- */
 export async function listPendingWrites(tenantId: string): Promise<PendingWrite[]> {
   const db = getDbClient()
   const r = await db.query<Record<string, unknown>>(
@@ -712,18 +569,6 @@ export async function listPendingWrites(tenantId: string): Promise<PendingWrite[
   return r.rows.map(rowToPendingWrite)
 }
 
-/**
- * Decided drafts for a tenant, newest decision first. The other half of the
- * queue's §11.3 view: `listPendingWrites` deliberately hides anything with a
- * receipt, so without this the console's Resolved tab has no data source and
- * shows a sentence instead of a history.
- *
- * The predicate is the exact inverse of the pending one — a draft is `auto`-gated
- * and committed the moment its tool runs, so this list also contains the
- * low-risk writes nobody was asked to approve. Callers that mean "decisions a
- * human made" have to filter on `gate`, which is why the route returns the gate
- * rather than pre-filtering here (an approval audit must not silently drop rows).
- */
 export async function listDecidedWrites(tenantId: string, limit = 50): Promise<PendingWrite[]> {
   const db = getDbClient()
   const r = await db.query<Record<string, unknown>>(

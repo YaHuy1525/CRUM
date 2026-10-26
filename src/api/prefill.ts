@@ -2,15 +2,6 @@ import { Hono } from 'hono'
 import { parserAgent } from '../mastra/agents/parser'
 import { PREFILL_SCHEMAS } from '../mastra/schemas/prefill'
 
-/**
- * POST /api/crm/prefill/:objectType — structured prefill from pasted text.
- *
- * §6.2: uses `errorStrategy: 'fallback'` so a parse failure returns the
- * fallback value with `usedFallbackValue: true`, which the console maps to
- * an empty form with a "could not parse" notice rather than a 500.
- *
- * `jsonPromptInjection: true` is required for Gemini with tools.
- */
 export function createPrefillRouter(): Hono {
   const app = new Hono().basePath('/api/crm/prefill')
 
@@ -25,8 +16,6 @@ export function createPrefillRouter(): Hono {
       return c.json({ error: `Unknown object type: ${objectType}` }, 400)
     }
 
-    // Typed at the boundary: an unparsed body is `unknown`, so the check below is
-    // what makes `body.text` a string rather than a promise about the wire.
     const body = await c.req.json<{ text?: unknown }>().catch(() => null)
     if (!body || typeof body.text !== 'string' || body.text.trim() === '') {
       return c.json({ error: 'text field required' }, 400)
@@ -38,9 +27,6 @@ export function createPrefillRouter(): Hono {
       : { title: '' }
 
     try {
-      // Dispatch on the concrete object type so each generate() call receives a
-      // single schema with a correlated fallback value; a union-typed schema
-      // cannot unify to one structured-output generic.
       const result = await (
         objectType === 'customer'
           ? parserAgent.generate(body.text, {

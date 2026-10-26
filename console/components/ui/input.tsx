@@ -2,10 +2,6 @@ import * as React from 'react'
 
 import { cn } from '@/lib/utils'
 
-/**
- * shadcn/ui `input`, adapted to CRUM tokens: a sunken well on a strong hairline
- * that lifts to the accent ring on focus, matching `.console-form input`.
- */
 function Input({ className, type, ...props }: React.ComponentProps<'input'>) {
   return (
     <input

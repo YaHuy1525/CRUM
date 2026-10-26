@@ -6,21 +6,6 @@ import { get, describeError } from '../lib/api'
 import type { ReceiptResponse } from '../lib/types'
 import { Badge } from './ui/badge'
 
-/**
- * Inline receipt display with a real signature verdict. §11.3, §12.3.
- *
- * It replaces the placeholder that printed "Signature verification: pending
- * integration" forever. `GET /api/approvals/receipts/:id` recomputes the HMAC over
- * the fields the signature covered and answers three things, and the third is the
- * one a reviewer needs: `verification` is `valid`, `invalid`, **or** `unavailable`,
- * because "the secret is not configured here" is not the same claim as "this
- * signature is wrong". Rendering `unavailable` as a failure would accuse an
- * innocent audit trail of forgery.
- *
- * The verdict is a badge on the three state tokens, so an unavailable signature
- * reads as attention rather than as either green or red. The body is a definition
- * list because it is a record: every row is a label and its value, not prose.
- */
 
 interface ReceiptViewProps {
   receiptId: string
@@ -38,7 +23,6 @@ const VERDICT_VARIANT: Record<ReceiptResponse['verification'], 'success' | 'dang
   unavailable: 'warning',
 }
 
-/** One label/value pair. Kept local: a receipt row is never reused elsewhere. */
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <>
@@ -70,8 +54,6 @@ export function ReceiptView({ receiptId }: ReceiptViewProps) {
     void load()
   }, [load])
 
-  // No live-region role while reading: the queue already announces its own
-  // outcomes, and a second status here would answer for the wrong control.
   if (loading) {
     return (
       <p className="mt-2 text-xs text-text-muted" data-testid="receipt-loading">
@@ -115,8 +97,6 @@ export function ReceiptView({ receiptId }: ReceiptViewProps) {
         ) : null}
         {receipt.reason ? <Row label="Reason">{receipt.reason}</Row> : null}
         <Row label="Signed at">{new Date(receipt.created_at).toLocaleString()}</Row>
-        {/* Truncated: the full HMAC belongs in an export, not in a panel a screen
-            reader has to walk through. */}
         <Row label="Signature">
           <code className="font-mono text-xs">{`${receipt.signature.slice(0, 16)}…`}</code>
         </Row>

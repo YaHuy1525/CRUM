@@ -10,45 +10,14 @@ import { Button } from './ui/button'
 import { Tabs, TabsList, TabsTrigger } from './ui/tabs'
 import { ReceiptView } from './ReceiptView'
 
-/**
- * Approval queue. §11.3, §12.1.
- *
- * Three things changed when this moved from `src/console/components` (where
- * nothing rendered it) into the console proper:
- *
- * 1. **The buttons decide.** Approve/Reject used to be inert markup. A click now
- *    posts `POST /api/approvals/drafts/:id/decision`, which is the endpoint that
- *    actually writes the CRM row and signs the receipt. The run-level
- *    `POST /api/approvals/:runId/decision` deliberately is *not* what this button
- *    calls — releasing the agent's pause does not commit the draft, and a queue
- *    that only did the first would show a successful approval over an uncommitted
- *    write.
- * 2. **The Resolved tab reads.** It used to print "Resolved items with receipts
- *    appear here." It now lists decided drafts from `/api/approvals/resolved` and
- *    expands one `ReceiptView` per row.
- * 3. **No `tenantId` prop.** The caller's tenant comes from the identity the
- *    middleware attaches. Accepting it as a prop would let the browser choose
- *    which tenant's queue to render (§13.2).
- *
- * Phase 4 moved the presentation onto the primitives and the token utilities:
- * `PageHeader` for the title row with the pending count as a badge, Radix `Tabs`
- * for the two states, `Button`/`Badge` for every control, and the danger, warning
- * and success token triples for the outcome bands. Behaviour is untouched: same
- * endpoints, same decision states, same words on screen.
- */
 
 type Tab = 'pending' | 'resolved'
 
-/** A per-item outcome, kept next to the row it belongs to rather than in a global banner. */
 interface Feedback {
   kind: 'ok' | 'bad'
   text: string
 }
 
-/**
- * Whether a draft is still decidable. Mirrors the server's own rejection order so
- * the UI does not offer a button that is guaranteed to 409/410.
- */
 function decisionState(item: QueueItem): 'decidable' | 'expired' | 'decided' {
   if (item.receipt_id || item.rejected_at) return 'decided'
   if (item.committed_at) return 'decided'
@@ -56,11 +25,6 @@ function decisionState(item: QueueItem): 'decidable' | 'expired' | 'decided' {
   return 'decidable'
 }
 
-/**
- * Risk colour by band, not by presence: anything high enough to matter reads as
- * danger, a middling score reads as attention, and a low score stays neutral
- * instead of being painted as safe.
- */
 function riskVariant(score: number): 'danger' | 'warning' | 'secondary' {
   if (score >= 70) return 'danger'
   if (score >= 40) return 'warning'
@@ -75,14 +39,6 @@ export function ApprovalQueue() {
   const [feedback, setFeedback] = useState<Record<string, Feedback | undefined>>({})
   const [pending, setPending] = useState<Record<string, boolean>>({})
   const [openReceipt, setOpenReceipt] = useState<string | null>(null)
-  /**
-   * The receipt belonging to the decision just made, kept outside the row because
-   * the row is gone: committing consumes the draft, so it leaves
-   * `/api/approvals/pending` on the refresh this panel fires immediately after.
-   * A per-row receipt view could never render - the item it hung off had already
-   * disappeared - so the signature verdict lives in its own block until the next
-   * decision overwrites it.
-   */
   const [justDecided, setJustDecided] = useState<{ draftId: string; receiptId: string; approved: boolean } | null>(null)
 
   const load = useCallback(async () => {
@@ -104,17 +60,8 @@ export function ApprovalQueue() {
     void load()
   }, [load])
 
-  /**
-   * Post the decision. The error branches are the server's vocabulary, and each
-   * one means something different to a person deciding: `already_decided` is a
-   * double-click, `expired` is a stale tab, `not_committable` is a draft this
-   * build refuses to apply (422) — which must not be shown as a generic failure,
-   * because retrying cannot help.
-   */
   async function decide(item: QueueItem, approved: boolean) {
     setPending((p) => ({ ...p, [item.id]: true }))
-    // Clear the previous verdict for this row only, so a stale 'Already decided'
-    // cannot sit under a fresh click.
     setFeedback((f) => ({ ...f, [item.id]: undefined }))
     try {
       const body: { approved: boolean; reason?: string } = { approved }
@@ -148,7 +95,6 @@ export function ApprovalQueue() {
               ? `This build cannot apply the draft: ${err instanceof ApiError ? (err.detail ?? '') : ''}`
               : describeError(err)
       setFeedback((f) => ({ ...f, [item.id]: { kind: 'bad', text } }))
-      // A conflict means our row is stale, not that the click failed for nothing.
       if (code === 'already_decided' || code === 'expired') await load()
     } finally {
       setPending((p) => ({ ...p, [item.id]: false }))
@@ -238,9 +184,6 @@ export function ApprovalQueue() {
                           <em>Expires {new Date(item.expires_at).toLocaleString()}</em>
                         )}
                       </span>
-                      {/* The §11.3 join. `run_id` is 'pending' for approval tools that
-                          cannot observe their own run, so a null suspension here is
-                          normal and is not shown as a defect. */}
                       {item.suspension ? <span>Suspended run {item.suspension.run_id}</span> : null}
                     </div>
                   ) : (

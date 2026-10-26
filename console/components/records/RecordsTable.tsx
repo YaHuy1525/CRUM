@@ -9,34 +9,14 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { Column } from './columns'
 
-/**
- * One paged Records table, shared by the `/records` browser and the customer
- * detail page. §"Page migrations" ("read only list endpoints ... are paginated").
- *
- * Paging is infinite-query paging over `offset`, not a page-number control: the
- * plane returns `hasMore` computed from the page it actually served, so "Load
- * more" can never ask for a page that holds nothing. Rows accumulate, which is
- * what a record browser wants — paging backwards through a CRM list is a
- * scroll-and-lose-your-place experience.
- *
- * The three states are distinct on purpose, because the failure this table must
- * never produce is an empty list over an unreachable plane:
- *
- * - reading: skeleton rows
- * - failed: `role="alert"` with the plane's own sentence and a Retry
- * - empty: the caller's copy for this entity, never a borrowed generic one
- */
 
 export const RECORDS_PAGE_SIZE = 25
 
 export interface RecordsTableProps<T extends { id: string }> {
-  /** Encodes the entity and every filter, so a filter change is a new read. */
   queryKey: unknown[]
-  /** Fetches one page. The closure captures the filters; the key names them. */
   fetchPage: (offset: number) => Promise<CrmListResponse<T>>
   columns: Column<T>[]
   empty: ReactNode
-  /** What the rows are called in "Showing 25 of 340 tasks". */
   noun: string
 }
 

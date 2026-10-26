@@ -1,21 +1,6 @@
-// console/lib/starters.ts
-/**
- * The curated starter prompts for the launch view and the empty conversation.
- * §"Chats section / Frontend": "starter prompt cards drawn from a curated static
- * set in a single console config module."
- *
- * These are starting *moves*, not navigation: choosing one fills the composer
- * with a real prompt the `crm-assistant` agent can answer against the live
- * pipeline. They stay a static, hand-written set on purpose — a generated or
- * server-driven list would be a second source of truth for what the assistant
- * can do, and would drift from the governed tool surface. The `id` is stable so
- * a card can be keyed and a test can address one by name.
- */
 export interface StarterPrompt {
   id: string
-  /** Short card label, in the imperative. */
   label: string
-  /** The full prompt sent when the card is chosen. */
   prompt: string
 }
 

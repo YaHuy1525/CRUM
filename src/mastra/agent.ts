@@ -14,6 +14,12 @@ import { listSchedulesTool } from './tools/schedules'
 import { searchTool } from './tools/search'
 import { knowledgeRetrieveTool } from './tools/knowledge'
 import { searchThreadsTool } from './tools/gmail'
+import {
+  listDocumentsTool,
+  getInvoiceTool,
+  getContractTool,
+  sumInvoicesTool,
+} from './tools/documents'
 import { logFollowupTool, createTaskTool, draftMailTool } from './tools/auto-writes'
 import { createCustomerTool, updateCustomerTool, deleteCustomerTool } from './tools/customer-writes'
 import { createContactTool, createScheduleTool, transferOwnerTool, sendMailTool } from './tools/approval-writes'
@@ -23,7 +29,6 @@ import { CRUM_MAIN_MODEL, CRUM_LIGHT_MODEL } from './models'
 import type { TenantRequestContext } from './tenant-context'
 
 const crumToolRegistry = {
-  // read-only (10)
   'crm.list_customers': listCustomersTool,
   'crm.get_customer': getCustomerTool,
   'crm.find_contacts': findContactsTool,
@@ -34,11 +39,13 @@ const crumToolRegistry = {
   'crm.search': searchTool,
   'knowledge.retrieve': knowledgeRetrieveTool,
   'mail.search_threads': searchThreadsTool,
-  // auto (3)
+  'doc.list_documents': listDocumentsTool,
+  'doc.get_invoice': getInvoiceTool,
+  'doc.get_contract': getContractTool,
+  'doc.sum_invoices': sumInvoicesTool,
   'crm.log_followup': logFollowupTool,
   'crm.create_task': createTaskTool,
   'mail.draft': draftMailTool,
-  // approval (7)
   'crm.create_customer': createCustomerTool,
   'crm.update_customer': updateCustomerTool,
   'crm.delete_customer': deleteCustomerTool,
@@ -48,7 +55,6 @@ const crumToolRegistry = {
   'mail.send': sendMailTool,
 }
 
-// §4.3.1 — CRUM's main agent. Phase 2 wires tools, defaultOptions, and activeTools resolution.
 export const crmAssistant = new Agent({
   id: 'crm-assistant',
   name: 'CRUM Assistant',
@@ -57,7 +63,6 @@ export const crmAssistant = new Agent({
 
   instructions: CRUM_INSTRUCTIONS,
 
-  // Phase 1: single model. Phase 2 adds fallback array per §4.3.1.
   model: CRUM_MAIN_MODEL,
 
   tools: crumToolRegistry,
@@ -66,22 +71,13 @@ export const crmAssistant = new Agent({
     'approval-flow': approvalFlow,
   },
 
-  // Step retries are DISABLED unless this is set. The abort-and-retry path
-  // in WriteClaimGuardProcessor (Phase 3) depends on it. §4.3.
   maxProcessorRetries: 2,
 
-  // §4.7.3 — Goal defaults. Judge model evaluates completion each loop iteration.
-  // Hard maxRuns budget; exhaustion pauses with a persisted reason. The GoalConfig
-  // field is `judge` (a model id/object/resolver), not `judgeModelId`.
   goal: {
     judge: CRUM_MAIN_MODEL,
     maxRuns: 12,
   },
 
-  // Processors are typed as Processor[] in processors.ts; the Agent constructor
-  // expects the narrower InputProcessorOrWorkflow / OutputProcessorOrWorkflow
-  // unions. The runtime dispatch is correct (the processor runner checks method
-  // presence), so we assert at the boundary.
   inputProcessors: crumInputProcessors as InputProcessorOrWorkflow[],
   outputProcessors: crumOutputProcessors as OutputProcessorOrWorkflow[],
 
@@ -93,20 +89,10 @@ export const crmAssistant = new Agent({
       return { activeTools: [] }
     }
     return {
-      // Spelled in the provider-facing form: `activeTools` is filtered against
-      // the keys AFTER Agent#formatTools rewrites them, so the dotted registry
-      // ids would match nothing and hand the model an empty tool list.
       activeTools: resolveActiveTools(tenantContext).map(providerToolName),
     }
   },
 
-  // Memory is registered on the Mastra instance as `coreMemory` (index.ts), but
-  // an agent only ever resolves its own `memory` or one delegated through
-  // MASTRA_INHERITED_MEMORY_KEY — instance registration alone does not reach it,
-  // and a run without memory fails in the goal-state processor before the first
-  // model call. Resolve it from the registry so there is still one instance.
-  // A resolver that returns nothing is a tracked agent error, so fail closed
-  // here instead of letting a silently memory-less agent run.
   memory: ({ mastra }) => {
     const coreMemory = mastra?.getMemory('coreMemory')
     if (!coreMemory) {
@@ -118,9 +104,6 @@ export const crmAssistant = new Agent({
   },
 })
 
-// §6 — Controller subagents. Pure definitions registered on the
-// AgentController in index.ts. Each subagent gets its own model and step
-// ceiling; the harness enforces the ceiling rather than trusting the prompt.
 export const CRUM_SUBAGENTS: AgentControllerSubagent[] = [
   {
     id: 'parser',

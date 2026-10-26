@@ -237,11 +237,13 @@ describe('connection storage', () => {
 })
 
 describe('gmail REST surface', () => {
-  it('fetchProfileEmail reads the address from /users/me', async () => {
+  it('fetchProfileEmail reads the address from /users/me/profile', async () => {
     const fetchMock = jsonFetch({ emailAddress: 'me@example.com' })
     await expect(fetchProfileEmail('ya29.token')).resolves.toBe('me@example.com')
     const [url] = vi.mocked(fetchMock).mock.calls[0] as unknown as [string]
-    expect(String(url)).toBe('https://gmail.googleapis.com/gmail/v1/users/me')
+    // The bare /users/me root 404s on real Google (HTML error page) — the
+    // resource segment is load-bearing, verified on the live consent flow.
+    expect(String(url)).toBe('https://gmail.googleapis.com/gmail/v1/users/me/profile')
   })
 
   it('searchThreadSummaries lists, fetches metadata, and caps snippets', async () => {
@@ -253,7 +255,9 @@ describe('gmail REST surface', () => {
           body: {
             id: 'thr-1',
             snippet: longSnippet,
-            messages: [{ part: { headers: [{ name: 'From', value: 'Ariel <a@x.com>, B <b@x.com>' }, { name: 'Subject', value: 'Invoice' }] } }],
+            // The shape Gmail actually returns for format=metadata: headers
+            // live under messages[].payload, not a `part`.
+            messages: [{ payload: { headers: [{ name: 'From', value: 'Ariel <a@x.com>, B <b@x.com>' }, { name: 'Subject', value: 'Invoice' }, { name: 'Date', value: 'Mon, 26 Oct 2026 09:00:00 +0000' }] } }],
           },
         }
       }
@@ -266,6 +270,7 @@ describe('gmail REST surface', () => {
       subject: 'Invoice',
       snippet: 'p'.repeat(500),
       senders: ['Ariel <a@x.com>', 'B <b@x.com>'],
+      date: 'Mon, 26 Oct 2026 09:00:00 +0000',
     })
     const [listUrl] = vi.mocked(fetchMock).mock.calls[0] as unknown as [string]
     expect(String(listUrl)).toContain('/threads?q=subject%3Ainvoice&maxResults=5')

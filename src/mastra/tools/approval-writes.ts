@@ -40,7 +40,6 @@ async function refuseCheck(
   }
 }
 
-// crm.create_contact
 export const createContactTool = createTool({
   id: 'crm.create_contact',
   title: 'Create Contact',
@@ -58,8 +57,6 @@ export const createContactTool = createTool({
   }),
   outputSchema: ApprovalOutputSchema,
   outputValidation: 'warn',
-  // requireApproval's ctx argument is itself optional in @mastra/core 1.79.0, hence `= {}`:
-  // a call that arrives without ctx keeps requestContext undefined instead of inventing a tenant.
   requireApproval: (input, { requestContext } = {}) => {
     const policy = loadPolicy()
     return policy.gateFor('crm.create_contact', scoreRisk(input, policy.risk, 'crm.create_contact'), { requestContext }) === 'approval'
@@ -82,7 +79,6 @@ export const createContactTool = createTool({
   },
 })
 
-// crm.create_schedule
 export const createScheduleTool = createTool({
   id: 'crm.create_schedule',
   title: 'Create Schedule',
@@ -121,7 +117,6 @@ export const createScheduleTool = createTool({
   },
 })
 
-// crm.transfer_owner
 export const transferOwnerTool = createTool({
   id: 'crm.transfer_owner',
   title: 'Transfer Owner',
@@ -159,7 +154,6 @@ export const transferOwnerTool = createTool({
   },
 })
 
-// mail.send
 export const sendMailTool = createTool({
   id: 'mail.send',
   title: 'Send Email',
@@ -185,10 +179,6 @@ export const sendMailTool = createTool({
       const assessment = scoreRisk(inputData, policy.risk, 'mail.send')
       const draft = await getOrCreateDraft({
         tenantId: rc.tenantId, runId: 'pending',
-        // See mail.draft: an email is not a knowledge document (migration 0007).
-        // Committing this draft is deliberately unimplemented — applyDraft
-        // refuses `email` anything but `create`, and sending needs a connected
-        // mailbox plus a real send scope that CRUM does not request yet.
         objectType: 'email',
         operation: 'create', payload: inputData,
         riskScore: assessment.score, gate: 'approval',

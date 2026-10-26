@@ -7,19 +7,6 @@ import { listThreads } from '@/lib/api'
 import { relativeTime } from '@/lib/time'
 import { CardEmpty, CardFailure, CardLink, CardPending, HomeCard } from './HomeCard'
 
-/**
- * The thread list, reduced to the last few. §"Route map": Home's "recent
- * conversations card reading the thread list".
- *
- * It reads `GET /api/agent/threads` — the caller's own threads, newest first,
- * scoped by the plane rather than by a client-supplied resource id. The same read
- * backs `/chats`; this card shows five rows of it and links out for the rest.
- *
- * Rows link straight into `/chats/[id]`, which is where hydration lives, so a
- * click lands on the conversation itself rather than on Home swapping a pane.
- * A thread with no title yet is named "Untitled conversation" instead of being
- * an unclickable blank row.
- */
 
 const RECENT_ROWS = 5
 

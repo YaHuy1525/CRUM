@@ -1,4 +1,3 @@
-// src/api/feedback.ts
 import { Hono } from 'hono'
 import { z } from 'zod'
 import type { FeedbackInput } from '@mastra/core/observability'
@@ -15,10 +14,6 @@ const FeedbackSchema = z.object({
   agentId: z.string().optional(),
 })
 
-/**
- * §11.4 — Feedback control: thumbs up/down on each assistant turn.
- * Writes to observability.addFeedback(), no bespoke table (§8.5).
- */
 export function createFeedbackRouter(): Hono {
   const app = new Hono().basePath('/api/feedback')
 
@@ -28,8 +23,6 @@ export function createFeedbackRouter(): Hono {
       return c.json({ error: 'x-tenant-id header required' }, 400)
     }
 
-    // `unknown`, not `any`: the schema below is what decides the shape, and the
-    // route must not be able to read a field the schema did not check.
     const body = await c.req.json<unknown>()
     const parsed = FeedbackSchema.safeParse(body)
     if (!parsed.success) {

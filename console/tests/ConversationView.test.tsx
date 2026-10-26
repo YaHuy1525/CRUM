@@ -1,22 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
-/**
- * `useChat` is mocked, and that is the honest boundary here. The alternative — a
- * fake HTTP server feeding a real `DefaultChatTransport` — would be testing the AI
- * SDK's own streaming parser, which is its business, not the console's. What these
- * tests own is the console's half: which parts become text, which become tool
- * inspectors, what goes in the request headers, what the view shows while it is
- * still running, and what the hydration/launch seams do with the REST plane.
- *
- * This file replaces `ChatPane.test.tsx`. Every contract the old pane proved is
- * re-proved here against the surface that actually ships, plus the three things
- * the pane did not do (hydration, the launch handoff, the interrupt signal).
- */
 const useChatMock = vi.hoisted(() => vi.fn())
 vi.mock('@ai-sdk/react', () => ({ useChat: useChatMock }))
 
-/** `notFound()` throws into Next's boundary in production; here it is recorded. */
 const notFoundMock = vi.hoisted(() => vi.fn())
 vi.mock('next/navigation', () => ({ notFound: notFoundMock }))
 
@@ -26,7 +13,6 @@ import { route, stubFetch, type FetchStub } from './fetchStub'
 
 const THREAD = '11111111-1111-4111-8111-111111111111'
 
-/** The slice of `UseChatHelpers` this component reads. */
 interface ChatStub {
   messages: unknown[]
   sendMessage: ReturnType<typeof vi.fn>
@@ -52,7 +38,6 @@ function chat(overrides: Partial<ChatStub> = {}): ChatStub {
   return value
 }
 
-/** A stored thread row, as `GET /api/agent/threads/:id` returns it. */
 const threadRow = {
   id: THREAD,
   title: 'Quarterly pipeline review',
@@ -94,8 +79,6 @@ describe('ConversationView: transport and composer', () => {
   it('points the transport at the proxied chat route, not at an absolute origin', () => {
     render(<ConversationView threadId={THREAD} hydrate={false} />)
     const init = useChatMock.mock.calls[0]![0] as { transport: { api?: unknown } }
-    // A relative url is what keeps the browser on :3000: no CORS, no port or
-    // credential in a `NEXT_PUBLIC_*` value (§13.6).
     expect(init.transport).toBeDefined()
     expect(init.transport.api).toBe('/chat/crm')
   })
@@ -117,8 +100,6 @@ describe('ConversationView: transport and composer', () => {
     await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1))
     const [message, options] = vi.mocked(sendMessage).mock.calls[0]!
     expect(message).toEqual({ text: 'Hello CRM' })
-    // The server reads the thread from a header so it never has to buffer the
-    // streamed body; without this every turn would open a new single-turn thread.
     expect(options).toEqual({ headers: { 'x-thread-id': THREAD } })
   })
 
@@ -169,8 +150,6 @@ describe('ConversationView: transport and composer', () => {
     fireEvent.click(screen.getByLabelText('Stop generation'))
 
     expect(stop).toHaveBeenCalled()
-    // The local stop halts the browser stream; the signal is what tells the run to
-    // stop spending tokens server-side. It is addressed by the session id.
     const call = server.last('/api/signals/interrupt')
     expect(call?.method).toBe('POST')
     expect(call?.headers['x-session-id']).toBe(THREAD)
@@ -211,8 +190,6 @@ describe('ConversationView: message rendering', () => {
     })
     render(<ConversationView threadId={THREAD} hydrate={false} />)
 
-    // The inspector is a real button, so it can be addressed by role rather than
-    // by a class selector, and it is collapsed until the operator asks for it.
     const inspector = screen.getByRole('button', { name: /crm_search/ })
     expect(inspector).toHaveAttribute('data-tool', 'crm_search')
     expect(inspector.textContent).toContain('running')
@@ -257,8 +234,6 @@ describe('ConversationView: message rendering', () => {
       ],
     })
     render(<ConversationView threadId={THREAD} hydrate={false} />)
-    // The decision lives on /approvals; the inspector's job is to say so, not to
-    // offer a second approve button that bypasses the receipt.
     expect(screen.getByRole('button', { name: /crm_update_customer/ }).textContent).toContain(
       'waiting for approval',
     )
@@ -285,8 +260,6 @@ describe('ConversationView: hydration of a stored thread', () => {
 
     await waitFor(() => expect(setMessages).toHaveBeenCalledTimes(1))
     expect(setMessages).toHaveBeenCalledWith(transcriptPage.messages)
-    // Metadata first, transcript second: the existence check is what turns a
-    // foreign id into not-found instead of an empty conversation.
     const urls = server.calls.map((c) => c.url)
     expect(urls[0]).toBe(`/api/agent/threads/${THREAD}`)
     expect(urls[1]).toContain(`/api/agent/threads/${THREAD}/messages?page=1&perPage=50`)
@@ -298,7 +271,6 @@ describe('ConversationView: hydration of a stored thread', () => {
     render(<ConversationView threadId={THREAD} />)
 
     await waitFor(() => expect(notFoundMock).toHaveBeenCalled())
-    // A 404 is "missing or not yours"; there is no transcript to ask for.
     expect(server.count('/messages')).toBe(0)
     expect(setMessages).not.toHaveBeenCalled()
   })
@@ -328,10 +300,7 @@ describe('ConversationView: the launch handoff', () => {
     expect(vi.mocked(sendMessage).mock.calls[0]![1]).toEqual({
       headers: { 'x-thread-id': THREAD },
     })
-    // A launch thread has no stored row yet, so asking for one would 404 the
-    // brand-new conversation the user just started.
     expect(server.count('/api/agent/threads/')).toBe(0)
-    // Read once and cleared, so a reload does not replay the first turn.
     expect(sessionStorage.getItem(pendingKey(THREAD))).toBeNull()
   })
 

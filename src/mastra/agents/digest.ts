@@ -1,15 +1,5 @@
 import { Agent } from '@mastra/core/agent'
 
-/**
- * §9.1 — Digest agent for morning priorities summary.
- *
- * Generates a natural-language digest from the structured output of the
- * digest workflow. Uses a lightweight model since the task is summarisation,
- * not reasoning.
- *
- * The digest agent has no tools — it is a pure generation agent that
- * receives structured data and produces a human-readable summary.
- */
 export const digestAgent = new Agent({
   id: 'digest',
   name: 'Digest Agent',
@@ -20,6 +10,6 @@ export const digestAgent = new Agent({
     "today's schedule, and stale followups, produce a concise morning priorities " +
     'summary. Lead with the most urgent items. Group by category. Keep it under ' +
     '200 words. Do not invent data that is not present in the input.',
-  model: 'anthropic/claude-sonnet-5-5',
+  model: 'google/gemini-3.8-flash',
   tools: {},
 })

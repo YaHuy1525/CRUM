@@ -9,30 +9,7 @@ import { Input } from '@/components/ui/input'
 import { PageHeader } from '@/components/PageHeader'
 import { Skeleton } from '@/components/ui/skeleton'
 
-/**
- * The `/usage` page body. §"Route map": "Token, cost, and tool metrics."
- *
- * This was the last surface in the console still reading class names from the
- * legacy stylesheet, still calling `fetch()` around the typed client, and still
- * printing `--` for a number it never received. All three are fixed here rather
- * than restyled, so the component now reads like its siblings:
- *
- * 1. `get<UsageMetrics>` from `lib/api`, so a plane failure arrives as an
- *    `ApiError` with the plane's own sentence and `describeError` names the port,
- *    instead of the old `body.error || HTTP status` string assembled in place.
- * 2. TanStack Query owns the read, so the range inputs drive a `queryKey` and a
- *    retry is `refetch()` rather than the old trick of setting the same range
- *    back into state to wake the effect.
- * 3. The four states are the shared recipes: skeletons while reading, an
- *    `role="alert"` band on failure, and the numbers themselves in a table a
- *    screen reader can announce (caption plus header row, which the old bare
- *    `<tbody>`-only table had neither of).
- *
- * `GET /api/usage` answers 503 when the storage backend cannot serve metrics.
- * That arrives as an error here, which is the truth: the metrics were not read.
- */
 
-/** `GET /api/usage` body, camelCase because the route returns the store's own shape. */
 interface UsageMetrics {
   tokensIn: number
   tokensOut: number
@@ -57,12 +34,6 @@ function formatPercent(n: number): string {
   return `${(n * 100).toFixed(1)}%`
 }
 
-/**
- * A `YYYY-MM-DD` in the operator's own calendar. `toISOString().slice(0, 10)` is
- * UTC, which is one day earlier for anyone east of Greenwich before 10:00 local,
- * and this console's operator runs at UTC+11. The same fix landed on the Home
- * digest card in Phase 4; the range defaults had the identical bug.
- */
 function localISO(date: Date): string {
   return [
     String(date.getFullYear()),
@@ -71,7 +42,6 @@ function localISO(date: Date): string {
   ].join('-')
 }
 
-/** The last seven local days, inclusive of today. */
 function defaultDateRange(): { from: string; to: string } {
   const now = new Date()
   return {
@@ -99,13 +69,6 @@ export function UsageDashboard() {
   const toolErrorRate =
     metrics && metrics.toolCallCount > 0 ? metrics.toolCallErrors / metrics.toolCallCount : null
 
-  /**
-   * The six cards always exist, in this order, so the swap from reading to numbers
-   * does not move the grid. A value is a string because every cell either has a
-   * number or has a fact about why it has none: `cacheHitRate` and `toolErrorRate`
-   * are ratios over a denominator that can legitimately be zero, and a blank or a
-   * fabricated 0% would both be a lie about a cache that simply was not used.
-   */
   const cards: { label: string; value: string }[] = [
     { label: 'Tokens In', value: metrics ? formatNumber(metrics.tokensIn) : '' },
     { label: 'Tokens Out', value: metrics ? formatNumber(metrics.tokensOut) : '' },
@@ -166,9 +129,6 @@ export function UsageDashboard() {
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {cards.map((card) => (
               <div key={card.label} className="rounded-md border border-border bg-bg-card p-5">
-                {/* The real label with only its number still unknown: the grid the
-                 * reader is waiting for is already named, and the swap does not
-                 * reflow it. */}
                 <p className="text-xs font-semibold uppercase tracking-[var(--tracking-label)] text-text-muted">
                   {card.label}
                 </p>

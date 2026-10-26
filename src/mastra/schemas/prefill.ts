@@ -35,11 +35,6 @@ export const TaskParseSchema = z.object({
   description: z.string().optional(),
 })
 
-/**
- * Map of object type to parse schema. Each schema is passed as
- * `structuredOutput.schema` to the parser agent. Multi-record paste uses an
- * array wrapper; each element stages as its own pending write (§6.2).
- */
 export const PREFILL_SCHEMAS = {
   customer: CustomerParseSchema,
   contact: ContactParseSchema,

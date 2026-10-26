@@ -7,18 +7,6 @@ import { relativeTime } from '@/lib/time'
 import { Badge } from '@/components/ui/badge'
 import { CardEmpty, CardFailure, CardLink, CardPending, HomeCard } from './HomeCard'
 
-/**
- * The queue at a glance. §"Route map": Home's "awaiting decision card".
- *
- * The read is `GET /api/approvals/pending`, the same endpoint `/governance` uses,
- * so the count cannot disagree with the queue it points at. It replaced the old
- * inline `RailPulse` fetch, which had no test and rendered its own `--` for a
- * failure — a shape that reads as "no queue" at a glance.
- *
- * The list is capped at three rows. This is a pointer to the queue, not a second
- * queue: acting on a draft belongs on `/governance`, where the payload, the risk
- * gate, and the receipt are all on screen.
- */
 
 const PREVIEW_ROWS = 3
 

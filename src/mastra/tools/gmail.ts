@@ -1,10 +1,3 @@
-// src/mastra/tools/gmail.ts
-//
-// The Gmail read surface for crm-assistant. It is deliberately search-only:
-// mailbox CONTENT is untrusted input (indirect prompt injection via email is
-// the risk Google's own docs flag for agents), so this tool returns capped
-// snippets, never full bodies. Drafting and sending stay on the existing
-// mail.draft / mail.send governance path.
 import { createTool } from '@mastra/core/tools'
 import { z } from 'zod'
 import { TenantRequestContextSchema } from '../tenant-context'
@@ -36,6 +29,7 @@ export const searchThreadsTool = createTool({
         subject: z.string(),
         snippet: z.string(),
         senders: z.array(z.string()),
+        date: z.string(),
       }),
     ),
   }),

@@ -1,6 +1,5 @@
 import { PGVECTOR_PROMPT } from '@mastra/pg'
 
-// §4.4 — static, cacheable, stable part first. Nothing request-specific.
 export const CRUM_INSTRUCTIONS = `
 <identity>
 You are CRUM, a conversational CRM workbench assistant. You help sales users

@@ -1,13 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
-/**
- * `/chats/new` owns exactly two decisions: mint a thread id, and hand the first
- * message to the conversation view without sending it here. Sending happens on
- * `/chats/[id]`, through the single `useChat` transport the conversation view
- * owns, so these tests check the id is minted once, the text is parked under that
- * id, and the route changes — not that a stream started.
- */
 const pushMock = vi.hoisted(() => vi.fn())
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: pushMock }) }))
 
@@ -38,8 +31,6 @@ describe('LaunchView', () => {
     expect(target).toMatch(/^\/chats\/[0-9a-f-]{36}$/)
 
     const threadId = target.slice('/chats/'.length)
-    // Trimmed on the way in: a launch that stored the padding would send a first
-    // turn the user did not type.
     expect(sessionStorage.getItem(pendingKey(threadId))).toBe('Draft a follow-up for Acme')
   })
 
@@ -69,7 +60,6 @@ describe('LaunchView', () => {
 
     fireEvent.click(screen.getByRole('button', { name: new RegExp(first.label) }))
 
-    // A starter is a draft, not a send: the operator still gets to edit it.
     expect(composer().value).toBe(first.prompt)
     expect(pushMock).not.toHaveBeenCalled()
   })
@@ -77,8 +67,6 @@ describe('LaunchView', () => {
   it('seeds the composer from a hand-off without sending it', () => {
     render(<LaunchView initialText={'Create a customer from this note:\n\nMaria at Nordwind'} />)
 
-    // The Capture flow hands work over as a draft. Filling the field is the whole
-    // contract: nothing is minted or sent until the operator presses Start.
     expect(composer().value).toContain('Maria at Nordwind')
     expect(pushMock).not.toHaveBeenCalled()
   })

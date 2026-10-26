@@ -23,28 +23,6 @@ import {
 } from './columns'
 import { RECORDS_PAGE_SIZE, RecordsTable } from './RecordsTable'
 
-/**
- * The `/records` browser. §"Route map": "CRM objects with sub-tabs: Customers,
- * Contacts, Follow-ups, Tasks, Schedules. Backed by new read only list
- * endpoints."
- *
- * Three decisions worth stating:
- *
- * 1. **Filters are per object, not global.** Customers and contacts filter by
- *    name, schedules by calendar date, and follow-ups and tasks have no filter at
- *    all — the plane only offers a parent-customer filter for those two, and a
- *    search box that silently did nothing would be worse than none. Their rows
- *    carry a customer link instead, which is the drill-down that exists.
- * 2. **Switching a tab clears the filters.** A name typed for customers would
- *    otherwise still be filtering contacts, and the empty result would look like a
- *    data problem rather than a leftover query.
- * 3. **Empty states are per entity and never generic.** "No tasks yet" and "No
- *    customers yet" are different facts, and only the customer one has a capture
- *    path to offer.
- *
- * The tab list itself lives in `lib/records.ts`, because this module is client
- * code and the server page has to validate `?object=` against the same keys.
- */
 
 const FILTER_KIND: Partial<Record<RecordObject, 'name' | 'date'>> = {
   customers: 'name',
@@ -69,8 +47,6 @@ export function RecordsBrowser({ initialObject = 'customers' }: { initialObject?
   const [debouncedName, setDebouncedName] = useState('')
   const [date, setDate] = useState('')
 
-  // Same 300ms debounce the conversation search uses: one read per pause, not one
-  // per keystroke.
   useEffect(() => {
     const handle = setTimeout(() => setDebouncedName(name.trim()), 300)
     return () => clearTimeout(handle)

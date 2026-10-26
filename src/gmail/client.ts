@@ -1,19 +1,3 @@
-// src/gmail/client.ts
-//
-// The Gmail connector: OAuth consent URL building, code exchange, encrypted
-// per-user token storage, access-token refresh with a process cache, and the
-// thin REST surface the tools need (profile, thread search, draft create).
-//
-// Design notes:
-//   - Refresh tokens are only ever read from / written to `gmail_connections`
-//     through src/gmail/crypto.ts. Access tokens are short-lived and live in
-//     this process's memory only (the migration comment records that rule).
-//   - `access_type=offline` is mandatory: Google's authorization server only
-//     issues a refresh token when the consent request carries it. `prompt=consent`
-//     forces the approval screen so a re-connect reliably mints a NEW refresh
-//     token instead of silently returning none.
-//   - The pool is injectable (`Queryable`) so unit tests never open a socket,
-//     mirroring how the db modules take a request context.
 import { randomBytes } from 'node:crypto'
 import type { CrumEnv } from '../config/env'
 import { parseEnv } from '../config/env'
@@ -30,13 +14,8 @@ export const GMAIL_SCOPES = [
   'https://www.googleapis.com/auth/gmail.compose',
 ] as const
 
-// The route lives at the TOP level (`/gmail/callback`), not under `/api`. @mastra/server
-// reserves the built-in apiPrefix (`/api`, deployer index.js:4905) and validateCustomRoutePaths
-// (server-adapter index.js:1066) THROWS at boot for any custom route starting with it.
-// `/chat/crm` follows the same rule.
 export const DEFAULT_REDIRECT_URI = 'http://localhost:4111/gmail/callback'
 
-/** OAuth state lifetime: a consent round-trip that takes >10 minutes is abandoned. */
 export const STATE_TTL_MS = 10 * 60 * 1000
 
 export class GmailApiError extends Error {
@@ -48,7 +27,6 @@ export class GmailApiError extends Error {
   }
 }
 
-/** The subset of a pg pool this module needs; tests pass an object literal. */
 export interface Queryable {
   query(sql: string, params?: unknown[]): Promise<{ rows: unknown[] }>
 }
@@ -60,19 +38,18 @@ export interface GmailConnectionRow {
   gmail_email: string
   refresh_token_enc: string
   scopes: string
+  watch?: boolean
 }
 
 export function resolvePool(pool?: Queryable): Queryable {
   return pool ?? getDbClient()
 }
 
-// ── OAuth URL building and state ─────────────────────────────
 
 export function gmailRedirectUri(env: CrumEnv): string {
   return env.GMAIL_REDIRECT_URI ?? DEFAULT_REDIRECT_URI
 }
 
-/** Returns null when the connector is not configured — callers answer 503. */
 export function gmailOAuthConfigured(env: CrumEnv): { clientId: string; clientSecret: string; redirectUri: string } | null {
   if (!env.GMAIL_OAUTH_CLIENT_ID || !env.GMAIL_OAUTH_CLIENT_SECRET) return null
   return {
@@ -149,14 +126,11 @@ export async function exchangeCodeForTokens(
     }),
   )
   if (!json.refresh_token || !json.access_token) {
-    // access_type=offline was set; a missing refresh token means the consent
-    // did not grant it (revoked approval, or a policy block). Refuse to store.
     throw new GmailApiError('google returned no refresh token; reconnect with full consent', 400)
   }
   return { refreshToken: json.refresh_token, accessToken: json.access_token }
 }
 
-// ── Connection storage ───────────────────────────────────────
 
 export async function saveConnection(
   input: { tenantId: string; userId: string; gmailEmail: string; refreshToken: string; scopes: string },
@@ -184,19 +158,26 @@ export async function loadConnection(
   pool?: Queryable,
 ): Promise<GmailConnectionRow | null> {
   const { rows } = await resolvePool(pool).query(
-    `SELECT id, tenant_id, user_id, gmail_email, refresh_token_enc, scopes
+    `SELECT id, tenant_id, user_id, gmail_email, refresh_token_enc, scopes, watch
        FROM gmail_connections WHERE tenant_id = $1 AND user_id = $2`,
     [tenantId, userId],
   )
   return (rows[0] as GmailConnectionRow | undefined) ?? null
 }
 
-// ── Access-token cache + refresh ─────────────────────────────
+export async function listWatchConnections(pool?: Queryable): Promise<GmailConnectionRow[]> {
+  const { rows } = await resolvePool(pool).query(
+    `SELECT id, tenant_id, user_id, gmail_email, refresh_token_enc, scopes, watch
+       FROM gmail_connections WHERE watch = true ORDER BY tenant_id, user_id`,
+    [],
+  )
+  return rows as GmailConnectionRow[]
+}
+
 
 type CachedToken = { accessToken: string; expiresAt: number }
 const tokenCache = new Map<string, CachedToken>()
 
-/** Drop cached tokens for a user (tests, disconnect flows). */
 export function clearAccessTokenCache(tenantId: string, userId: string): void {
   tokenCache.delete(`${tenantId}:${userId}`)
 }
@@ -224,7 +205,6 @@ export async function getAccessToken(
     }),
   )
   if (!json.access_token) throw new GmailApiError('google returned no access token', 500)
-  // Refresh 60 s early so an in-flight request never uses a boundary-expired token.
   tokenCache.set(key, {
     accessToken: json.access_token,
     expiresAt: Date.now() + Math.max(0, (json.expires_in ?? 3600) - 60) * 1000,
@@ -232,10 +212,6 @@ export async function getAccessToken(
   return json.access_token
 }
 
-/**
- * Report whether a user's mailbox is connected AND usable. Used by the mail
- * tools and routes; a missing connection is a normal state, not an error.
- */
 export async function resolveGmailAccess(
   env: CrumEnv,
   tenantId: string,
@@ -259,7 +235,6 @@ export async function resolveGmailAccess(
   }
 }
 
-// ── Gmail REST surface ───────────────────────────────────────
 
 async function gmailFetch(accessToken: string, path: string, init?: RequestInit): Promise<Response> {
   const res = await fetch(`${GMAIL_API_ROOT}${path}`, {
@@ -274,7 +249,7 @@ async function gmailFetch(accessToken: string, path: string, init?: RequestInit)
 }
 
 export async function fetchProfileEmail(accessToken: string): Promise<string> {
-  const res = await gmailFetch(accessToken, '')
+  const res = await gmailFetch(accessToken, '/profile')
   const json = (await res.json()) as { emailAddress?: string }
   if (!json.emailAddress) throw new GmailApiError('gmail profile returned no emailAddress', 500)
   return json.emailAddress
@@ -285,19 +260,19 @@ export interface ThreadSummary {
   subject: string
   snippet: string
   senders: string[]
+  date: string
 }
 
 interface GmailThread {
   id: string
   snippet?: string
-  messages?: { part?: { headers?: { name?: string; value?: string }[] } }[]
+  messages?: { payload?: { headers?: { name?: string; value?: string }[] } }[]
 }
 
-/** Snippets are attacker-controlled text (email bodies). Cap them hard. */
 const SNIPPET_LIMIT = 500
 
 function extractHeader(thread: GmailThread, name: string): string {
-  const headers = thread.messages?.[0]?.part?.headers ?? []
+  const headers = thread.messages?.[0]?.payload?.headers ?? []
   return headers.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value ?? ''
 }
 
@@ -326,6 +301,7 @@ export async function searchThreadSummaries(
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean),
+    date: extractHeader(thread, 'Date'),
   }))
 }
 
@@ -353,4 +329,92 @@ export async function createGmailDraft(
   const json = (await res.json()) as { id?: string }
   if (!json.id) throw new GmailApiError('gmail drafts.create returned no id', 500)
   return { id: json.id }
+}
+
+
+export interface InboundMessage {
+  id: string
+  threadId: string
+  subject: string
+  senders: string[]
+  recipients: string[]
+  snippet: string
+  date: string
+  receivedAt: string
+}
+
+interface GmailMessage {
+  id: string
+  threadId: string
+  snippet?: string
+  internalDate?: string
+  payload?: { headers?: { name?: string; value?: string }[] }
+}
+
+function messageHeader(message: GmailMessage, name: string): string {
+  const headers = message.payload?.headers ?? []
+  return headers.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value ?? ''
+}
+
+export async function searchInboundMessages(
+  accessToken: string,
+  query: string,
+  maxResults: number,
+  pageToken?: string,
+): Promise<{ messages: InboundMessage[]; nextPageToken?: string }> {
+  const params = new URLSearchParams({ q: query, maxResults: String(maxResults) })
+  if (pageToken) params.set('pageToken', pageToken)
+  const res = await gmailFetch(accessToken, `/messages?${params.toString()}`)
+  const list = (await res.json()) as {
+    messages?: { id: string; threadId: string }[]
+    nextPageToken?: string
+  }
+  const ids = (list.messages ?? []).map((m) => m.id)
+  const details = await Promise.all(
+    ids.map(async (id) => {
+      const r = await gmailFetch(accessToken, `/messages/${id}?format=metadata&metadataInclude=From,To,Subject,Date`)
+      return (await r.json()) as GmailMessage
+    }),
+  )
+  return {
+    messages: details.map((m) => ({
+      id: m.id,
+      threadId: m.threadId,
+      subject: messageHeader(m, 'Subject'),
+      senders: messageHeader(m, 'From').split(',').map((s) => s.trim()).filter(Boolean),
+      recipients: messageHeader(m, 'To').split(',').map((s) => s.trim()).filter(Boolean),
+      snippet: (m.snippet ?? '').slice(0, SNIPPET_LIMIT),
+      date: messageHeader(m, 'Date'),
+      receivedAt: m.internalDate ? new Date(Number(m.internalDate)).toISOString() : new Date().toISOString(),
+    })),
+    ...(list.nextPageToken ? { nextPageToken: list.nextPageToken } : {}),
+  }
+}
+
+export async function insertMailMessage(
+  message: InboundMessage,
+  owner: { tenantId: string; userId: string; gmailEmail: string },
+  pool?: Queryable,
+): Promise<boolean> {
+  const { rows } = await resolvePool(pool).query(
+    `INSERT INTO mail_messages
+       (id, tenant_id, user_id, gmail_email, thread_id, subject, senders, recipients, snippet, date_header, received_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+     ON CONFLICT (id) DO NOTHING
+     RETURNING id`,
+    [
+      message.id,
+      owner.tenantId,
+      owner.userId,
+      owner.gmailEmail,
+      message.threadId,
+      message.subject,
+      message.senders,
+      message.recipients,
+      message.snippet,
+      message.date,
+      message.receivedAt,
+    ],
+  )
+  return rows.length > 0
 }

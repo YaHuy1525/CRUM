@@ -16,54 +16,13 @@ import { Textarea } from '@/components/ui/textarea'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ToolInspector, isToolPart } from './ToolInspector'
 
-/**
- * The single conversation surface. §"Chats section / Frontend" and the transport
- * contract proven by the pane it replaces.
- *
- * It owns three things the old `ChatPane` did not:
- *
- * **Hydration.** A deep-linked `/chats/[id]` first reads the thread's metadata
- * (a 404 means the id is missing or belongs to another user — both render
- * not-found, never a leak), then pages the stored transcript into `useChat` via
- * `setMessages`, so a reopened conversation shows its history before the live
- * stream continues in place.
- *
- * **The launch handoff.** `/chats/new` mints the id in the browser and parks the
- * first message in `sessionStorage`; this view reads and clears it and sends it
- * once. A launch is a *brand-new* thread — it has no stored row yet, because the
- * row is created server-side when the first turn lands — so the existence check
- * is deliberately skipped for it. Only a genuine reopen (no pending message)
- * requires the thread to exist.
- *
- * **One origin, no identity.** `api` stays the relative `/chat/crm` (Next rewrites
- * it to Mastra on :4111) and the thread id travels per turn in `x-thread-id`,
- * exactly as before. No `x-tenant-id` is ever set here; `middleware.ts` injects
- * identity server-side. A client that named a tenant could read one.
- *
- * `hydrate` is the seam that lets Home keep working: Home mints a fresh thread id
- * that is not in storage until its first turn, so it renders this view with
- * `hydrate={false}` — no existence check, no transcript fetch, just the live
- * streaming surface the replaced pane provided. Phase 4 turns Home into a pointer
- * dashboard and drops the transcript entirely.
- */
 
 interface ConversationViewProps {
-  /** The conversation this surface is bound to. Remount with a React `key` to switch. */
   threadId: string
-  /**
-   * A first message to send once on mount (the launch flow). When omitted, the
-   * `crum:pending:<threadId>` sessionStorage handoff is read instead.
-   */
   initialMessage?: string
-  /**
-   * Whether this view owns a *stored* conversation. True (the default) hydrates
-   * the transcript and renders not-found on a 404 metadata read. Home passes false
-   * for a freshly minted, not-yet-persisted thread.
-   */
   hydrate?: boolean
 }
 
-/** A reasoning part is muted, collapsible evidence — quiet by default. */
 function ReasoningPart({ text }: { text: string }) {
   const [open, setOpen] = useState(false)
   return (
@@ -151,16 +110,10 @@ export function ConversationView({ threadId, initialMessage, hydrate = true }: C
   const [missing, setMissing] = useState(false)
   const [reloadNonce, setReloadNonce] = useState(0)
 
-  // The launch decision is made once and cached in a ref, so a StrictMode
-  // double-invoke (or a Retry re-run) never re-reads sessionStorage after it was
-  // cleared and mistakes a launch for a deep link to a thread that does not exist
-  // yet. `sentInitial` likewise guards the first turn against a double send.
   const launchDecided = useRef(false)
   const launchText = useRef<string | null>(null)
   const sentInitial = useRef(false)
 
-  // Stable across renders: a new transport every render would rebuild the chat and
-  // drop an in-flight stream.
   const transport = useMemo(() => new DefaultChatTransport({ api: '/chat/crm' }), [])
 
   const { messages, sendMessage, setMessages, status, stop, error, clearError } = useChat({
@@ -180,9 +133,6 @@ export function ConversationView({ threadId, initialMessage, hydrate = true }: C
     }
     const first = launchText.current
 
-    // A launch: the thread is brand-new, so there is no row to existence-check and
-    // no transcript to hydrate. Send the first turn (which creates the thread
-    // server-side) and let the stream run.
     if (first) {
       setHydrating(false)
       if (!sentInitial.current) {
@@ -200,8 +150,6 @@ export function ConversationView({ threadId, initialMessage, hydrate = true }: C
         await getThread(threadId)
       } catch (err) {
         if (cancelled) return
-        // A 404 is "missing or not yours"; both render not-found rather than an
-        // error banner, because there is nothing here to retry.
         if (err instanceof ApiError && err.status === 404) {
           setMissing(true)
           return
@@ -233,23 +181,15 @@ export function ConversationView({ threadId, initialMessage, hydrate = true }: C
     setInput('')
     void sendMessage(
       { text },
-      // Per-turn options: the documented `ChatRequestOptions` slot for a
-      // request-scoped header. The server reads the thread from a header so it
-      // never buffers the streamed body to find out who is speaking.
       { headers: { 'x-thread-id': threadId } },
     )
   }
 
   const onStop = () => {
     stop()
-    // The interrupt is an out-of-band signal addressed by the session id, which is
-    // the thread id. It needs no body; a failure to reach it must not throw on the
-    // click path (the local `stop()` already halted the stream).
     void post('/api/signals/interrupt', undefined, { 'x-session-id': threadId }).catch(() => {})
   }
 
-  // All hooks have run, so raising not-found here is safe. In production this
-  // throws into Next's not-found boundary; the render below is unreachable.
   if (missing) {
     notFound()
     return null

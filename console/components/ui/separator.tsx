@@ -5,10 +5,6 @@ import * as SeparatorPrimitive from '@radix-ui/react-separator'
 
 import { cn } from '@/lib/utils'
 
-/**
- * shadcn/ui `separator`, adapted to CRUM tokens — the same hairline
- * `var(--border)` the panels already divide on.
- */
 function Separator({
   className,
   orientation = 'horizontal',

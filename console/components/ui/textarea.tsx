@@ -2,10 +2,6 @@ import * as React from 'react'
 
 import { cn } from '@/lib/utils'
 
-/**
- * shadcn/ui `textarea`, adapted to CRUM tokens. Same sunken-well recipe as
- * `input`, with vertical resize like `.console-form textarea`.
- */
 function Textarea({ className, ...props }: React.ComponentProps<'textarea'>) {
   return (
     <textarea

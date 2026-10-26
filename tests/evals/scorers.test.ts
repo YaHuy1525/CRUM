@@ -9,6 +9,9 @@ describe('buildScorers', () => {
     vi.stubEnv('JUDGE_PROVIDER', '')
     vi.stubEnv('JEV_API_KEY', '')
     vi.stubEnv('JUDGE_CHAT_API_KEY', '')
+    // Pin the judge off explicitly: the chat path falls back to
+    // OPENROUTER_API_KEY, which a shared worker may carry from another suite.
+    vi.stubEnv('OPENROUTER_API_KEY', '')
     const { buildScorers } = await import('../../src/evals/scorers')
     const scorers = buildScorers()
 

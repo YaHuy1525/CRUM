@@ -3,13 +3,6 @@ import Link from 'next/link'
 import { PageHeader } from '@/components/PageHeader'
 import { ConversationList } from '@/components/chats/ConversationList'
 
-/**
- * Chats index. §"Route map": `/chats` is the searchable history of saved
- * conversations. The list itself is the client component (`ConversationList`),
- * because searching, renaming and deleting are all mutations against the
- * conversation plane; this page stays a server component so the header and the
- * route shell are rendered without waiting for the browser.
- */
 export default function ChatsIndexPage() {
   return (
     <main className="mx-auto w-full max-w-3xl px-4 py-6 md:px-8 md:py-10">

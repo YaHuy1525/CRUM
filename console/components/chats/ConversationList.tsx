@@ -34,23 +34,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 
-/**
- * The conversation browser for `/chats`. §"Chats section / Frontend": history
- * rows through TanStack Query with skeleton rows, an honest error with retry, and
- * a distinct empty state; a debounced search that renders matching snippets; and
- * per-row rename/delete menus.
- *
- * Two server reads, never both live at once. With no query the history list
- * (`['threads']`) renders; while a query is debounced in, the search read
- * (`['thread-search', q]`) replaces it. The 300ms debounce means typing does not
- * fire a semantic search per keystroke.
- *
- * Rename is optimistic: the row's title updates the instant Save is pressed, and
- * a rejected PATCH rolls the cache back to the snapshot taken in `onMutate`, so a
- * failed rename never leaves a title on screen that the plane refused to store.
- * Delete is not optimistic — it invalidates the list and lets the refetch decide
- * what remains, because guessing the post-delete order is how a row reappears.
- */
 
 const UNTITLED = 'Untitled conversation'
 
@@ -66,7 +49,6 @@ export function ConversationList() {
   const [renameDraft, setRenameDraft] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null)
 
-  // Debounce the search box into the query that actually fires a read.
   useEffect(() => {
     const handle = setTimeout(() => setDebounced(query.trim()), 300)
     return () => clearTimeout(handle)

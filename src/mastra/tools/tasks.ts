@@ -2,30 +2,7 @@ import { createTool } from '@mastra/core/tools'
 import { z } from 'zod'
 import { TenantRequestContextSchema } from '../tenant-context'
 import { queryTasks, queryMyTasks, queryMyFollowups } from '../../db/queries'
-
-const TaskSchema = z.object({
-  id: z.string(),
-  tenant_id: z.string(),
-  // `tasks.customer_id` is nullable in 0002 (`ON DELETE SET NULL`).
-  customer_id: z.string().nullable(),
-  title: z.string().optional(),
-  description: z.string().optional(),
-  owner_id: z.string(),
-  team_member_ids: z.array(z.string()),
-  created_at: z.string(),
-  updated_at: z.string(),
-})
-
-const FollowupSchema = z.object({
-  id: z.string(),
-  tenant_id: z.string(),
-  customer_id: z.string(),
-  note: z.string().optional(),
-  owner_id: z.string(),
-  team_member_ids: z.array(z.string()),
-  created_at: z.string(),
-  updated_at: z.string(),
-})
+import { FollowupRowSchema, TaskRowSchema } from './row-fields'
 
 export const listTasksTool = createTool({
   id: 'crm.list_tasks',
@@ -35,7 +12,7 @@ export const listTasksTool = createTool({
   inputSchema: z.object({
     customerId: z.string().uuid(),
   }),
-  outputSchema: z.array(TaskSchema),
+  outputSchema: z.array(TaskRowSchema),
   execute: async (input, context) => {
     return context.observe.span('crm.list_tasks', async () => {
       const rc = context.requestContext.all
@@ -44,24 +21,49 @@ export const listTasksTool = createTool({
   },
 })
 
+const OPEN_TASK_STATUSES = new Set(['open', 'in_progress'])
+const OPEN_FOLLOWUP_STATUSES = new Set(['scheduled', 'missed'])
+
+const DEFAULT_LIMIT = 25
+const MAX_LIMIT = 100
+
+function urgency(value?: string | Date | null): number {
+  if (value === null || value === undefined) return Number.POSITIVE_INFINITY
+  const time = value instanceof Date ? value.getTime() : Date.parse(value)
+  return Number.isNaN(time) ? Number.POSITIVE_INFINITY : time
+}
+
 export const myOpenItemsTool = createTool({
   id: 'crm.my_open_items',
   title: 'My Open Items',
-  description: 'Returns tasks and followups assigned to the current user across all customers.',
+  description:
+    'Returns the open tasks and follow-ups assigned to the current user across all customers, most urgent first and bounded by `limit` (default 25 per list). It is a shortlist, not a census: ask a counting or filtering question of the whole set through a filtered read instead.',
   requestContextSchema: TenantRequestContextSchema,
-  inputSchema: z.object({}),
-  outputSchema: z.object({
-    tasks: z.array(TaskSchema),
-    followups: z.array(FollowupSchema),
+  inputSchema: z.object({
+    limit: z.number().int().positive().max(MAX_LIMIT).optional(),
   }),
-  execute: async (_input, context) => {
+  outputSchema: z.object({
+    tasks: z.array(TaskRowSchema),
+    followups: z.array(FollowupRowSchema),
+  }),
+  execute: async (input, context) => {
     return context.observe.span('crm.my_open_items', async () => {
       const rc = context.requestContext.all
       const [tasks, followups] = await Promise.all([
         queryMyTasks(rc),
         queryMyFollowups(rc),
       ])
-      return { tasks, followups }
+      const limit = Math.min(input.limit ?? DEFAULT_LIMIT, MAX_LIMIT)
+      return {
+        tasks: tasks
+          .filter((task) => OPEN_TASK_STATUSES.has(task.status ?? 'open'))
+          .sort((a, b) => urgency(a.deadline) - urgency(b.deadline))
+          .slice(0, limit),
+        followups: followups
+          .filter((followup) => OPEN_FOLLOWUP_STATUSES.has(followup.status ?? 'scheduled'))
+          .sort((a, b) => urgency(a.scheduled_at) - urgency(b.scheduled_at))
+          .slice(0, limit),
+      }
     })
   },
 })

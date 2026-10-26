@@ -1,11 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, describeError, get, post, request } from '../lib/api'
 
-/**
- * `console/lib/api.ts` is the layer that decides whether a failure is visible, so
- * it gets the tests first. The components under test elsewhere mock this module;
- * nothing else checks what it does with a 401 versus a dead port.
- */
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(typeof body === 'string' ? body : JSON.stringify(body), {
@@ -14,11 +9,6 @@ function jsonResponse(status: number, body: unknown): Response {
   })
 }
 
-/**
- * Resolve to the rejection, or fail the test if the call unexpectedly succeeded.
- * Typed, because `.catch(e => e as ApiError)` on a `Promise<unknown>` stays
- * `unknown` and every property access below then errors.
- */
 async function rejection(promise: Promise<unknown>): Promise<ApiError> {
   return promise.then(
     () => {
@@ -53,8 +43,6 @@ describe('request', () => {
     const err = await rejection(get('/api/approvals/pending'))
     expect(err).toBeInstanceOf(ApiError)
     expect(err.code).toBe('unauthorized')
-    // 'missing-claim' and 'invalid-claim' point at different mistakes, so the
-    // reason has to survive into the message the panel shows.
     expect(err.detail).toContain('invalid-claim')
     expect(describeError(err)).toContain('invalid-claim')
   })
@@ -69,12 +57,6 @@ describe('request', () => {
   })
 
   it('calls a plain-text 5xx an unreachable plane rather than a server bug', async () => {
-    // `src/api/serve.ts` answers every plane failure as JSON, including thrown routes
-    // (`app.onError`) and unmatched paths (`app.notFound`). A 500 whose body is the
-    // framework's bare text therefore came from the Next rewrite proxy in
-    // `next.config.js`, which writes it when the upstream port is not listening, and
-    // the panel has to name that port instead of sending the operator to debug a
-    // server that is not running.
     vi.mocked(fetch).mockResolvedValue(
       new Response('Internal Server Error', { status: 500 }),
     )
@@ -87,8 +69,6 @@ describe('request', () => {
   })
 
   it('keeps a JSON 503 from the plane as the plane own words', async () => {
-    // The other half of the line above: a 5xx that did answer in JSON is a server
-    // failure with a diagnosis, and relabelling it unreachable would hide it.
     vi.mocked(fetch).mockResolvedValue(
       jsonResponse(503, { error: 'metrics_unavailable', detail: 'no metrics store' }),
     )
@@ -120,8 +100,6 @@ describe('header handling', () => {
 
     const init = vi.mocked(fetch).mock.calls[0]![1] as RequestInit
     const headers = init.headers as Record<string, string>
-    // The signal routes 400 without `x-session-id`; a spread that overwrote the
-    // caller's headers with `Accept` would break every bind silently.
     expect(headers['x-session-id']).toBe('thread-9')
     expect(headers['Content-Type']).toBe('application/json')
     expect(headers.Accept).toBe('application/json')
@@ -133,8 +111,6 @@ describe('header handling', () => {
     await get('/api/approvals/pending')
     const init = vi.mocked(fetch).mock.calls[0]![1] as RequestInit
     const headers = (init.headers ?? {}) as Record<string, string>
-    // Identity belongs to the middleware. If this ever picks up a tenant claim it
-    // has become a client-selectable tenant (§13.2).
     expect(headers['x-tenant-id']).toBeUndefined()
     expect(headers['x-user-id']).toBeUndefined()
   })

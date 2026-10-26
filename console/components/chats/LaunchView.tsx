@@ -9,27 +9,6 @@ import { STARTERS } from '@/lib/starters'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 
-/**
- * The launch surface for `/chats/new`. §"Route map": "Centered composer with the
- * single reserved prompt gradient and starter prompt cards. Sending mints the
- * thread and redirects into it."
- *
- * The page owns almost nothing: the composer text, and the handoff. It mints the
- * thread id here (the server creates the row when the first turn lands), parks
- * the first message in `sessionStorage` through `lib/pending`, and navigates to
- * `/chats/[id]`. Sending is deliberately *not* done here — the conversation view
- * owns the single `useChat` transport, so a launch is a normal first turn on the
- * real route rather than a second streaming path that could drift from it.
- *
- * The gradient is the one reserved token (`--grad-composer`). It is applied as a
- * background-image on the composer card only, never on a second surface, which is
- * what keeps it reading as an accent instead of a theme.
- *
- * `initialText` is how other surfaces hand work over — the Capture flow prefills
- * the composer with the text it parsed. It only seeds the field: nothing is sent
- * until the operator presses Start, so a hand-off can never mint a thread and a
- * turn they did not ask for.
- */
 
 export function LaunchView({ initialText = '' }: { initialText?: string }) {
   const router = useRouter()
@@ -39,8 +18,6 @@ export function LaunchView({ initialText = '' }: { initialText?: string }) {
   const start = (text: string) => {
     const message = text.trim()
     if (message.length === 0 || starting) return
-    // Guarded against a double submit: the navigation is async, so a second click
-    // before the route changes would otherwise mint a second, empty conversation.
     setStarting(true)
     const threadId = crypto.randomUUID()
     storePendingMessage(threadId, message)

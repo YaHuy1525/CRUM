@@ -3,13 +3,6 @@ import { render, screen } from '@testing-library/react'
 import { ReceiptView } from '../components/ReceiptView'
 import { route, stubFetch, type FetchStub, type Reply } from './fetchStub'
 
-/**
- * The receipt panel's only job is to state a verdict about a signature, and the
- * verdict has three values. `unavailable` (the HMAC secret is absent or rotated on
- * this box) must not render as `invalid`, because that would accuse a legitimate
- * audit trail of forgery — the difference is the whole reason
- * `GET /api/approvals/receipts/:id` returns three states rather than a boolean.
- */
 
 const RECEIPT_ID = 'r9r9r9r9-0000-4000-8000-000000000000'
 
@@ -54,7 +47,6 @@ describe('ReceiptView', () => {
     expect(await screen.findByText('Signature verified')).toBeInTheDocument()
     expect(screen.getByText('c-42')).toBeInTheDocument()
     expect(server.last('/api/approvals/receipts/')?.url).toBe(`/api/approvals/receipts/${RECEIPT_ID}`)
-    // The full HMAC does not belong in a panel a screen reader has to walk.
     expect(container.querySelector('code')?.textContent).toBe('deadbeefcafebabe…')
     expect(container.textContent).not.toContain('567890abcdef')
   })
@@ -64,8 +56,6 @@ describe('ReceiptView', () => {
     render(<ReceiptView receiptId={RECEIPT_ID} />)
 
     const verdict = await screen.findByText('Signature DOES NOT match this receipt')
-    // The verdict is asserted by its semantic attribute, not by a legacy class
-    // name: Phase 4 moved the styling onto the Badge primitive.
     expect(verdict).toHaveAttribute('data-verdict', 'invalid')
   })
 
@@ -76,8 +66,6 @@ describe('ReceiptView', () => {
     const verdict = await screen.findByText(/Signature could not be verified/)
     expect(verdict.textContent).toContain('APPROVAL_HMAC_SECRET')
     expect(verdict).toHaveAttribute('data-verdict', 'unavailable')
-    // Not an error state: the receipt is still displayed, the verdict is just
-    // unproven on this machine.
     expect(screen.queryByRole('alert')).toBeNull()
     expect(screen.getByText('approved')).toBeInTheDocument()
   })

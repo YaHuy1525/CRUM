@@ -8,35 +8,10 @@ import { ObjectPanel } from '@/components/ObjectPanel'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
-/**
- * The conversation context side panel. §"Chats section / Frontend": `/chats/[id]`
- * carries "the customer context bind as a conversation side panel moved off Home."
- *
- * Two pieces, deliberately kept apart (the same split the old `ObjectPanel.tsx`
- * drew, now with the *fetching* half living here and the presentational card left
- * where its own tests render it):
- *
- * - `CustomerPanel` reads. It fetches `GET /api/crm/customers/:id` — the HTTP face
- *   of the `crm.get_customer` tool, sharing its visibility predicate, so a panel
- *   cannot show a row the agent's own tool would refuse — and binds the
- *   conversation to that row with `POST /api/signals/rebind`.
- * - `ContextPanel` is the side panel: the bind form (which row to load) wrapped
- *   around `CustomerPanel`.
- *
- * The bind is a *signal*, not a header: there is no `x-crm-object-id` anywhere in
- * this build. `rebind` retains a `state` signal on the session, which
- * `src/mastra/processors/object-binding.ts` reads back into the request context on
- * the next turn, so the binding survives across turns instead of being re-sent.
- * That also means it needs a conversation to bind to: without a thread id the
- * button explains why rather than posting into nowhere.
- */
 
 interface CustomerPanelProps {
-  /** The row to show. Null renders the empty state and fetches nothing. */
   customerId: string | null
-  /** Conversation to bind to, from the parent that owns the open chat. */
   threadId?: string | null
-  /** Bound already? Lets the panel say so instead of offering a second bind. */
   bound?: boolean
 }
 
@@ -59,8 +34,6 @@ export function CustomerPanel({ customerId, threadId, bound = false }: CustomerP
       )
       setCustomer(data.customer)
     } catch (err) {
-      // 'not_found' is the server's answer to both "no such row" and "not yours",
-      // so the panel repeats it rather than guessing which.
       setCustomer(null)
       setError(describeError(err))
     }
@@ -111,9 +84,6 @@ export function CustomerPanel({ customerId, threadId, bound = false }: CustomerP
         </div>
       )}
 
-      {/* A row that failed to load is not a row that was never picked. The
-          presentational panel's empty state means "no selection", so it would be a
-          lie next to an error banner — and the two together read as "nothing here". */}
       {customer ? (
         <ObjectPanel customer={customer} />
       ) : error ? (
@@ -147,17 +117,10 @@ export function CustomerPanel({ customerId, threadId, bound = false }: CustomerP
 }
 
 interface ContextPanelProps {
-  /** Conversation the loaded row binds to. Null disables the bind with a hint. */
   threadId?: string | null
-  /** Optionally open on a specific customer (e.g. linked from a record). */
   initialCustomerId?: string | null
 }
 
-/**
- * The side panel: a bind form (which customer to load) over `CustomerPanel`. This
- * is what `/chats/[id]` renders in its context column and what Home drops into its
- * rail, replacing the inline form + `CustomerPanel` that used to live there.
- */
 export function ContextPanel({ threadId, initialCustomerId = null }: ContextPanelProps) {
   const [customerId, setCustomerId] = useState<string | null>(initialCustomerId)
   const [input, setInput] = useState('')

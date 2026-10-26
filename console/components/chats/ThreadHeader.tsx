@@ -21,18 +21,6 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog'
 
-/**
- * The conversation header row. §"Chats section / Frontend": `/chats/[id]` offers
- * "inline title rename" and the route table calls for a title plus relative last
- * activity.
- *
- * It reads the thread's own metadata through TanStack Query (the same row shape
- * the list uses) so the title and the "active …" line stay honest, and a rename
- * mutates with `source: 'user'` — which the plane pins, so a later auto-title can
- * never overwrite a name the operator chose. The mutation invalidates both this
- * thread and the list, and a toast reports the outcome rather than leaving the
- * operator guessing whether the PATCH landed.
- */
 export function ThreadHeader({ threadId }: { threadId: string }) {
   const queryClient = useQueryClient()
   const [open, setOpen] = useState(false)
@@ -43,8 +31,6 @@ export function ThreadHeader({ threadId }: { threadId: string }) {
     queryFn: () => getThread(threadId),
   })
 
-  // Seed the dialog input from the live title each time it opens, so a stale draft
-  // from a previous rename never lingers.
   useEffect(() => {
     if (open) setDraft(data?.title ?? '')
   }, [open, data])

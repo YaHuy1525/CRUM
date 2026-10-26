@@ -4,21 +4,6 @@ import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
 
-/**
- * The Records browser. §"Route map": "/records, CRM objects with sub-tabs … backed
- * by new read only list endpoints." §"Page migrations": the lists "are paginated,
- * and support simple filters."
- *
- * What is proven here:
- *
- * - the first tab reads `/api/crm/customers` with the shared page size;
- * - a row links to the customer detail route, which is the only drill-down;
- * - "Load more" asks for the next offset and appends rather than replacing;
- * - the name filter debounces into the query string exactly once;
- * - switching tabs reads a different endpoint and clears the filter, so a typed
- *   name cannot silently narrow the next list;
- * - a failed read is an alert with a retry, never an empty table.
- */
 vi.mock('next/link', () => ({
   default: ({
     href,
@@ -94,8 +79,6 @@ describe('RecordsBrowser', () => {
 
   it('Load more asks for the next offset and appends the rows', async () => {
     server = stubFetch([
-      // The next offset is the previous offset plus the rows actually served, so a
-      // short first page asks for offset=1 rather than for offset=25.
       route('/api/crm/customers', (call) =>
         call.url.includes('offset=1')
           ? { status: 200, body: page([customer({ id: 'c2', name: 'Alpen Logistics' })], { total: 2, offset: 1 }) }
@@ -109,7 +92,6 @@ describe('RecordsBrowser', () => {
 
     expect(await screen.findByRole('link', { name: 'Alpen Logistics' })).toBeInTheDocument()
     expect(screen.getByText('Showing 2 of 2 customers')).toBeInTheDocument()
-    // Both rows stay: this accumulates, it does not page-replace.
     expect(screen.getByRole('link', { name: 'Nordwind Freight' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull()
   })
@@ -123,7 +105,6 @@ describe('RecordsBrowser', () => {
     await screen.findByRole('link', { name: 'Nordwind Freight' })
     fireEvent.change(screen.getByLabelText('Filter by name'), { target: { value: 'Nord' } })
 
-    // 300ms debounce: one read per pause, not one per keystroke.
     await waitFor(() => expect(server.last('/api/crm/customers')?.url).toContain('name=Nord'), {
       timeout: 2000,
     })
@@ -138,11 +119,9 @@ describe('RecordsBrowser', () => {
 
     await screen.findByRole('link', { name: 'Nordwind Freight' })
     fireEvent.change(screen.getByLabelText('Filter by name'), { target: { value: 'Nord' } })
-    // Radix activates a tab on the pointer down, not on a bare click event.
     await userEvent.setup().click(screen.getByRole('tab', { name: 'Tasks' }))
 
     expect(await screen.findByText(/No tasks yet/)).toBeInTheDocument()
-    // Tasks has no name filter; the notice says what the list actually covers.
     expect(screen.getByText(/Listed tenant-wide/)).toBeInTheDocument()
     expect(screen.queryByLabelText('Filter by name')).toBeNull()
     expect(server.last('/api/crm/tasks')?.url).not.toContain('name=')

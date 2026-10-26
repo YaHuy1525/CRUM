@@ -2,21 +2,6 @@ import { ConversationView } from '@/components/chats/ConversationView'
 import { ContextPanel } from '@/components/chats/ContextPanel'
 import { ThreadHeader } from '@/components/chats/ThreadHeader'
 
-/**
- * One conversation. §"Route map": `/chats/[id]` reopens a single thread — the
- * stored transcript hydrates first, live streaming continues in place, the title
- * is renameable inline, and the customer context bind lives in a side panel that
- * used to be a Home rail card.
- *
- * The page is a server component only for `params`: every piece below is a client
- * component, because each one reads or mutates the conversation plane. The id is
- * passed down rather than re-read, so all four surfaces agree on one conversation
- * for the life of the route.
- *
- * A missing thread — or one belonging to another user — is handled inside
- * `ConversationView` by raising not-found, so a deep link to someone else's id
- * renders the not-found boundary instead of an empty conversation.
- */
 export default async function ChatDetailPage({
   params,
 }: {

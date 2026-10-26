@@ -18,26 +18,7 @@ import {
 } from './columns'
 import { RECORDS_PAGE_SIZE, RecordsTable } from './RecordsTable'
 
-/**
- * One customer, with its related objects beneath the header.
- * §"Route map": "Customer detail with related contacts, follow-ups, and tasks
- * beneath."
- *
- * The header reads `GET /api/crm/customers/:id`, the HTTP face of
- * `crm.get_customer`'s own query, so this page cannot show a row the agent's tool
- * would refuse. The three lists below read the tenant-wide endpoints with a
- * `customerId` filter rather than three new nested routes: same rows, same
- * visibility, one SQL path to maintain.
- *
- * A 404 becomes `notFound()` instead of an empty record, for the reason the
- * conversation view gives: the plane answers "no such row" and "not yours" with
- * one body, and painting a blank customer over either would be a fabrication.
- *
- * There is no edit form. Every CRM change is staged by the agent and committed by
- * the approval queue, so the only action here is the hand-off to a chat.
- */
 
-/** The related-object tables drop the Customer column: every row is this one. */
 const RELATED_CONTACT_COLUMNS: Column<CrmContact>[] = CONTACT_COLUMNS.filter(
   (column) => column.header !== 'Customer',
 )

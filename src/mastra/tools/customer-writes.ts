@@ -12,7 +12,6 @@ const ApprovalOutputSchema = z.object({
   message: z.string(),
 })
 
-// crm.create_customer — approval class
 export const createCustomerTool = createTool({
   id: 'crm.create_customer',
   title: 'Create Customer',
@@ -31,8 +30,6 @@ export const createCustomerTool = createTool({
   outputSchema: ApprovalOutputSchema,
   outputValidation: 'warn',
 
-  // requireApproval's ctx argument is itself optional in @mastra/core 1.79.0, hence `= {}`:
-  // a call that arrives without ctx keeps requestContext undefined instead of inventing a tenant.
   requireApproval: (input, { requestContext } = {}) => {
     const policy = loadPolicy()
     const assessment = scoreRisk(input, policy.risk, 'crm.create_customer')
@@ -99,7 +96,6 @@ export const createCustomerTool = createTool({
   },
 })
 
-// crm.update_customer — approval class
 export const updateCustomerTool = createTool({
   id: 'crm.update_customer',
   title: 'Update Customer',
@@ -181,7 +177,6 @@ export const updateCustomerTool = createTool({
   },
 })
 
-// crm.delete_customer — approval class, risk floor 70
 export const deleteCustomerTool = createTool({
   id: 'crm.delete_customer',
   title: 'Delete Customer',

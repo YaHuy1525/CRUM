@@ -3,23 +3,6 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
 
-/**
- * Home is a dashboard of pointers: three named cards and a launcher row.
- * §"Page migrations": "Home composes three named and testable card components …
- * The two live metric fetchers that sit inline in the home file today become
- * these components and gain tests."
- *
- * What is proven here, card by card:
- *
- * - each card reads its own endpoint, and the composition mounts all three;
- * - a failure names the plane and the retry reads again (the old rail card showed
- *   `--`, which reads as an empty queue);
- * - the empty copy is per card, never one shared "no data";
- * - links point at the route that owns the thing being counted.
- *
- * `next/link` is reduced to an anchor here, as in the other console tests: there
- * is no App Router mounted in a bare `render()`, and only `href` is needed.
- */
 vi.mock('next/link', () => ({
   default: ({
     href,
@@ -171,7 +154,6 @@ describe('TodayCard', () => {
       'href',
       '/records?object=schedules',
     )
-    // The date sent to the plane is the operator's local day, not a UTC one.
     expect(server.last('/api/digest')?.url).toMatch(/date=\d{4}-\d{2}-\d{2}/)
   })
 
@@ -250,7 +232,6 @@ describe('HomePage', () => {
       expect(server.count('/api/agent/threads')).toBe(1)
     })
 
-    // Phase 4 removes the composer, the transcript and the context bind from `/`.
     expect(screen.queryByRole('textbox', { name: 'Message' })).toBeNull()
   })
 })

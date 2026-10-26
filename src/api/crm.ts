@@ -1,4 +1,3 @@
-// src/api/crm.ts
 import { Hono } from 'hono'
 import type { Context } from 'hono'
 import { z } from 'zod'
@@ -16,33 +15,6 @@ import {
   type ListResult,
 } from '../db/queries'
 
-/**
- * The console's read surface for CRM objects. §"Page migrations" ("Records gains
- * read only list endpoints for customers, contacts, follow-ups, tasks, and
- * schedules under a new `/api/crm` router").
- *
- * Two rules shape every route here:
- *
- * 1. **Parity with the tools, not a second policy.** Each list calls the same
- *    query function family in `src/db/queries.ts` that `crm.list_customers`,
- *    `crm.get_customer`, `crm.find_contacts`, `crm.list_followups`,
- *    `crm.list_tasks` and `crm.list_schedules` call, and the visibility
- *    predicates live there — including the parent-customer gate that child
- *    tables inherit, and the ownership fallback for the two tables whose
- *    `customer_id` is nullable. The tools themselves are not invoked: a tool call
- *    needs a model-run context (an `observe.span` and a request context record)
- *    that an HTTP read does not have. What is reused is the SQL gate, which is
- *    the part that must never diverge.
- * 2. **Read only, and it stays that way.** There is no write endpoint on this
- *    router. Every mutation goes through the agent's staging plus the approval
- *    queue (`§12.1`), so a POST here would be the governance bypass the product
- *    exists to prevent. That is also why the Records capture flow hands off to a
- *    chat instead of creating a row.
- *
- * Identity is resolved from the request, never from a query parameter or a body:
- * the caller's tenant and user come from the claims `console/middleware.ts`
- * injects, and `resolveIdentity` rejects anything incomplete with 401.
- */
 
 export interface CrmRouterDeps {
   env: CrumEnv
@@ -50,7 +22,6 @@ export interface CrmRouterDeps {
 
 const IdSchema = z.string().uuid()
 
-/** 25 is the console's page size; 100 is the ceiling one request may ask for. */
 const PageSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(25),
   offset: z.coerce.number().int().min(0).default(0),
@@ -62,8 +33,6 @@ function listBody<T>(result: ListResult<T>, page: ListPage) {
     total: result.total,
     limit: page.limit,
     offset: page.offset,
-    // Computed from the page actually returned, so a total that changed between
-    // the count and the read cannot promise a page that holds nothing.
     hasMore: page.offset + result.items.length < result.total,
   }
 }
@@ -85,7 +54,6 @@ export function createCrmRouter(deps: CrmRouterDeps): Hono {
     }
   }
 
-  /** Parsed page, or the 400 to return. */
   function page(c: Context): { value: ListPage } | { error: Response } {
     const parsed = PageSchema.safeParse({
       limit: c.req.query('limit'),
@@ -105,11 +73,6 @@ export function createCrmRouter(deps: CrmRouterDeps): Hono {
     return { value: parsed.data }
   }
 
-  /**
-   * An optional uuid filter. `null` means absent; a malformed value is a caller
-   * mistake (400) rather than a silent no-filter, because answering the unfiltered
-   * list to a typo'd id would look like "this customer has 400 contacts".
-   */
   function uuidFilter(
     c: Context,
     key: string,
@@ -152,14 +115,10 @@ export function createCrmRouter(deps: CrmRouterDeps): Hono {
 
     const id = IdSchema.safeParse(c.req.param('id'))
     if (!id.success) {
-      // 400 rather than letting the driver reject the uuid cast: the caller made
-      // a mistake here, the server did not fail.
       return c.json({ error: 'id must be a uuid' }, 400)
     }
 
     const customer = await queryCustomer(gate.identity, id.data)
-    // One body for "does not exist" and "exists but is not yours", the same way
-    // the signals route refuses to confirm another resource's ids.
     if (!customer) return c.json({ error: 'not_found' }, 404)
 
     return c.json({ customer })
@@ -223,14 +182,25 @@ export function createCrmRouter(deps: CrmRouterDeps): Hono {
 
     const date = c.req.query('date')?.trim() || undefined
     if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      // A full timestamp would be truncated by `::date` in the query, which is a
-      // silently different day for anyone west of UTC. Ask for the date.
       return c.json({ error: 'invalid_query', detail: 'date must be YYYY-MM-DD' }, 400)
+    }
+
+    const range: { from?: string; to?: string } = {}
+    for (const key of ['from', 'to'] as const) {
+      const value = c.req.query(key)?.trim()
+      if (value === undefined || value === '') continue
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+        return c.json({ error: 'invalid_query', detail: `${key} must be YYYY-MM-DD` }, 400)
+      }
+      range[key] = value
+    }
+    if (range.from && range.to && range.from > range.to) {
+      return c.json({ error: 'invalid_query', detail: 'from must not be after to' }, 400)
     }
 
     const result = await querySchedulesPage(
       gate.identity,
-      { customerId: customerId.value, date },
+      { customerId: customerId.value, date, from: range.from, to: range.to },
       paging.value,
     )
     return c.json(listBody(result, paging.value))

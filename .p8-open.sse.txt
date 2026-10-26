@@ -1,0 +1,547 @@
+﻿data: {"type":"start","messageId":"23e36d76-b9d0-4fb5-bbde-80b96a44b743"}
+
+data: {"type":"start-step"}
+
+data: {"type":"tool-input-start","toolCallId":"call_wdEWrYEt2hgcUGiMuQPKLdAg","toolName":"crm_my_open_items","dynamic":false}
+
+data: {"type":"tool-input-delta","toolCallId":"call_wdEWrYEt2hgcUGiMuQPKLdAg","inputTextDelta":"{\"li"}
+
+data: {"type":"tool-input-delta","toolCallId":"call_wdEWrYEt2hgcUGiMuQPKLdAg","inputTextDelta":"mit\":"}
+
+data: {"type":"tool-input-delta","toolCallId":"call_wdEWrYEt2hgcUGiMuQPKLdAg","inputTextDelta":" 100}"}
+
+data: {"type":"tool-input-available","toolCallId":"call_wdEWrYEt2hgcUGiMuQPKLdAg","toolName":"crm_my_open_items","input":{"limit":100},"providerMetadata":{"openrouter":{"reasoning_details":[]}}}
+
+data: {"type":"tool-output-available","toolCallId":"call_wdEWrYEt2hgcUGiMuQPKLdAg","output":{"tasks":[],"followups":[{"id":"c25fac32-ddd4-3b36-9dbc-9847d2ca6538","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"63d24e44-f62d-3067-b70e-bd629007a960","type":"call","status":"scheduled","scheduled_at":"2025-10-07T03:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"bebb55d5-d3b5-36ea-826f-48e682fbcb2f","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"5f46035f-f41a-34dc-8c8a-22943836aed3","type":"call","status":"scheduled","scheduled_at":"2025-10-07T03:00:00.000Z","completed_at":null,"notes":"Quoted pricing.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"75c0994d-0bae-3b1b-bebc-a5c79b30f610","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"bf68774b-3acf-3e9c-a39b-cbfd974faad7","type":"call","status":"missed","scheduled_at":"2025-10-07T06:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"4815c384-f684-3b7c-b1a1-2b9a550d0621","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"d8e3da23-75ad-37e2-9692-e7745edfb83d","type":"email","status":"scheduled","scheduled_at":"2025-10-07T08:00:00.000Z","completed_at":null,"notes":"Left voicemail.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"b3047e2b-a551-3b94-a42f-003ac903e00b","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"b08433a2-18b6-3887-b1e6-aef52f05ccc1","type":"email","status":"missed","scheduled_at":"2025-10-07T08:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"6f59564b-5923-3b58-9ae7-3a4ec10ca374","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"74241882-c3fa-37df-a473-e34dd8d9cc62","type":"email","status":"scheduled","scheduled_at":"2025-10-07T08:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"83f5579e-43e2-3c58-b0d1-08fc991a8cf7","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"dfeea2c4-0dce-3375-b2a1-a24eb137e915","type":"meeting","status":"missed","scheduled_at":"2025-10-07T09:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"8e6f18ee-5a75-30d4-a0a6-cf9f7d5820fc","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"51e359e2-5420-36ba-8416-524ace3b702f","type":"call","status":"scheduled","scheduled_at":"2025-10-07T10:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"7c9f62a0-80ba-3316-bcd1-6416fef4ad6d","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"07fb8f23-8bfb-3b64-8fc9-2d6c00b2c3f4","type":"email","status":"scheduled","scheduled_at":"2025-10-07T11:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"2a9fb2be-fc7b-3b02-b34f-e5102eb96715","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"4b53a2ca-8ebf-3156-8ee8-d57dbf8c6a9a","type":"call","status":"scheduled","scheduled_at":"2025-10-07T12:00:00.000Z","completed_at":null,"notes":"Checked delivery.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"a1ad73f1-5d9a-3f8b-a6ce-a525fb4eac43","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"c4609701-b0c9-360a-a298-862ce29526cb","type":"call","status":"missed","scheduled_at":"2025-10-07T13:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"044b70d8-b7b5-33a4-801f-0e5a29096811","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"257ade3a-4fc2-360d-984e-2bbda3f8bdb6","type":"call","status":"scheduled","scheduled_at":"2025-10-07T13:00:00.000Z","completed_at":null,"notes":"Quoted pricing.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"d9ff4a32-62d2-3687-b4c3-e951ffe8497b","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"38f9d498-9be5-3e48-9023-fdb9a02c1017","type":"call","status":"scheduled","scheduled_at":"2025-10-07T14:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"8e758b07-014f-3345-821a-6e043d59f4f8","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"fd71274f-8f11-3e34-9b81-1a5539d6ba03","type":"meeting","status":"missed","scheduled_at":"2025-10-07T15:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"f46562a7-83a8-363e-8e9c-e5fce4a6b178","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"f48252c7-4014-32fe-9608-bcf913887e08","type":"email","status":"scheduled","scheduled_at":"2025-10-07T16:00:00.000Z","completed_at":null,"notes":"Booked demo.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"cd58e271-556f-3d6b-82e9-6d9dd4a2d85f","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"f4d54467-c33a-302c-a8e5-77f0bf7e9f3e","type":"call","status":"scheduled","scheduled_at":"2025-10-07T16:00:00.000Z","completed_at":null,"notes":"Left voicemail.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"39112141-e180-315a-86f0-d1650eb603e1","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"b634f286-5c13-385f-a9c1-1c4f685f3d89","type":"email","status":"scheduled","scheduled_at":"2025-10-07T17:00:00.000Z","completed_at":null,"notes":"Discussed renewal.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"3803010c-4f7e-30c3-8503-d859f72b6615","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"80b5e5bd-42ad-3737-8926-520fdfa06a34","type":"call","status":"scheduled","scheduled_at":"2025-10-07T19:00:00.000Z","completed_at":null,"notes":"Left voicemail.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"6987300c-3669-3dd7-9e5a-0a51ce9f97bd","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"78f6c7d6-5acf-3380-b3fb-cc112256aa40","type":"call","status":"scheduled","scheduled_at":"2025-10-07T21:00:00.000Z","completed_at":null,"notes":"Quoted pricing.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"8d109257-bcad-3cb8-97e9-f84ebaf390c5","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"c3e85368-6f60-38af-8742-9f4c9bd1c31f","type":"meeting","status":"scheduled","scheduled_at":"2025-10-07T21:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"1278f787-5885-39a4-b9c2-f01a6c7f6583","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"f7023a70-568a-3cbf-9f9c-82f647098b26","type":"email","status":"missed","scheduled_at":"2025-10-07T23:00:00.000Z","completed_at":null,"notes":"Quoted pricing.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"bcf1edd6-0a4f-3ebe-8fb1-7a35efa4e610","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"8ad7bb14-f4e5-3c3f-bc71-ab042135e500","type":"email","status":"scheduled","scheduled_at":"2025-10-07T23:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"13d9e9d2-4828-37e4-8c7d-bd4753f06f7a","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"48c6370b-3617-303b-9235-c51977b50d50","type":"email","status":"scheduled","scheduled_at":"2025-10-08T01:00:00.000Z","completed_at":null,"notes":"Discussed renewal.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"84073108-fbe2-3123-bf64-826952b0048d","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"7fff2f7e-5370-3bbe-928b-6af71ba95be4","type":"visit","status":"scheduled","scheduled_at":"2025-10-08T02:00:00.000Z","completed_at":null,"notes":"Checked delivery.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"4b0a2d6b-6ea0-3123-b32b-2548ad41443a","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"bfc5fdd6-2f37-3004-aed3-6b89b8757728","type":"email","status":"scheduled","scheduled_at":"2025-10-08T05:00:00.000Z","completed_at":null,"notes":"Checked delivery.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"29eb4826-8d68-3aca-9749-9971785454f1","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"6ba2d632-4795-3e4f-8a2c-4d0921c80f9a","type":"call","status":"scheduled","scheduled_at":"2025-10-08T06:00:00.000Z","completed_at":null,"notes":"Left voicemail.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"05482fc6-2e07-31e9-b62d-bda2ba6fc4f1","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"f7023a70-568a-3cbf-9f9c-82f647098b26","type":"call","status":"scheduled","scheduled_at":"2025-10-08T07:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"819c10cb-bfab-3c0e-ae7b-f6ffb3c6cf99","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"470d5ae5-a77a-3c85-a99b-b4eecb2353e1","type":"email","status":"scheduled","scheduled_at":"2025-10-08T07:00:00.000Z","completed_at":null,"notes":"Booked demo.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"38d0928a-7f04-3235-a93b-56cdaf7f4e15","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"9884c84a-0340-366b-a1ef-7c490079d129","type":"call","status":"scheduled","scheduled_at":"2025-10-08T08:00:00.000Z","completed_at":null,"notes":"Left voicemail.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"50b5f5ac-47ee-3bfd-9685-148eb1cf9cb1","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"d4a9e52e-8b26-3891-a6db-8af5d3bd5ce0","type":"call","status":"scheduled","scheduled_at":"2025-10-08T08:00:00.000Z","completed_at":null,"notes":"Booked demo.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"644f4cac-58fc-35db-91d0-d7423bfe22ed","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"2ae602f4-f20a-3626-966d-751f3b4145e6","type":"meeting","status":"scheduled","scheduled_at":"2025-10-08T09:00:00.000Z","completed_at":null,"notes":"Discussed renewal.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"14656034-a480-3ba3-9443-a88d69789f47","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"4dddf67f-6603-37ec-ad6e-71c3eee7622c","type":"email","status":"scheduled","scheduled_at":"2025-10-08T09:00:00.000Z","completed_at":null,"notes":"Checked delivery.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"52188c7b-b86f-337e-9f10-b02193c022e1","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"8236d66c-a162-302c-9233-d527fc498af0","type":"call","status":"scheduled","scheduled_at":"2025-10-08T11:00:00.000Z","completed_at":null,"notes":"Left voicemail.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"808afbeb-4911-313f-894c-aa9c213c7dae","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"a17192de-52d7-30c7-871f-2955bf6deebc","type":"call","status":"missed","scheduled_at":"2025-10-08T11:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"5f7df279-8136-3496-888a-fcdb48c82b12","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"17b26010-dd9b-31c9-aa40-1c12a56b137d","type":"meeting","status":"scheduled","scheduled_at":"2025-10-08T12:00:00.000Z","completed_at":null,"notes":"Discussed renewal.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"bb28792f-9b70-3f9e-8576-4c14d1e1594f","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"5916c43e-392e-3efc-ac62-596ab9ea37d6","type":"call","status":"scheduled","scheduled_at":"2025-10-08T12:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"9172b55b-d1c6-3aa5-b4ca-e8be6d62f1d3","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"d3c72fd3-56f1-3ec5-bf78-06a8fdc39ec9","type":"email","status":"scheduled","scheduled_at":"2025-10-08T13:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"f6dfaf92-6af8-3213-82d8-1a445d03e0af","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"3206633d-a010-3c86-84b8-0971305cc40c","type":"visit","status":"scheduled","scheduled_at":"2025-10-08T14:00:00.000Z","completed_at":null,"notes":"Booked demo.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"61e64d4c-0761-382d-89fd-a2779367399d","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"6e5ebf3e-b71b-3922-9719-894f035ae152","type":"meeting","status":"missed","scheduled_at":"2025-10-08T15:00:00.000Z","completed_at":null,"notes":"Booked demo.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"e58f35ea-1ef6-336b-b77d-bdcaf2816e2e","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"ca2a38a9-e920-302e-b313-e97391ae1125","type":"email","status":"scheduled","scheduled_at":"2025-10-08T16:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"a0727a1c-3ac3-302c-be67-af168bea0813","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"c9f396ec-8ff0-3490-987d-9c97201e9570","type":"call","status":"scheduled","scheduled_at":"2025-10-08T18:00:00.000Z","completed_at":null,"notes":"Quoted pricing.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"f560f945-796c-3ca2-84df-cc74581f6764","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"07fb8f23-8bfb-3b64-8fc9-2d6c00b2c3f4","type":"call","status":"scheduled","scheduled_at":"2025-10-08T18:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"4e2df093-909a-311c-8e4e-7e5a22540a9c","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"76fa70b5-0752-310b-b0fd-c45d30b5a76e","type":"meeting","status":"missed","scheduled_at":"2025-10-08T18:00:00.000Z","completed_at":null,"notes":"Quoted pricing.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"e93b531e-2dd5-3fd1-9fce-63ff79199a83","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"238abeba-8b3a-38bc-90fc-65071e26e025","type":"call","status":"missed","scheduled_at":"2025-10-08T22:00:00.000Z","completed_at":null,"notes":"Checked delivery.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"d469c6a0-0828-3f1e-87e1-e4a92970f641","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"eef98193-cfff-3c85-9d8f-a5e9d427c7fc","type":"call","status":"missed","scheduled_at":"2025-10-08T22:00:00.000Z","completed_at":null,"notes":"Left voicemail.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"9ede1e52-df18-3c65-946e-2b8341031cfc","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"7bea718d-c665-345c-a293-56f7ed3c03b9","type":"email","status":"missed","scheduled_at":"2025-10-08T23:00:00.000Z","completed_at":null,"notes":"Left voicemail.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"bc55d4aa-db7c-331d-a82a-f1879689023a","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"642895e2-3a6f-3693-b26c-736db35cbea1","type":"meeting","status":"scheduled","scheduled_at":"2025-10-09T01:00:00.000Z","completed_at":null,"notes":"Booked demo.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"cb0f90a5-5bbe-3c4c-9234-8b03d5d76488","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"c913aed8-3a91-39ee-8848-5e9870a6a4be","type":"email","status":"missed","scheduled_at":"2025-10-09T05:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"b6c0ac1d-0d63-3d05-9337-6e3da9ea1d12","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"8a286f67-b7be-3ca2-b61a-7b70bf5a4a73","type":"email","status":"missed","scheduled_at":"2025-10-09T07:00:00.000Z","completed_at":null,"notes":"Left voicemail.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"2252abdf-db01-3c90-a37f-b270c11fa1d0","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"3f7c5d30-8ac7-36e1-b30b-b4d3b3f3069f","type":"call","status":"scheduled","scheduled_at":"2025-10-09T08:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"1972862a-41c6-35f5-8684-d048d1ffd30b","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"ce0f62cb-804e-3595-bc2e-349a80deb603","type":"visit","status":"missed","scheduled_at":"2025-10-09T09:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"79c1cd46-c8ec-3535-96ba-c87d30ef3769","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"68870f74-98a6-3270-b065-b02e397cf02d","type":"call","status":"missed","scheduled_at":"2025-10-09T09:00:00.000Z","completed_at":null,"notes":"Quoted pricing.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"b1922231-01ec-3a37-b9f6-d9b61aa04c56","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"e8db34bf-d1ee-38c3-8853-9fbcc2ba5469","type":"call","status":"scheduled","scheduled_at":"2025-10-09T11:00:00.000Z","completed_at":null,"notes":"Quoted pricing.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"c355b68d-58e9-310b-92ca-f087465af510","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"cc22c2ea-3670-3efe-8af0-fa0277c8bc1e","type":"call","status":"scheduled","scheduled_at":"2025-10-09T12:00:00.000Z","completed_at":null,"notes":"Booked demo.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"320b7e1f-1aeb-3680-9473-d10b739f9dd1","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"34d3ca84-3510-3908-8db7-d5fa88a7164e","type":"visit","status":"scheduled","scheduled_at":"2025-10-09T12:00:00.000Z","completed_at":null,"notes":"Discussed renewal.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"e0be0002-0103-3c86-8e26-f2780f1beb2d","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"6f419867-d766-39c0-97e2-19403d601e43","type":"call","status":"scheduled","scheduled_at":"2025-10-09T14:00:00.000Z","completed_at":null,"notes":"Quoted pricing.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"867bb942-9ff5-3bf0-90c5-be236a8868d5","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"75414420-5aa6-3542-a52f-870781153e5e","type":"email","status":"scheduled","scheduled_at":"2025-10-09T16:00:00.000Z","completed_at":null,"notes":"Discussed renewal.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"4f6e8eb8-7cfb-3543-a312-aae54a61dc6c","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"f94ebab5-22e5-38ab-9959-dec28fb10cef","type":"visit","status":"scheduled","scheduled_at":"2025-10-09T16:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"89114a6f-3d63-3dd2-b361-5493815626ca","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"dc237f7e-a93a-35b2-9e95-6597e5f4b1b5","type":"email","status":"scheduled","scheduled_at":"2025-10-09T17:00:00.000Z","completed_at":null,"notes":"Left voicemail.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"dca0aa94-fd26-3a99-b5ef-678d80821d50","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"05185b3b-5d71-39f8-9a9e-267c0ff28826","type":"email","status":"scheduled","scheduled_at":"2025-10-09T18:00:00.000Z","completed_at":null,"notes":"Quoted pricing.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"a0a9c277-c0f1-38ea-99e8-6c817672ba9e","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"0baf4c10-e6ee-310e-a2d5-502812dbb590","type":"email","status":"scheduled","scheduled_at":"2025-10-09T19:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"5d9fc7fa-232e-3919-9ff0-ce095bb042bf","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"a66828b9-56b7-3e22-8cef-8d7b9a82ccf8","type":"call","status":"scheduled","scheduled_at":"2025-10-09T20:00:00.000Z","completed_at":null,"notes":"Left voicemail.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"3f0cd824-c6ee-37bd-a5fd-14e72ba1f3e3","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"92d0c75c-0b09-3262-8714-6986b80af895","type":"call","status":"scheduled","scheduled_at":"2025-10-09T21:00:00.000Z","completed_at":null,"notes":"Booked demo.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"49c48384-97fe-3e1d-9303-35c872ef0fb2","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"e71c694b-1e04-30af-8dec-25b7f6ecd03c","type":"call","status":"scheduled","scheduled_at":"2025-10-09T21:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"a8b689d6-f961-318e-bb69-9f826a811b16","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"d9b2239c-9615-3346-a5fe-0a7479dc7043","type":"call","status":"scheduled","scheduled_at":"2025-10-09T22:00:00.000Z","completed_at":null,"notes":"Left voicemail.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"e9c20fde-5d9c-370a-bdd3-4ca52f2e1781","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"331726ab-4bf1-3b13-8719-0f227ccf379f","type":"call","status":"scheduled","scheduled_at":"2025-10-10T01:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"d6b12212-7983-3ae5-9944-364fc3085ab8","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"57b6eb80-7fe9-364d-91f5-a788af2b5ac6","type":"call","status":"scheduled","scheduled_at":"2025-10-10T04:00:00.000Z","completed_at":null,"notes":"Discussed renewal.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"76b57542-7102-32d6-9a49-41cfde646f6d","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"be0ee36a-97d6-32ad-97ba-cc5d660b97bc","type":"meeting","status":"scheduled","scheduled_at":"2025-10-10T04:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"ef726615-b055-3886-8da4-168fdd5583cf","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"16ec03b3-e4ac-39d8-b138-f4972645c44b","type":"call","status":"scheduled","scheduled_at":"2025-10-10T05:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"d8a6da8e-644e-3466-891b-39573dd6a31f","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"ce929f63-27b6-310d-9e39-da850bee463b","type":"email","status":"scheduled","scheduled_at":"2025-10-10T06:00:00.000Z","completed_at":null,"notes":"Booked demo.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"a6ff83dd-3ff4-387f-9771-6d4e970d080a","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"d6afd7ce-2a7a-338b-a6d1-8aba7ecc92d5","type":"call","status":"missed","scheduled_at":"2025-10-10T09:00:00.000Z","completed_at":null,"notes":"Discussed renewal.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"feacba7e-61ad-388e-9d7a-86bad45ec066","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"0f978c71-d12f-3c8b-9ec5-3608c0bf9b9d","type":"meeting","status":"missed","scheduled_at":"2025-10-10T10:00:00.000Z","completed_at":null,"notes":"Booked demo.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"8021e55b-6049-372e-ae2a-b8bc44a49fd8","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"13cf2635-89a9-3e18-aadb-58ea61667386","type":"call","status":"scheduled","scheduled_at":"2025-10-10T11:00:00.000Z","completed_at":null,"notes":"Quoted pricing.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"577406c7-07f7-330b-8c49-d74353b4816f","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"4447d653-75b7-32d2-9caa-f6b0c468a5c2","type":"call","status":"scheduled","scheduled_at":"2025-10-10T11:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"6de07152-4b8f-3804-b131-021b0896d580","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"a01fdda9-5957-32e4-8410-40ee89efa0e2","type":"call","status":"scheduled","scheduled_at":"2025-10-10T11:00:00.000Z","completed_at":null,"notes":"Left voicemail.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"3bbbb477-3ba8-3b60-9929-81de38e3cae5","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"a0a58789-1811-3812-9d79-7972ed186d71","type":"meeting","status":"scheduled","scheduled_at":"2025-10-10T14:00:00.000Z","completed_at":null,"notes":"Checked delivery.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"7988a5fd-5cc9-3df6-ab3e-88017f81a50c","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"8f0f4c53-a936-3ab3-97b3-4d2e4a2885de","type":"call","status":"scheduled","scheduled_at":"2025-10-10T15:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"16e7e85c-2dd3-3a14-b33d-d40819f1bca3","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"1e1ea3fd-ebda-3f1f-b5a5-11b1cd4c7f87","type":"meeting","status":"scheduled","scheduled_at":"2025-10-10T15:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"eeb17990-44be-3b3b-8d86-a2b9df3d337b","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"3aaeb99d-96d4-3b7e-8a4e-bcea6aac3739","type":"email","status":"scheduled","scheduled_at":"2025-10-10T17:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"ff0c602a-c079-3159-9f13-d8eb7f81ee25","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"0a002420-f60d-3325-aed3-f6831e55b82b","type":"call","status":"scheduled","scheduled_at":"2025-10-10T17:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"b3def682-6d31-3304-9794-0ebe3e2402b7","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"96b075d2-887f-3234-83f4-4422c19db4d7","type":"email","status":"scheduled","scheduled_at":"2025-10-10T19:00:00.000Z","completed_at":null,"notes":"Quoted pricing.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"2bb291e2-777e-340e-bf8e-49ead26b1dcb","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"72a3b5eb-9b75-31e5-a340-a03b5eb9b3fd","type":"meeting","status":"missed","scheduled_at":"2025-10-10T19:00:00.000Z","completed_at":null,"notes":"Discussed renewal.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"dac998be-2167-3764-b222-c7518b912815","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"4273f082-3d99-397d-83f7-a357a6a43cd9","type":"meeting","status":"scheduled","scheduled_at":"2025-10-10T22:00:00.000Z","completed_at":null,"notes":"Left voicemail.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"22d0ad5b-4da7-3b51-920e-c98ada8b1bde","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"3be8de1f-bf66-3ec5-a83c-1ed83da318e0","type":"call","status":"scheduled","scheduled_at":"2025-10-10T23:00:00.000Z","completed_at":null,"notes":"Discussed renewal.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"c2735bc4-38cb-3838-a37a-3ff9ec54676e","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"4be4bbbc-d732-3e8f-9d81-18675f54640d","type":"call","status":"scheduled","scheduled_at":"2025-10-10T23:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"8ffe68fa-7f65-3f69-939c-d9ab0768b3ab","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"0a4f2e82-cba9-3f8e-a400-2e7aecaabb49","type":"email","status":"scheduled","scheduled_at":"2025-10-11T01:00:00.000Z","completed_at":null,"notes":"Booked demo.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"9339fa6f-689e-36a1-99b1-bb813724c64f","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"98df9d2e-00f7-3d37-a208-bad6c75b94bf","type":"email","status":"scheduled","scheduled_at":"2025-10-11T01:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"45c761a1-8c01-37c7-ac47-6a620f3c6483","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"684947b3-bb9d-3443-907c-95a673bd2e61","type":"visit","status":"scheduled","scheduled_at":"2025-10-11T01:00:00.000Z","completed_at":null,"notes":"Booked demo.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"a7aae7c9-5dea-3123-9000-d1392caa3bd5","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"ae8bdab5-521f-3326-8da3-6920bd9395c2","type":"call","status":"scheduled","scheduled_at":"2025-10-11T01:00:00.000Z","completed_at":null,"notes":"Left voicemail.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"654bfb17-87b3-3dd7-b56f-74488b68fbce","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"ef281f42-7fc7-38f9-ba46-4b4ceedce9de","type":"call","status":"scheduled","scheduled_at":"2025-10-11T02:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"8efc4409-d85a-36af-a2bb-714c8f35bb20","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"79874e89-8308-3c31-bdf9-f7a6b2aa15d9","type":"meeting","status":"missed","scheduled_at":"2025-10-11T04:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"532f236e-cac7-326c-8714-a4a85ab0a244","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"67b2a077-d788-32ba-a363-fe8157d73417","type":"call","status":"scheduled","scheduled_at":"2025-10-11T05:00:00.000Z","completed_at":null,"notes":"Booked demo.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"b9a0c2fa-4c14-3c63-b6f1-0711fef4eb9a","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"25be58e5-a06a-38af-a88c-5911c48377aa","type":"meeting","status":"missed","scheduled_at":"2025-10-11T06:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"37cc821c-4b76-361b-9e26-1c3c005639fa","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"1b68e283-cbdb-372f-a64c-aecad053cbb4","type":"call","status":"scheduled","scheduled_at":"2025-10-11T06:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"211d2225-a701-3acb-bee3-b15514adf733","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"0abfe7ea-be7f-300e-bc4f-57f5957efbdf","type":"call","status":"scheduled","scheduled_at":"2025-10-11T07:00:00.000Z","completed_at":null,"notes":"Left voicemail.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"5423b70b-cb1b-3c6c-b0f5-269be9959c47","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"b634f286-5c13-385f-a9c1-1c4f685f3d89","type":"meeting","status":"scheduled","scheduled_at":"2025-10-11T07:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"5bf76785-77f4-3280-815d-a5c4a4ae11e9","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"16079e75-2dbe-3e59-b480-e399bed6c6e6","type":"call","status":"scheduled","scheduled_at":"2025-10-11T08:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"a47d1a0b-0b35-34e8-bf67-481abfe11016","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"99d49afd-97be-359d-9ca9-bb3abcd74428","type":"call","status":"scheduled","scheduled_at":"2025-10-11T08:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"fa9fd134-c55d-3467-9766-602a2bac7c0e","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"2b14c74d-6f7c-3761-8a7f-d263479fa7d1","type":"email","status":"scheduled","scheduled_at":"2025-10-11T09:00:00.000Z","completed_at":null,"notes":null,"owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"},{"id":"85cf04a2-1949-38ec-a2d2-9a7b26c46764","tenant_id":"4fc9d503-7095-38fb-8bc9-f01dbdffe5f2","customer_id":"d9ba445e-95fc-37b4-8fef-da478b8b263e","type":"call","status":"scheduled","scheduled_at":"2025-10-11T10:00:00.000Z","completed_at":null,"notes":"Quoted pricing.","owner_id":"97fb4fe1-83ed-311b-9c66-80dd388fff3b","created_at":"2026-10-26T04:12:03.668Z","updated_at":"2026-10-26T04:12:03.668Z"}]},"providerMetadata":{"openrouter":{"reasoning_details":[]}}}
+
+data: {"type":"finish-step"}
+
+data: {"type":"start-step"}
+
+data: {"type":"text-start","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"Here"}
+
+: heartbeat
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" are"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" your"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" overdue"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" follow"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"-ups"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":":\n\n"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"###"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" Over"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"due"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" Follow"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"-U"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"ps"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"\n"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"|"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" ID"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"                                   "}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" |"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" Type"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"   "}
+
+: heartbeat
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" |"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" Scheduled"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" At"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"          "}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" |"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" Notes"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"             "}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" |\n"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"|"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"--------------------------------"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"-------"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"|"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"---------"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"|"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"----------------"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"--------"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"|"}
+
+: heartbeat
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"----------------"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"-----"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"|\n"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"|"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" c"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"25"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"fac"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"32"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"-dd"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"d"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"4"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"-"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"3"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"b"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"36"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"-"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"9"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"dbc"}
+
+: heartbeat
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"-"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"984"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"7"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"d"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"2"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"ca"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"653"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"8"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" |"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" Call"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"   "}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" |"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" "}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"202"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"5"}
+
+: heartbeat
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"-"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"10"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"-"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"07"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" "}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"03"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":":"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"00"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":":"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"00"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" UTC"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" |"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" ("}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"no"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" notes"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":")"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"         "}
+
+: heartbeat
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" |\n"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"|"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" be"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"bb"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"55"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"d"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"5"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"-d"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"3"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"b"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"5"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"-"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"36"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"ea"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"-"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"826"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"f"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"-"}
+
+: heartbeat
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"48"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"e"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"682"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"fb"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"cb"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"2"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"f"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" |"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" Call"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"   "}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" |"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" "}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"202"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"5"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"-"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"10"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"-"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"07"}
+
+: heartbeat
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" "}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"03"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":":"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"00"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":":"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"00"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" UTC"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" |"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" Qu"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"oted"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" pricing"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"."}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"    "}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" |\n"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"|"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" "}
+
+: heartbeat
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"75"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"c"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"099"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"4"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"d"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"-"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"0"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"bae"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"-"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"3"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"b"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"1"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"b"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"-b"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"eb"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"c"}
+
+: heartbeat
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"-a"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"5"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"c"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"79"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"b"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"30"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"f"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"610"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" |"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" Call"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"   "}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" |"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" "}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"202"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"5"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"-"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"10"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"-"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"07"}
+
+: heartbeat
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" "}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"06"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":":"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"00"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":":"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"00"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" UTC"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" |"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" ("}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"no"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" notes"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":")"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"         "}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" |\n"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"|"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" "}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"481"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"5"}
+
+: heartbeat
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"c"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"384"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"-f"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"684"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"-"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"3"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"b"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"7"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"c"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"-b"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"1"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"a"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"1"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"-"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"2"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"b"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"9"}
+
+: heartbeat
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"a"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"550"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"d"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"062"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"1"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" |"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" Email"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"  "}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" |"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" "}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"202"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"5"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"-"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"10"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"-"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"07"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" "}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"08"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":":"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"00"}
+
+: heartbeat
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":":"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"00"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" UTC"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" |"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" Left"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" voicemail"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"."}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"    "}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" |\n"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"|"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":" b"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"304"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"7"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"e"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"2"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"b"}
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"-a"}
+
+: heartbeat
+
+data: {"type":"text-delta","id":"gen-1793030383-HBHZapkYLoW8E2m2XyM9","delta":"551"}
+
+Internal Server Error

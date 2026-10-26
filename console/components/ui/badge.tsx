@@ -4,11 +4,6 @@ import { cva, type VariantProps } from 'class-variance-authority'
 
 import { cn } from '@/lib/utils'
 
-/**
- * shadcn/ui `badge` (new-york), adapted to CRUM tokens. Variants map onto the
- * same decision/neutral/state colours the legacy `.status-pill` rules use so a
- * badge and a pill read identically.
- */
 const badgeVariants = cva(
   'inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden whitespace-nowrap rounded-full border border-transparent px-2 py-0.5 text-xs font-medium transition-[color,box-shadow] outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base [&>svg]:pointer-events-none [&>svg]:size-3',
   {

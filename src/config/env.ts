@@ -1,6 +1,5 @@
 import { z } from 'zod'
 
-/** Raised for a malformed environment. Carries the Zod issues for the log line. */
 export class EnvParseError extends Error {
   readonly issues: unknown[]
 
@@ -11,53 +10,17 @@ export class EnvParseError extends Error {
   }
 }
 
-/**
- * An empty string in a dotenv file means unset, not "the empty string".
- *
- * `.optional()` has to wrap the whole pipeline, not sit at the end of the pipe.
- * A bare `z.string()` rejects an absent key outright — `parseEnv({})` threw
- * "POLICY_DIR: Invalid input: expected string, received undefined" on all five
- * optional-string fields, which is every test that passes an exact environment.
- * The `.pipe(z.string().min(1))` the plan had here was also dead weight: the
- * transform has already turned `''` and whitespace-only values into `undefined`,
- * so nothing that reaches `min(1)` can be shorter than one character.
- */
 const optionalString = z
   .string()
   .transform((v) => (v.trim() === '' ? undefined : v))
   .optional()
 
-/** A secret used for HMAC signing. §12.3 and §10.3.3 both require >= 32 bytes. */
 const hmacSecret = z.string().min(32, 'must be at least 32 bytes').optional()
 
-/**
- * Dotenv booleans. Callers must default this with `.prefault(...)`, NOT
- * `.default(...)`.
- *
- * Zod 4 split the two: `.default(x)` supplies a default **output** and skips
- * parsing, and its parameter is typed against the output; `.prefault(x)`
- * supplies a default **input** and runs it through the schema normally. Under
- * Zod 3 `.default('false')` was the input form, which is what the plan text
- * assumed. Here the input type is the enum and the output type is `boolean`, so
- * `.default('false')` is a compile error (TS2769) and, if forced through, hands
- * back the *string* `'false'` — which is truthy. `MASTRA_OBSERVABILITY` would
- * then read as enabled on every default boot, the exact opposite of the
- * documented "off by default so tests pay nothing". Verified by probe: absent
- * key yields `"false"` (string) under `.default`, and `false` (boolean) under
- * both `.prefault('false')` and `.default(false)`. `.prefault` is used so the
- * default travels the same transform as a real value, keeping one definition of
- * what counts as truthy.
- */
 const booleanish = z
   .enum(['true', 'false', '1', '0'])
   .transform((v) => v === 'true' || v === '1')
 
-/**
- * Supabase's session-mode pooler caps total clients at 15 by default. Mastra
- * opens a writer pool and, when `readPool` is unset, falls back to it for reads,
- * so PostgresStoreVNext holds 2 pools: primary and observability. 2 x 7 = 14 is
- * the highest safe per-pool cap. §9.1 and §14.3.
- */
 export const POOL_COUNT = 2
 export const SUPABASE_POOL_SIZE = 15
 export const MAX_POOL_PER_CONN = Math.floor(SUPABASE_POOL_SIZE / POOL_COUNT)
@@ -65,76 +28,25 @@ export const MAX_POOL_PER_CONN = Math.floor(SUPABASE_POOL_SIZE / POOL_COUNT)
 export const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
 
-  // Required in production, optional elsewhere so the stack boots in-memory.
   DATABASE_URL: optionalString,
-  /**
-   * Where observability spans, logs, metrics, scores and feedback are written.
-   * PostgresStoreVNext requires an observability connection and will not
-   * implicitly share the primary one (@mastra/pg dist/storage/index.d.ts:104).
-   * Unset falls back to DATABASE_URL and accepts the runtime warning the
-   * adapter logs on every construction. Point this at a separate database
-   * before enabling MASTRA_OBSERVABILITY in production. §9.1, §14.3.
-   */
   OBSERVABILITY_DATABASE_URL: optionalString,
   OPENROUTER_API_KEY: optionalString,
   APPROVAL_HMAC_SECRET: hmacSecret,
   MCP_REQUEST_STATE_KEY: hmacSecret,
   SUPABASE_URL: optionalString,
   SUPABASE_SERVICE_ROLE_KEY: optionalString,
-  /**
-   * Where Supabase publishes its signing keys. Only read in `jwt` auth mode;
-   * `parseEnv` still accepts it here so `.env.example is the contract` and
-   * `DEFERRED_ENV_VARS` stop special-casing it. §13.2.
-   */
   SUPABASE_JWKS_URL: optionalString,
 
-  // Wave 1A: identity and model selection (§13.2, §4.3.1)
-  /**
-   * How the server derives a `TenantRequestContext` for a request.
-   * - `dev`: trust the `x-tenant-id`/`x-user-id`/`x-user-role` headers. Never
-   *   allowed in production — `parseEnv` throws on `production + dev` so a
-   *   misconfigured deploy cannot accept spoofable identity claims.
-   * - `jwt`: verify the `Authorization: Bearer` token against `SUPABASE_JWKS_URL`
-   *   and derive claims from the verified payload, ignoring browser headers.
-   */
   CRUM_AUTH_MODE: z.enum(['dev', 'jwt']).default('dev'),
   CRUM_MODEL_MAIN: optionalString,
   CRUM_MODEL_LIGHT: optionalString,
-  /** The Mastra HTTP server port (chat route + Studio). */
   CRUM_API_PORT: z.coerce.number().int().min(1).max(65535).default(4111),
-  /**
-   * The interface the Mastra HTTP server binds. Unset keeps the framework
-   * default (loopback on a developer machine). A container sets `0.0.0.0` so the
-   * console service can reach `http://api:4111` over the Compose network; a
-   * loopback-only bind is invisible across the container boundary.
-   */
   CRUM_API_HOST: optionalString,
-  /**
-   * The hand-rolled Hono REST plane (`/api/*`: approvals, knowledge, signals,
-   * agent threads). It cannot live on `CRUM_API_PORT` because Mastra reserves the
-   * `/api` prefix for its own routes, and `registerApiRoute` documents `:param`
-   * only — no splat — so it cannot host `/api/*` at all (§10.2).
-   *
-   * Served by `src/api/serve.ts`, which `src/mastra/boot.ts` starts in the same
-   * process as the registry: an `AgentController` session lives in the process that
-   * owns the live run, so a REST plane in another process could list threads from
-   * storage but never see the run a signal is meant to reach.
-   */
   CRUM_REST_PORT: z.coerce.number().int().min(1).max(65535).default(4113),
-  /**
-   * The interface the REST plane binds. Unset keeps the current loopback default
-   * (`127.0.0.1`). A container sets `0.0.0.0` so the console service's server-side
-   * rewrite of `/api/*` reaches `http://api:4113` across the Compose network.
-   */
   CRUM_REST_HOST: optionalString,
 
-  // Mastra runtime (§13.3)
   MASTRA_OBSERVABILITY: booleanish.prefault('false'),
   MASTRA_TRACE_PROBABILITY: z.coerce.number().min(0).max(1).default(1),
-  // "Unset means auto" (§9.1, .env.example). Dotenv turns `MASTRA_PG_SSL=` into
-  // the empty string, not an absent key, so `.optional()` alone would reject it
-  // with `invalid_value`. Accept `""` explicitly and collapse it to `undefined`
-  // so downstream callers only see `'true' | 'false' | undefined`.
   MASTRA_PG_SSL: z
     .enum(['true', 'false', ''])
     .transform((v) => (v === '' ? undefined : v))
@@ -147,22 +59,18 @@ export const EnvSchema = z.object({
     .default(4),
   MASTRA_DB_DISABLE_INIT: booleanish.prefault('true'),
 
-  // Governance (§13.4)
   POLICY_DIR: optionalString,
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).default(120),
   RATE_LIMIT_WINDOW_SECONDS: z.coerce.number().int().min(1).default(60),
 
-  // Phase 4: RAG embeddings (§6.4)
   EMBEDDING_MODEL_ID: optionalString,
   EMBEDDING_DIMENSIONS: z.coerce.number().int().min(1).optional(),
   EMBEDDING_BASE_URL: optionalString,
   EMBEDDING_API_KEY: optionalString,
 
-  // Phase 5: classification decision model (§6.5.2)
   TYPESAFE_AI_API_KEY: optionalString,
   TYPESAFE_AI_BASE_URL: optionalString,
 
-  // Phase 6: evals judge configuration (§6.5)
   JUDGE_PROVIDER: optionalString,
   JUDGE_MODEL: optionalString,
   JEV_API_KEY: optionalString,
@@ -173,12 +81,8 @@ export const EnvSchema = z.object({
   EVAL_EXPERIMENT_TIMEOUT_MS: z.coerce.number().int().min(1000).default(120_000),
   MASTRA_AUTO_REFRESH_PRICING: booleanish.prefault('false'),
 
-  // Phase 6: digest schedule (§9)
   CRUM_DIGEST_CRON: optionalString,
 
-  // Gmail connector. OAuth client credentials from Google Cloud Console; the
-  // redirect URI must exactly match one registered on the client. Absent, the
-  // /gmail/connect route refuses to start a flow (fail open to safe).
   GMAIL_OAUTH_CLIENT_ID: optionalString,
   GMAIL_OAUTH_CLIENT_SECRET: optionalString,
   GMAIL_REDIRECT_URI: optionalString,
@@ -186,11 +90,6 @@ export const EnvSchema = z.object({
 
 export type CrumEnv = z.infer<typeof EnvSchema>
 
-/**
- * Variables documented in .env.example that Phase 0 does not read yet. Each is
- * mapped to the phase that will. tests/config/env.test.ts fails if a documented
- * variable is neither parsed nor listed here, so this map cannot rot quietly.
- */
 export const DEFERRED_ENV_VARS: Readonly<Record<string, number>> = {
   SUPABASE_JWT_ISSUER: 1,
   SUPABASE_JWT_AUDIENCE: 1,
@@ -216,12 +115,6 @@ export const DEFERRED_ENV_VARS: Readonly<Record<string, number>> = {
   TRUSTED_PROXY_IPS: 5,
 }
 
-/**
- * Secrets whose absence in production is a deployment defect rather than a
- * degraded feature. §13.8: CRUM fails open to safe everywhere except identity
- * and continuation signing, because both guard properties that cannot be
- * verified at request time.
- */
 export const PRODUCTION_REQUIRED_SECRETS: readonly string[] = [
   'DATABASE_URL',
   'OPENROUTER_API_KEY',
@@ -235,9 +128,6 @@ export function parseEnv(raw: NodeJS.ProcessEnv = process.env): CrumEnv {
   const result = EnvSchema.safeParse(raw)
   if (result.success) {
     const env = result.data
-    // §13.2 / §13.8: the `dev` mode trusts spoofable browser headers, so a
-    // production process must never run it. Fail at boot rather than at the
-    // first request that carries a forged x-user-id.
     if (env.NODE_ENV === 'production' && env.CRUM_AUTH_MODE === 'dev') {
       throw new EnvParseError(
         'CRUM_AUTH_MODE cannot be "dev" in production: it trusts the ' +
@@ -259,21 +149,6 @@ export function isProduction(env: CrumEnv): boolean {
   return env.NODE_ENV === 'production'
 }
 
-/**
- * Names of production-required secrets that are absent or empty.
- *
- * Deliberately unconditional: this reports the facts and the caller decides what
- * they mean. `isProduction(env) && missingProductionSecrets(env).length > 0` is
- * the deployment defect; a non-empty result on its own is not, because a local
- * run without Supabase credentials is a supported configuration rather than a
- * broken one (§14.4) and still needs an accurate list to log. Folding the
- * NODE_ENV check in here would make the development case return `[]` and leave
- * the caller unable to tell "all present" from "not production, did not look".
- *
- * Length is not checked here. `hmacSecret` already rejects anything under 32
- * bytes during `parseEnv`, so a `CrumEnv` cannot hold a short HMAC secret — by
- * the time this runs, "too short" is unreachable and only absence remains.
- */
 export function missingProductionSecrets(env: CrumEnv): string[] {
   return PRODUCTION_REQUIRED_SECRETS.filter((name) => {
     const value = env[name as keyof CrumEnv]

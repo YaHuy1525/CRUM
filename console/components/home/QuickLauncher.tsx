@@ -3,15 +3,6 @@
 import Link from 'next/link'
 import { BarChart3, BookOpen, ClipboardType, MessageSquarePlus, type LucideIcon } from 'lucide-react'
 
-/**
- * The quick launcher row. §"Route map": "A quick launcher row offers New chat,
- * Capture from text, Knowledge, and Usage."
- *
- * A four item nav rather than buttons, because every one of them is a route: no
- * launcher mints state, opens a dialog, or does work on the way. Usage is here
- * on purpose — it is not in the sidebar, so Home is the only way in besides the
- * URL (`§"Route map"`, `/usage`).
- */
 
 const LAUNCHERS: { href: string; label: string; detail: string; icon: LucideIcon }[] = [
   {

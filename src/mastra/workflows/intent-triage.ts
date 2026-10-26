@@ -4,35 +4,11 @@ import type { StandardSchemaWithJSON } from '@mastra/core/schema'
 import { z } from 'zod'
 import { intentClassifier } from '../classifiers/intent'
 
-/**
- * §6.5.6 — Intent triage workflow.
- *
- * Routes user messages into schedule/task/clarify paths based on the
- * intentClassifier's two questions. The workflow form is fail-closed (opposite
- * of the processor's warn): a triage workflow that cannot triage has nothing
- * useful to do.
- *
- * Three branches:
- * - schedule: intent.choice === 'schedule' && hasTimeRange is a boolean answer
- *   with probability > 0.7
- * - task: intent.choice === 'task'
- * - clarify: everything else (including 'other' and all refusals)
- *
- * `.classifier()` does not apply fail-open behaviour. Classifier errors fail
- * the step. This is why the injection guard is a processor and the intent
- * router is a workflow step (§6.5.6).
- */
 
 const workflowInputSchema = z.object({ message: z.string() })
 
 type TriageClassifierOutput = ClassifierStepOutput<typeof intentClassifier.questions>
 
-/**
- * `.branch()` types every target step's input as the classifier step's output,
- * which is `{ answers, usage }` — never the workflow's own input. `satisfies`
- * pins this schema to the classifier's inferred answer types so a question
- * change breaks the build here instead of at run time.
- */
 const classifierOutputSchema = z
   .object({
     answers: z.object({
@@ -60,9 +36,6 @@ const branchOutputSchema = z.object({
   message: z.string(),
 })
 
-// Mastra types ExecuteFunction / ConditionFunction as Promise-returning, so a step
-// or branch with nothing to await returns Promise.resolve(...) explicitly instead
-// of being declared `async` with no await inside it.
 const scheduleStep = createStep({
   id: 'schedule-action',
   inputSchema: classifierOutputSchema,

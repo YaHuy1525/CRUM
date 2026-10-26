@@ -20,6 +20,10 @@ const READ_ONLY_TOOLS = [
   'crm.search',
   'knowledge.retrieve',
   'mail.search_threads',
+  'doc.list_documents',
+  'doc.get_invoice',
+  'doc.get_contract',
+  'doc.sum_invoices',
 ]
 
 // Auto-class low-blast-radius writes: active for every role.
@@ -42,19 +46,19 @@ const APPROVAL_TOOLS = [
 //  - crm.bulk_import: refuse class → routed to a human task (§4.6.1).
 const NEVER_CALLABLE = ['run.side-effect', 'crm.bulk_import']
 
-const USER_EXPECTED = [...READ_ONLY_TOOLS, ...AUTO_TOOLS] // 13
-const ADMIN_EXPECTED = [...READ_ONLY_TOOLS, ...AUTO_TOOLS, ...APPROVAL_TOOLS] // 20
+const USER_EXPECTED = [...READ_ONLY_TOOLS, ...AUTO_TOOLS] // 17
+const ADMIN_EXPECTED = [...READ_ONLY_TOOLS, ...AUTO_TOOLS, ...APPROVAL_TOOLS] // 24
 
 describe('resolveActiveTools', () => {
-  it('gives a non-admin the read-only + auto tools (13)', () => {
+  it('gives a non-admin the read-only + auto tools (17)', () => {
     const active = resolveActiveTools(baseContext)
-    expect(active).toHaveLength(13)
+    expect(active).toHaveLength(17)
     expect(active.slice().sort()).toEqual(USER_EXPECTED.slice().sort())
   })
 
-  it('gives an admin the approval-class writes too (20)', () => {
+  it('gives an admin the approval-class writes too (24)', () => {
     const active = resolveActiveTools({ ...baseContext, userRole: 'admin' })
-    expect(active).toHaveLength(20)
+    expect(active).toHaveLength(24)
     expect(active.slice().sort()).toEqual(ADMIN_EXPECTED.slice().sort())
   })
 
@@ -79,7 +83,7 @@ describe('resolveActiveTools', () => {
 
   it('tool names all come from the policy registry', () => {
     const active = resolveActiveTools({ ...baseContext, userRole: 'admin' })
-    for (const name of active) expect(name).toMatch(/^(crm|knowledge|mail)\./)
+    for (const name of active) expect(name).toMatch(/^(crm|knowledge|mail|doc)\./)
   })
 })
 
@@ -114,7 +118,7 @@ describe('providerToolName', () => {
 
   it('leaves no dotted id in the list the agent hands the model', () => {
     const providerNames = resolveActiveTools({ ...baseContext, userRole: 'admin' }).map(providerToolName)
-    expect(providerNames).toHaveLength(20)
+    expect(providerNames).toHaveLength(24)
     for (const name of providerNames) {
       expect(name).not.toContain('.')
       expect(name).toMatch(/^[a-zA-Z][a-zA-Z0-9_-]{0,62}$/)

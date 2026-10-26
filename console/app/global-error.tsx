@@ -2,20 +2,6 @@
 
 import { useEffect } from 'react'
 
-/**
- * Last-resort error surface. Next renders this instead of the root layout when an
- * unhandled error breaks the shell itself, so it must bring its own `<html>` and
- * `<body>` — and its own styling, because the `theme.css` / `tailwind.css`
- * imports live in the layout this file replaces and are therefore not loaded.
- *
- * The colours below are inline literals matching the CRUM graphite-and-emerald
- * tokens; they are a fallback for exactly this broken-shell case, not a second
- * source of truth. The one style block here exists for the same reason: the
- * console's `.focus-ring` utility lives in `theme.css`, which is not loaded on
- * this surface, so the keyboard focus outline the rest of the app gets from that
- * utility has to be restated inline. Honest copy, a retry, and a hard reload as
- * the escape hatch.
- */
 export default function GlobalError({
   error,
   reset,

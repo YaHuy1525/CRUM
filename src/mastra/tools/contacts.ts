@@ -2,19 +2,7 @@ import { createTool } from '@mastra/core/tools'
 import { z } from 'zod'
 import { TenantRequestContextSchema } from '../tenant-context'
 import { queryContacts } from '../../db/queries'
-
-const ContactSchema = z.object({
-  id: z.string(),
-  tenant_id: z.string(),
-  customer_id: z.string(),
-  name: z.string(),
-  email: z.string().optional(),
-  phone: z.string().optional(),
-  owner_id: z.string(),
-  team_member_ids: z.array(z.string()),
-  created_at: z.string(),
-  updated_at: z.string(),
-})
+import { ContactRowSchema } from './row-fields'
 
 export const findContactsTool = createTool({
   id: 'crm.find_contacts',
@@ -24,7 +12,7 @@ export const findContactsTool = createTool({
   inputSchema: z.object({
     customerId: z.string().uuid(),
   }),
-  outputSchema: z.array(ContactSchema),
+  outputSchema: z.array(ContactRowSchema),
   execute: async (input, context) => {
     return context.observe.span('crm.find_contacts', async () => {
       const rc = context.requestContext.all

@@ -5,10 +5,6 @@ import * as AvatarPrimitive from '@radix-ui/react-avatar'
 
 import { cn } from '@/lib/utils'
 
-/**
- * shadcn/ui `avatar`, adapted to CRUM tokens. The fallback disc uses the same
- * emerald-soft wash the legacy `.user-avatar` uses.
- */
 function Avatar({
   className,
   ...props

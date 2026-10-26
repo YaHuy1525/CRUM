@@ -6,17 +6,6 @@ import type { ReactNode } from 'react'
 import { UsageDashboard } from '../components/UsageDashboard'
 import { route, stubFetch, type FetchStub } from './fetchStub'
 
-/**
- * `/usage` is the surface the polish phase rewrote rather than restyled, so these
- * tests are about the three things the old component got wrong: it read the plane
- * through a hand-rolled `fetch()` (so a dead port printed "HTTP 0"), it printed
- * `--` for a metric that had simply never arrived, and it had no error or reading
- * state at all. Each is asserted through roles and text the spec's state recipes
- * name, not through class names.
- *
- * The default range is checked too, because the console's operator runs at UTC+11
- * and `toISOString().slice(0, 10)` returns yesterday for most of their morning.
- */
 
 const METRICS = {
   tokensIn: 1_234,
@@ -28,7 +17,6 @@ const METRICS = {
   toolCallErrors: 5,
 }
 
-/** The same sentence `src/api/usage.ts` returns when storage cannot serve metrics. */
 const METRICS_UNAVAILABLE = {
   status: 503,
   body: { error: 'Metrics not available — is PostgresStoreVNext configured?' },
@@ -55,8 +43,6 @@ afterEach(() => {
 
 describe('UsageDashboard reading state', () => {
   it('names every card while the numbers are still unknown', async () => {
-    // A request that only settles when the test says so is the only way to see a
-    // genuine reading frame rather than a state that already moved on.
     let release: (body: unknown) => void = () => {}
     vi.stubGlobal(
       'fetch',
@@ -106,7 +92,6 @@ describe('UsageDashboard reading state', () => {
 
     expect(url.searchParams.get('to')).toBe(localDay(now))
     expect(url.searchParams.get('from')).toBe(localDay(new Date(Date.now() - 7 * 86400000)))
-    // The inputs show the same values the request carried.
     expect(screen.getByLabelText('From')).toHaveValue(url.searchParams.get('from'))
     expect(screen.getByLabelText('To')).toHaveValue(url.searchParams.get('to'))
   })
@@ -129,7 +114,6 @@ describe('UsageDashboard failure', () => {
 
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('Could not read usage.')
-    // The route's own words and its status, not the old bare "HTTP 503".
     expect(alert.textContent).toContain('Metrics not available')
     expect(alert.textContent).toContain('503')
 
@@ -179,14 +163,10 @@ describe('UsageDashboard numbers', () => {
     ])
     renderUsage(<UsageDashboard />)
 
-    // Zero cache traffic means the hit rate has no denominator. A fabricated 0%
-    // would read as "the cache never works" rather than "there was no cache to
-    // measure", and a blank cell reads as a broken panel.
     await screen.findByText('No cache traffic')
     expect(screen.getByText('No cache traffic')).toBeInTheDocument()
     expect(screen.getByText('No tool calls')).toBeInTheDocument()
     expect(screen.queryByText('0.0%')).toBeNull()
-    // The counts themselves are still real zeros, in the cards and the breakdown.
     expect(screen.getAllByText('0').length).toBeGreaterThanOrEqual(2)
   })
 

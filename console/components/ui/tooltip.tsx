@@ -5,10 +5,6 @@ import * as TooltipPrimitive from '@radix-ui/react-tooltip'
 
 import { cn } from '@/lib/utils'
 
-/**
- * shadcn/ui `tooltip`, adapted to CRUM tokens. Wrap the app (or a subtree) in
- * `TooltipProvider`; content floats on `--bg-elevated`.
- */
 function TooltipProvider({
   delayDuration = 0,
   ...props

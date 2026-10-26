@@ -122,10 +122,10 @@ describe('createCrumMastra', () => {
     expect(Object.keys(mastra.listAgents())).toContain('crm-assistant')
   })
 
-  it('registers Phase 5 agents (parser, email-drafter)', () => {
+  it('registers Phase 5 agents (parser, document-extractor, email-drafter)', () => {
     const mastra = createCrumMastra(envWith())
     const agentKeys = Object.keys(mastra.listAgents()).sort()
-    expect(agentKeys).toEqual(['crm-assistant', 'digest', 'email-drafter', 'parser'])
+    expect(agentKeys).toEqual(['crm-assistant', 'digest', 'document-extractor', 'email-drafter', 'parser'])
   })
 
   it('registers Phase 5 classifiers (intent, injection)', () => {
@@ -140,6 +140,7 @@ describe('createCrumMastra', () => {
     const workflows = mastra.listWorkflows?.() ?? {}
     expect(workflows).toHaveProperty('crum-intent-triage')
     expect(workflows).toHaveProperty('knowledge-ingest')
+    expect(workflows).toHaveProperty('crum-document-intake')
   })
 
   it('registers the MCP server', () => {

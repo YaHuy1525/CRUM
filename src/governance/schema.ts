@@ -1,14 +1,11 @@
 import { z } from 'zod'
 
-/** Permission classes declared in policy/tools.yaml. TECHNICAL_PLAN.md §12.2. */
 export const TOOL_CLASSES = ['read-only', 'auto', 'approval', 'refuse'] as const
 export type ToolClass = (typeof TOOL_CLASSES)[number]
 
-/** The resolved outcome of a gate decision. A subset of ToolClass plus `auto`. */
 export const GATES = ['auto', 'approval', 'refuse'] as const
 export type Gate = (typeof GATES)[number]
 
-/** How a repeated call is deduplicated. §9.2's draft_hash unique index relies on it. */
 export const IDEMPOTENCY_KEYS = ['correlationId', 'draftHash', 'actionHash'] as const
 export type IdempotencyKey = (typeof IDEMPOTENCY_KEYS)[number]
 
@@ -26,11 +23,6 @@ export const ToolPolicySchema = z
     idempotency_key: z.enum(IDEMPOTENCY_KEYS).optional(),
   })
   .superRefine((tool, ctx) => {
-    // A mutating tool with no idempotency key can be committed twice by a retry,
-    // and the draft_hash unique index has nothing to key on. §12.1 threat 3.
-    // Ruling A4: the refuse class is excluded. §4.6.2 assigns crm.bulk_import
-    // `—` for the idempotency key, because a tool that never executes cannot be
-    // committed twice.
     if (tool.class !== 'read-only' && tool.class !== 'refuse' && !tool.idempotent) {
       ctx.addIssue({
         code: 'custom',

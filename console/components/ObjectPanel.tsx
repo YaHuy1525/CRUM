@@ -2,21 +2,6 @@
 
 import type { CustomerRow } from '../lib/types'
 
-/**
- * The object binding card. §4.2, §4.5.
- *
- * Presentational only: given a customer, show it. The *reading* half — the
- * `GET /api/crm/customers/:id` fetch and the `POST /api/signals/rebind` bind —
- * lives in `components/chats/ContextPanel.tsx`, which is the only surface that
- * renders this now. The duplicate `CustomerPanel` that used to sit here was
- * deleted rather than left as a second copy that could drift from the one the
- * routes actually use.
- *
- * The bind is a *signal*, not a header: there is no `x-crm-object-id` anywhere in
- * this build. `rebind` retains a `state` signal on the session, which
- * `src/mastra/processors/object-binding.ts` reads back into the request context on
- * the next turn, so the binding survives across turns instead of being re-sent.
- */
 
 export type Customer = CustomerRow
 

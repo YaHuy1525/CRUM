@@ -1,21 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 
-/**
- * `/records/new` is the Capture flow. §"Route map": "Paste text, parser previews
- * fields honestly, hand off to a new chat prefilled with them. Never creates rows
- * silently."
- *
- * The three facts this file pins down:
- *
- * 1. The only write it makes is the parse — `POST /api/crm/prefill/:type`. There
- *    is no create call to find, because the page does not hold one.
- * 2. `usedFallbackValue` is surfaced. A blank field map presented as "parsed" is
- *    the lie the flag exists to prevent.
- * 3. The hand-off is a link to `/chats/new?prompt=…`, carrying the operator's own
- *    words and (only when the parse was real) the parsed fields. It never mints a
- *    thread on its own.
- */
 vi.mock('next/link', () => ({
   default: ({
     href,
@@ -84,7 +69,6 @@ describe('/records/new', () => {
     expect(prompt).toContain('- name: Maria Chen')
     expect(prompt).toContain('- company: Nordwind GmbH')
 
-    // The parse is the only write; creating the row stays in the governed path.
     expect(server.calls).toHaveLength(1)
     expect(server.calls[0]!.method).toBe('POST')
     expect(server.calls[0]!.url).toBe('/api/crm/prefill/customer')
@@ -111,8 +95,6 @@ describe('/records/new', () => {
 
     const href = screen.getByRole('link', { name: /Continue in chat/ }).getAttribute('href') ?? ''
     const prompt = decodeURIComponent(href.slice('/chats/new?prompt='.length))
-    // Blank fields are not handed over as if the model had read them; the chat gets
-    // the operator's own words and nothing invented.
     expect(prompt).toContain('Maria Chen at Nordwind GmbH')
     expect(prompt).not.toContain('Parsed fields:')
   })
