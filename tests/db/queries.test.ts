@@ -320,3 +320,113 @@ describe('querySearch', () => {
     expect(params[2]).toBe(5)
   })
 })
+
+/**
+ * The paged list reads behind `GET /api/crm/*`. Every one of them is a second
+ * path to data the agent's tools already expose, so the thing worth asserting is
+ * not that SQL was sent but that the SQL carries the *same* visibility predicate:
+ * a tenant-wide child list that forgot the parent's owner rule would be a read
+ * wider than the tool it mirrors, and every row it returned would look correct.
+ *
+ * Each read issues two statements (count, then page), so the mocks resolve twice.
+ */
+describe('paged list reads', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    mockQuery.mockReset()
+    mockEnd.mockReset()
+  })
+
+  function twoCalls(count: number, rows: unknown[] = []) {
+    mockQuery.mockResolvedValueOnce({ rows: [{ count }] })
+    mockQuery.mockResolvedValueOnce({ rows })
+  }
+
+  it('customers: admin counts and pages with the tenant rule only', async () => {
+    twoCalls(42, [{ id: 'c1', name: 'Acme' }])
+    const { queryCustomersPage } = await import('../../src/db/queries')
+    const context = { tenantId: 't1', userId: 'u1', userRole: 'admin' as const }
+
+    const result = await queryCustomersPage(context, { name: 'Ac' }, { limit: 25, offset: 50 })
+
+    expect(result).toEqual({ items: [{ id: 'c1', name: 'Acme' }], total: 42 })
+    const countSql = mockQuery.mock.calls[0]![0] as string
+    const countParams = mockQuery.mock.calls[0]![1] as unknown[]
+    const pageSql = mockQuery.mock.calls[1]![0] as string
+    const pageParams = mockQuery.mock.calls[1]![1] as unknown[]
+
+    expect(countSql).toContain('count(*)::int')
+    expect(countSql).toContain('deleted_at IS NULL')
+    expect(countSql).toContain('name ILIKE $2')
+    expect(countSql).not.toContain('owner_id')
+    expect(countParams).toEqual(['t1', '%Ac%'])
+
+    expect(pageSql).toContain('ORDER BY created_at DESC, id DESC')
+    expect(pageSql).toContain('LIMIT $3 OFFSET $4')
+    expect(pageParams).toEqual(['t1', '%Ac%', 25, 50])
+  })
+
+  it('contacts: user role inherits visibility from the joined customer', async () => {
+    twoCalls(1, [{ id: 'ct1', name: 'Maria' }])
+    const { queryContactsPage } = await import('../../src/db/queries')
+    const context = { tenantId: 't1', userId: 'u1', userRole: 'user' as const }
+
+    await queryContactsPage(context, { customerId: 'c1', name: 'Mar' }, { limit: 10, offset: 0 })
+
+    const sql = mockQuery.mock.calls[1]![0] as string
+    const params = mockQuery.mock.calls[1]![1] as unknown[]
+
+    // The tool's own gate: `queryContacts` returns [] unless `queryCustomer` did.
+    expect(sql).toContain('JOIN customers cu ON cu.id = c.customer_id')
+    expect(sql).toContain('cu.owner_id = $2 OR $2 = ANY(cu.team_member_ids)')
+    expect(sql).toContain('cu.deleted_at IS NULL')
+    expect(sql).toContain('c.customer_id = $3')
+    expect(sql).toContain('c.name ILIKE $4')
+    expect(params).toEqual(['t1', 'u1', 'c1', '%Mar%', 10, 0])
+  })
+
+  it('followups: admin sees the tenant, still through the parent join', async () => {
+    twoCalls(0)
+    const { queryFollowupsPage } = await import('../../src/db/queries')
+    const context = { tenantId: 't1', userId: 'u1', userRole: 'admin' as const }
+
+    const result = await queryFollowupsPage(context, {}, { limit: 25, offset: 0 })
+
+    expect(result).toEqual({ items: [], total: 0 })
+    const sql = mockQuery.mock.calls[1]![0] as string
+    expect(sql).toContain('JOIN customers cu ON cu.id = f.customer_id')
+    expect(sql).not.toContain('owner_id = $2')
+    // `total: 0` must come from the count, not from the empty page.
+    expect(mockQuery.mock.calls[0]![0] as string).toContain('count(*)::int')
+  })
+
+  it('tasks: an orphaned task falls back to ownership instead of vanishing', async () => {
+    twoCalls(3, [{ id: 't1', title: 'Call back' }])
+    const { queryTasksPage } = await import('../../src/db/queries')
+    const context = { tenantId: 't1', userId: 'u1', userRole: 'user' as const }
+
+    await queryTasksPage(context, {}, { limit: 25, offset: 0 })
+
+    const sql = mockQuery.mock.calls[1]![0] as string
+    // LEFT JOIN, not INNER: `tasks.customer_id` is nullable in 0002.
+    expect(sql).toContain('LEFT JOIN customers cu ON cu.id = t.customer_id')
+    expect(sql).toContain('t.customer_id IS NULL AND (t.owner_id = $2 OR t.assigned_to = $2)')
+    expect(sql).toContain('cu.owner_id = $2 OR $2 = ANY(cu.team_member_ids)')
+  })
+
+  it('schedules: the date filter runs on the real start_time column', async () => {
+    twoCalls(2)
+    const { querySchedulesPage } = await import('../../src/db/queries')
+    const context = { tenantId: 't1', userId: 'u1', userRole: 'admin' as const }
+
+    await querySchedulesPage(context, { date: '2026-10-26' }, { limit: 5, offset: 5 })
+
+    const sql = mockQuery.mock.calls[1]![0] as string
+    const params = mockQuery.mock.calls[1]![1] as unknown[]
+
+    // `scheduled_at` does not exist on the table; `start_time` does.
+    expect(sql).toContain('date(s.start_time) = $2::date')
+    expect(sql).toContain('ORDER BY s.start_time ASC, s.id ASC')
+    expect(params).toEqual(['t1', '2026-10-26', 5, 5])
+  })
+})

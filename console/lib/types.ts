@@ -189,6 +189,103 @@ export interface CustomerRow {
   updated_at: string
 }
 
+/**
+ * The page envelope every `/api/crm/*` list returns (`src/api/crm.ts`
+ * `listBody`). `hasMore` is computed from the page that was actually served, so
+ * the UI never has to trust `total` and the page length to agree.
+ */
+export interface CrmListResponse<T> {
+  items: T[]
+  total: number
+  limit: number
+  offset: number
+  hasMore: boolean
+}
+
+/**
+ * The five CRM object rows, transcribed from `migrations/0002_crum_spine.sql`
+ * rather than from the query interfaces, because those interfaces predate the
+ * console and two of them disagree with the table (`Followup.note` versus the
+ * real `notes`, `Schedule.scheduled_at` versus the real `start_time`). Where a
+ * column is nullable in 0002 it is nullable here: `tasks.customer_id` and
+ * `schedules.customer_id` are `ON DELETE SET NULL`, so an orphaned row is a
+ * legitimate list row and the UI has to render it as one.
+ */
+export interface CrmContact {
+  id: string
+  tenant_id: string
+  customer_id: string
+  name: string
+  role?: string | null
+  email?: string | null
+  phone?: string | null
+  is_primary?: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface CrmFollowup {
+  id: string
+  tenant_id: string
+  customer_id: string
+  type?: string
+  status?: string
+  scheduled_at?: string
+  notes?: string | null
+  owner_id: string
+  created_at: string
+  updated_at: string
+}
+
+export interface CrmTask {
+  id: string
+  tenant_id: string
+  customer_id: string | null
+  title?: string
+  description?: string | null
+  deadline?: string | null
+  priority?: string
+  status?: string
+  assigned_to?: string | null
+  owner_id: string
+  created_at: string
+  updated_at: string
+}
+
+export interface CrmSchedule {
+  id: string
+  tenant_id: string
+  customer_id: string | null
+  title?: string
+  start_time?: string
+  end_time?: string
+  location?: string | null
+  status?: string
+  owner_id: string
+  created_at: string
+  updated_at: string
+}
+
+/**
+ * `GET /api/digest` — the digest workflow's own output schema
+ * (`src/mastra/workflows/digest.ts`). `customer_id` is nullable because the
+ * source tables are.
+ */
+export interface DigestItem {
+  id: string
+  customer_id: string | null
+  label: string
+  updated_at?: string
+}
+
+export interface DigestResponse {
+  date: string
+  overdue: DigestItem[]
+  todaySchedule: DigestItem[]
+  staleFollowups: DigestItem[]
+  summary: string
+}
+
 /** `POST /api/crm/prefill/:objectType`. */
 export interface PrefillResponse {
   objectType: string

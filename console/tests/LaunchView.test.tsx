@@ -74,6 +74,15 @@ describe('LaunchView', () => {
     expect(pushMock).not.toHaveBeenCalled()
   })
 
+  it('seeds the composer from a hand-off without sending it', () => {
+    render(<LaunchView initialText={'Create a customer from this note:\n\nMaria at Nordwind'} />)
+
+    // The Capture flow hands work over as a draft. Filling the field is the whole
+    // contract: nothing is minted or sent until the operator presses Start.
+    expect(composer().value).toContain('Maria at Nordwind')
+    expect(pushMock).not.toHaveBeenCalled()
+  })
+
   it('carries the one reserved gradient token, on the composer only', () => {
     const { container } = render(<LaunchView />)
     const gradient = container.querySelectorAll('[class*="grad-composer"]')

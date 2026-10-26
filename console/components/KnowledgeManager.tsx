@@ -1,8 +1,15 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+
 import { ApiError, del, get, post, describeError } from '../lib/api'
 import type { KnowledgeDocument, UploadResponse } from '../lib/types'
+import { PageHeader } from './PageHeader'
+import { Badge } from './ui/badge'
+import { Button } from './ui/button'
+import { Input } from './ui/input'
+import { Label } from './ui/label'
+import { Textarea } from './ui/textarea'
 
 /**
  * Knowledge manager. §11.5, §6.4.
@@ -21,9 +28,20 @@ import type { KnowledgeDocument, UploadResponse } from '../lib/types'
  *   the limitation) and its response is shown verbatim.
  * - No `tenantId` prop: identity is attached server-side, and a prop for it would
  *   be a tenant selector in the browser (§13.2).
+ *
+ * Phase 4 moved the presentation onto the primitives: `PageHeader`, `Input`,
+ * `Textarea`, `Button`, `Badge`, and the table styling the Records browser uses.
+ * Behavior is unchanged — same routes, same words, same confirm-before-delete.
  */
 
 type Notice = { kind: 'ok' | 'bad' | 'info'; text: string }
+
+/** Document state on the same three state tokens the rest of the console uses. */
+function statusVariant(status: KnowledgeDocument['status']): 'success' | 'warning' | 'danger' {
+  if (status === 'ready') return 'success'
+  if (status === 'failed') return 'danger'
+  return 'warning'
+}
 
 export function KnowledgeManager() {
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([])
@@ -108,100 +126,145 @@ export function KnowledgeManager() {
   }
 
   return (
-    <div className="console-page">
-      <h1>Knowledge</h1>
-      <p className="lede">
-        Documents are chunked and embedded on upload, then retrieved for this tenant only. Text formats
-        only — .txt, .md, .html, .json.
-      </p>
+    <div className="mx-auto w-full max-w-4xl px-8 py-10">
+      <PageHeader
+        title="Knowledge"
+        description="Documents are chunked and embedded on upload, then retrieved for this tenant only. Text formats only — .txt, .md, .html, .json."
+      />
 
-      <form onSubmit={handleUpload} className="console-form">
-        <input
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="Document title"
-          aria-label="Document title"
-          required
-          className="focus-ring"
-        />
-        <select
-          value={contentType}
-          onChange={(e) => setContentType(e.target.value as typeof contentType)}
-          aria-label="Content type"
-          className="focus-ring"
-        >
-          <option value="text">Plain text</option>
-          <option value="markdown">Markdown</option>
-          <option value="html">HTML</option>
-        </select>
-        <textarea
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
-          placeholder="Document content"
-          rows={6}
-          aria-label="Document content"
-          required
-          className="focus-ring"
-        />
-        <button type="submit" disabled={uploading} className="focus-ring">
+      <form onSubmit={handleUpload} className="mt-6 space-y-4">
+        <div className="flex flex-wrap items-end gap-4">
+          <div className="w-full max-w-sm">
+            <Label htmlFor="knowledge-title">Document title</Label>
+            <Input
+              id="knowledge-title"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Return policy 2026"
+              aria-label="Document title"
+              required
+              className="mt-1"
+            />
+          </div>
+
+          <div>
+            <Label htmlFor="knowledge-type">Content type</Label>
+            <select
+              id="knowledge-type"
+              value={contentType}
+              onChange={(e) => setContentType(e.target.value as typeof contentType)}
+              aria-label="Content type"
+              className="focus-ring mt-1 h-9 rounded-md border border-border bg-bg-card px-2 text-sm text-text-primary"
+            >
+              <option value="text">Plain text</option>
+              <option value="markdown">Markdown</option>
+              <option value="html">HTML</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <Label htmlFor="knowledge-content">Document content</Label>
+          <Textarea
+            id="knowledge-content"
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            placeholder="Document content"
+            rows={6}
+            aria-label="Document content"
+            required
+            className="mt-1"
+          />
+        </div>
+
+        <Button type="submit" disabled={uploading}>
           {uploading ? 'Uploading and indexing…' : 'Upload'}
-        </button>
+        </Button>
       </form>
 
-      {notice && (
-        <div className={notice.kind === 'bad' ? 'error-banner' : 'hint'} role={notice.kind === 'bad' ? 'alert' : 'status'}>
+      {notice ? (
+        <p
+          role={notice.kind === 'bad' ? 'alert' : 'status'}
+          className={
+            notice.kind === 'bad'
+              ? 'mt-4 rounded-md border border-danger-line bg-danger-soft px-3 py-2 text-sm text-danger'
+              : notice.kind === 'ok'
+                ? 'mt-4 rounded-md border border-success-line bg-success-soft px-3 py-2 text-sm text-success'
+                : 'mt-4 rounded-md border border-border bg-bg-raised px-3 py-2 text-sm text-text-secondary'
+          }
+        >
           {notice.text}
-        </div>
-      )}
+        </p>
+      ) : null}
 
-      {loading && <p>Loading documents…</p>}
+      {loading ? <p className="mt-4 text-sm text-text-muted">Loading documents…</p> : null}
 
-      {listError && (
-        <div className="error-banner" role="alert">
-          {listError}
-          <button onClick={() => void load()} className="focus-ring">
+      {listError ? (
+        <div
+          role="alert"
+          className="mt-4 rounded-md border border-danger-line bg-danger-soft px-3 py-2 text-sm text-danger"
+        >
+          <p className="break-words">{listError}</p>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void load()}
+            className="mt-2 h-7 px-2 text-danger hover:bg-danger-soft hover:text-danger"
+          >
             Retry
-          </button>
+          </Button>
         </div>
-      )}
+      ) : null}
 
-      {!loading && !listError && documents.length === 0 && <p>No documents uploaded yet.</p>}
+      {!loading && !listError && documents.length === 0 ? (
+        <div className="mt-4 rounded-lg border border-dashed border-border-strong bg-bg-card p-8 text-center text-sm text-text-muted">
+          No documents uploaded yet.
+        </div>
+      ) : null}
 
-      {documents.length > 0 && (
-        <table className="console-table">
-          <thead>
-            <tr>
-              <th>Title</th>
-              <th>Type</th>
-              <th>Status</th>
-              <th>Size</th>
-              <th>Updated</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {documents.map((doc) => (
-              <tr key={doc.id}>
-                <td>{doc.title}</td>
-                <td>{doc.file_type}</td>
-                <td>
-                  <span className={`status-pill ${doc.status}`}>{doc.status}</span>
-                </td>
-                <td>{doc.byte_size} bytes</td>
-                <td>{new Date(doc.updated_at).toLocaleString()}</td>
-                <td>
-                  <button onClick={() => void handleReingest(doc)} className="focus-ring">
-                    Re-ingest
-                  </button>
-                  <button onClick={() => void handleDelete(doc)} className="focus-ring">
-                    Delete
-                  </button>
-                </td>
+      {documents.length > 0 ? (
+        <div className="mt-4 overflow-x-auto rounded-lg border border-border">
+          <table className="w-full border-collapse text-sm">
+            <thead>
+              <tr className="border-b border-border text-left text-xs uppercase tracking-[0.06em] text-text-muted">
+                <th scope="col" className="px-3 py-2 font-medium">Title</th>
+                <th scope="col" className="px-3 py-2 font-medium">Type</th>
+                <th scope="col" className="px-3 py-2 font-medium">Status</th>
+                <th scope="col" className="px-3 py-2 font-medium">Size</th>
+                <th scope="col" className="px-3 py-2 font-medium">Updated</th>
+                <th scope="col" className="px-3 py-2 font-medium">Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+            </thead>
+            <tbody>
+              {documents.map((doc) => (
+                <tr key={doc.id} className="border-b border-border last:border-0 hover:bg-bg-hover">
+                  <td className="px-3 py-2 align-top font-medium text-text-primary">{doc.title}</td>
+                  <td className="px-3 py-2 align-top text-text-secondary">{doc.file_type}</td>
+                  <td className="px-3 py-2 align-top">
+                    <Badge variant={statusVariant(doc.status)}>{doc.status}</Badge>
+                  </td>
+                  <td className="px-3 py-2 align-top font-mono text-xs text-text-secondary">
+                    {doc.byte_size} bytes
+                  </td>
+                  <td className="px-3 py-2 align-top text-xs text-text-muted">
+                    {new Date(doc.updated_at).toLocaleString()}
+                  </td>
+                  <td className="px-3 py-2 align-top">
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="outline" size="sm" onClick={() => void handleReingest(doc)}>
+                        Re-ingest
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => void handleDelete(doc)}>
+                        Delete
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
     </div>
   )
 }

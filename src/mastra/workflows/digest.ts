@@ -25,7 +25,9 @@ const digestInputSchema = z.object({
 
 const itemSchema = z.object({
   id: z.string(),
-  customer_id: z.string(),
+  // Nullable on the real tables (`ON DELETE SET NULL` in 0002), so an item whose
+  // customer was deleted is still a legitimate digest row.
+  customer_id: z.string().nullable(),
   label: z.string(),
   updated_at: z.string().optional(),
 })

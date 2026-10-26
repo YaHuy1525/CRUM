@@ -8,7 +8,7 @@ import { createDigestRouter } from './digest'
 import { createSignalsRouter } from './signals'
 import { createHealthRouter } from './health'
 import { createPrefillRouter } from './prefill'
-import { createCustomerRouter } from './customers'
+import { createCrmRouter } from './crm'
 import { createApprovalRouter, type SuspendedRunAgent } from './approvals'
 import { createKnowledgeRouter, type IngestWorkflowLike } from './knowledge'
 import { createAgentRouter } from './agent'
@@ -81,7 +81,7 @@ export function createApiRouter(deps: ApiRouterDeps): Hono {
   app.route('/', createUsageRouter())
   app.route('/', createDigestRouter())
   app.route('/', createPrefillRouter())
-  app.route('/', createCustomerRouter({ env }))
+  app.route('/', createCrmRouter({ env }))
   app.route('/', createSignalsRouter({ env, getMastra: deps.getMastra }))
   app.route('/', createAgentRouter({ env, getMastra: deps.getMastra }))
   app.route('/', createThreadsRouter({ env, getMastra: deps.getMastra }))

@@ -6,7 +6,8 @@ import { querySchedules } from '../../db/queries'
 const ScheduleSchema = z.object({
   id: z.string(),
   tenant_id: z.string(),
-  customer_id: z.string(),
+  // `schedules.customer_id` is nullable in 0002 (`ON DELETE SET NULL`).
+  customer_id: z.string().nullable(),
   scheduled_at: z.string().optional(),
   owner_id: z.string(),
   team_member_ids: z.array(z.string()),

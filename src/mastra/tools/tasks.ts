@@ -6,7 +6,8 @@ import { queryTasks, queryMyTasks, queryMyFollowups } from '../../db/queries'
 const TaskSchema = z.object({
   id: z.string(),
   tenant_id: z.string(),
-  customer_id: z.string(),
+  // `tasks.customer_id` is nullable in 0002 (`ON DELETE SET NULL`).
+  customer_id: z.string().nullable(),
   title: z.string().optional(),
   description: z.string().optional(),
   owner_id: z.string(),

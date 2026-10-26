@@ -39,6 +39,15 @@ export interface Contact {
   team_member_ids: string[]
   created_at: string
   updated_at: string
+  /**
+   * Columns that exist in 0002 but not in the tool output schemas. They arrive on
+   * any `SELECT *` read, so the list endpoints can render them; optional because
+   * a writer that constructs a Contact by hand (the tools' return types) does not
+   * have to invent them.
+   */
+  role?: string | null
+  is_primary?: boolean
+  notes?: string | null
 }
 
 export interface Followup {
@@ -50,18 +59,29 @@ export interface Followup {
   team_member_ids: string[]
   created_at: string
   updated_at: string
+  /** Real column is `notes` (0002); the tool schema's `note` above is the drift. */
+  notes?: string | null
+  type?: string
+  status?: string
+  /** `scheduled_at` is NOT NULL on the real table. */
+  scheduled_at?: string
 }
 
 export interface Task {
   id: string
   tenant_id: string
-  customer_id: string
+  /** Nullable in 0002 (`ON DELETE SET NULL`), so a task can outlive its customer. */
+  customer_id: string | null
   title?: string
   description?: string
   owner_id: string
   team_member_ids: string[]
   created_at: string
   updated_at: string
+  deadline?: string | null
+  priority?: string
+  status?: string
+  assigned_to?: string | null
 }
 
 /**
@@ -75,12 +95,19 @@ export interface Task {
 export interface Schedule {
   id: string
   tenant_id: string
-  customer_id: string
+  /** Nullable in 0002 (`ON DELETE SET NULL`), so a slot can outlive its customer. */
+  customer_id: string | null
   scheduled_at?: string
   owner_id: string
   team_member_ids: string[]
   created_at: string
   updated_at: string
+  /** The real columns (0002). `SELECT *` returns them; the tool schema above does not. */
+  title?: string
+  start_time?: string
+  end_time?: string
+  location?: string | null
+  status?: string
 }
 
 /**
@@ -109,13 +136,106 @@ export interface CustomerFilters {
   tags?: string[]
 }
 
+/** A page request for the read-only list endpoints. The route clamps `limit`; this
+ *  layer takes what it is given, so a direct caller does not need the HTTP policy. */
+export interface ListPage {
+  limit: number
+  offset: number
+}
+
+export interface ListResult<T> {
+  items: T[]
+  total: number
+}
+
 /**
- * Lists customers matching the tenant scope and optional filters.
+ * One row page and the count behind it. Every list endpoint needs both ("showing
+ * 25 of 340"), and building the WHERE clause once per call is what keeps the
+ * count and the rows answering the same question — two hand-written counts is how
+ * a page header ends up disagreeing with its own list.
+ *
+ * `orderBy` always carries an id tiebreaker: `OFFSET` pagination over rows that
+ * share a `created_at` would otherwise be able to skip or repeat one.
  */
-export async function queryCustomers(
+async function pagedRows<T>(
+  select: string,
+  from: string,
+  conditions: string[],
+  params: unknown[],
+  orderBy: string,
+  page: ListPage,
+): Promise<ListResult<T>> {
+  const where = conditions.join(' AND ')
+  const counts = await queryRows<{ count: number }>(
+    `SELECT count(*)::int AS count FROM ${from} WHERE ${where}`,
+    params,
+  )
+  const items = await queryRows<T>(
+    `SELECT ${select} FROM ${from} WHERE ${where} ORDER BY ${orderBy} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+    [...params, page.limit, page.offset],
+  )
+  return { items, total: counts[0]?.count ?? 0 }
+}
+
+/**
+ * The customer rule written against an aliased join, for the child tables.
+ *
+ * `contacts` and `followups` have no owner columns at all; 0002 says so in as
+ * many words ("child records inherit visibility through their customer"), and the
+ * agent's tools enforce it by resolving the parent first: `queryContacts` returns
+ * `[]` the moment `queryCustomer` returns null. A tenant-wide child list has to
+ * reproduce that gate in SQL, or it would be a wider read than the tool it
+ * mirrors, which is exactly the governance parity the spec forbids breaking.
+ */
+function customerScope(
   context: TenantRequestContext,
-  filters: CustomerFilters = {},
-): Promise<Customer[]> {
+  alias: string,
+): { sql: string; params: unknown[] } {
+  if (context.userRole === 'admin') {
+    return {
+      sql: `${alias}.tenant_id = $1 AND ${alias}.deleted_at IS NULL`,
+      params: [context.tenantId],
+    }
+  }
+  return {
+    sql: `${alias}.tenant_id = $1 AND ${alias}.deleted_at IS NULL AND (${alias}.owner_id = $2 OR $2 = ANY(${alias}.team_member_ids))`,
+    params: [context.tenantId, context.userId],
+  }
+}
+
+/**
+ * Visibility for a table whose `customer_id` is nullable (tasks, schedules, both
+ * `ON DELETE SET NULL` in 0002).
+ *
+ * An inner join would silently hide every orphaned row, and a left join whose
+ * only predicate was the customer rule would hand those same orphans to whoever
+ * asked — two wrong answers in opposite directions. So the rule is a union: a row
+ * with a customer is visible when that customer is, and a row without one falls
+ * back to the ownership rule the tools' `my_open_items` read already applies
+ * (`owner_id` or `assigned_to`). Admins see the tenant, as everywhere else.
+ */
+function orphanAwareScope(
+  context: TenantRequestContext,
+  alias: string,
+  ownPredicate: (userIdIndex: number) => string,
+): { sql: string; params: unknown[] } {
+  if (context.userRole === 'admin') {
+    return { sql: `${alias}.tenant_id = $1`, params: [context.tenantId] }
+  }
+  return {
+    sql: `${alias}.tenant_id = $1 AND ((${alias}.customer_id IS NOT NULL AND cu.id IS NOT NULL AND cu.deleted_at IS NULL AND (cu.owner_id = $2 OR $2 = ANY(cu.team_member_ids))) OR (${alias}.customer_id IS NULL AND (${ownPredicate(2)})))`,
+    params: [context.tenantId, context.userId],
+  }
+}
+
+/**
+ * The customer list's WHERE clause, shared by the array read (the tools' path) and
+ * the paged read (the console's), so a filter added here reaches both.
+ */
+function customerWhere(
+  context: TenantRequestContext,
+  filters: CustomerFilters,
+): { conditions: string[]; params: unknown[] } {
   const vis = visibilityPredicate(context)
   // Soft-deleted customers are hidden from every read path (see migration 0005).
   const conditions: string[] = [vis.sql, 'deleted_at IS NULL']
@@ -138,8 +258,173 @@ export async function queryCustomers(
     params.push(filters.tags)
   }
 
+  return { conditions, params }
+}
+
+/**
+ * Lists customers matching the tenant scope and optional filters.
+ */
+export async function queryCustomers(
+  context: TenantRequestContext,
+  filters: CustomerFilters = {},
+): Promise<Customer[]> {
+  const { conditions, params } = customerWhere(context, filters)
   const sql = `SELECT * FROM customers WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC`
   return queryRows<Customer>(sql, params)
+}
+
+/** `GET /api/crm/customers` — the same scope as `crm.list_customers`, paged. */
+export async function queryCustomersPage(
+  context: TenantRequestContext,
+  filters: CustomerFilters = {},
+  page: ListPage,
+): Promise<ListResult<Customer>> {
+  const { conditions, params } = customerWhere(context, filters)
+  return pagedRows<Customer>(
+    '*',
+    'customers',
+    conditions,
+    params,
+    'created_at DESC, id DESC',
+    page,
+  )
+}
+
+export interface ContactFilters {
+  customerId?: string
+  name?: string
+}
+
+/** `GET /api/crm/contacts` — tenant-wide, gated by the parent customer. */
+export async function queryContactsPage(
+  context: TenantRequestContext,
+  filters: ContactFilters = {},
+  page: ListPage,
+): Promise<ListResult<Contact>> {
+  const scope = customerScope(context, 'cu')
+  const conditions = [scope.sql]
+  const params = [...scope.params]
+  let idx = params.length
+
+  if (filters.customerId) {
+    idx++
+    conditions.push(`c.customer_id = $${idx}`)
+    params.push(filters.customerId)
+  }
+  if (filters.name) {
+    idx++
+    conditions.push(`c.name ILIKE $${idx}`)
+    params.push(`%${filters.name}%`)
+  }
+
+  return pagedRows<Contact>(
+    'c.*',
+    'contacts c JOIN customers cu ON cu.id = c.customer_id',
+    conditions,
+    params,
+    'c.created_at DESC, c.id DESC',
+    page,
+  )
+}
+
+export interface FollowupFilters {
+  customerId?: string
+}
+
+/** `GET /api/crm/followups` — tenant-wide, gated by the parent customer. */
+export async function queryFollowupsPage(
+  context: TenantRequestContext,
+  filters: FollowupFilters = {},
+  page: ListPage,
+): Promise<ListResult<Followup>> {
+  const scope = customerScope(context, 'cu')
+  const conditions = [scope.sql]
+  const params = [...scope.params]
+  let idx = params.length
+
+  if (filters.customerId) {
+    idx++
+    conditions.push(`f.customer_id = $${idx}`)
+    params.push(filters.customerId)
+  }
+
+  return pagedRows<Followup>(
+    'f.*',
+    'followups f JOIN customers cu ON cu.id = f.customer_id',
+    conditions,
+    params,
+    'f.created_at DESC, f.id DESC',
+    page,
+  )
+}
+
+export interface TaskFilters {
+  customerId?: string
+}
+
+/** `GET /api/crm/tasks` — customer-gated, with orphans falling back to ownership. */
+export async function queryTasksPage(
+  context: TenantRequestContext,
+  filters: TaskFilters = {},
+  page: ListPage,
+): Promise<ListResult<Task>> {
+  const scope = orphanAwareScope(context, 't', (i) => `t.owner_id = $${i} OR t.assigned_to = $${i}`)
+  const conditions = [scope.sql]
+  const params = [...scope.params]
+  let idx = params.length
+
+  if (filters.customerId) {
+    idx++
+    conditions.push(`t.customer_id = $${idx}`)
+    params.push(filters.customerId)
+  }
+
+  return pagedRows<Task>(
+    't.*',
+    'tasks t LEFT JOIN customers cu ON cu.id = t.customer_id',
+    conditions,
+    params,
+    't.created_at DESC, t.id DESC',
+    page,
+  )
+}
+
+export interface ScheduleFilters {
+  customerId?: string
+  /** `YYYY-MM-DD`, filtered on `date(start_time)` — the real column. */
+  date?: string
+}
+
+/** `GET /api/crm/schedules` — customer-gated, with orphans falling back to ownership. */
+export async function querySchedulesPage(
+  context: TenantRequestContext,
+  filters: ScheduleFilters = {},
+  page: ListPage,
+): Promise<ListResult<Schedule>> {
+  const scope = orphanAwareScope(context, 's', (i) => `s.owner_id = $${i}`)
+  const conditions = [scope.sql]
+  const params = [...scope.params]
+  let idx = params.length
+
+  if (filters.customerId) {
+    idx++
+    conditions.push(`s.customer_id = $${idx}`)
+    params.push(filters.customerId)
+  }
+  if (filters.date) {
+    idx++
+    conditions.push(`date(s.start_time) = $${idx}::date`)
+    params.push(filters.date)
+  }
+
+  return pagedRows<Schedule>(
+    's.*',
+    'schedules s LEFT JOIN customers cu ON cu.id = s.customer_id',
+    conditions,
+    params,
+    's.start_time ASC, s.id ASC',
+    page,
+  )
 }
 
 /**

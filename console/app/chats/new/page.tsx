@@ -10,8 +10,21 @@ import { LaunchView } from '@/components/chats/LaunchView'
  * Sending here does not stream: it mints the thread id, parks the first message
  * in `sessionStorage`, and navigates to `/chats/[id]`, where the single
  * conversation surface sends it. That keeps one transport for the whole section.
+ *
+ * `?prompt=` is the Capture hand-off (§"Route map", `/records/new`). The server
+ * reads it and seeds the composer; it never sends on the operator's behalf.
  */
-export default function NewChatPage() {
+
+const MAX_PROMPT = 4000
+
+export default async function NewChatPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ prompt?: string | string[] }>
+}) {
+  const { prompt } = await searchParams
+  const initialText = typeof prompt === 'string' ? prompt.slice(0, MAX_PROMPT) : ''
+
   return (
     <main className="mx-auto w-full max-w-3xl px-8 py-10">
       <PageHeader
@@ -27,7 +40,7 @@ export default function NewChatPage() {
         }
       />
 
-      <LaunchView />
+      <LaunchView initialText={initialText} />
     </main>
   )
 }

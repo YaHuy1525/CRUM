@@ -64,7 +64,9 @@ describe('ReceiptView', () => {
     render(<ReceiptView receiptId={RECEIPT_ID} />)
 
     const verdict = await screen.findByText('Signature DOES NOT match this receipt')
-    expect(verdict.className).toContain('verdict-invalid')
+    // The verdict is asserted by its semantic attribute, not by a legacy class
+    // name: Phase 4 moved the styling onto the Badge primitive.
+    expect(verdict).toHaveAttribute('data-verdict', 'invalid')
   })
 
   it('says "could not be verified" rather than "forged" when the secret is missing', async () => {
@@ -73,7 +75,7 @@ describe('ReceiptView', () => {
 
     const verdict = await screen.findByText(/Signature could not be verified/)
     expect(verdict.textContent).toContain('APPROVAL_HMAC_SECRET')
-    expect(verdict.className).toContain('verdict-unavailable')
+    expect(verdict).toHaveAttribute('data-verdict', 'unavailable')
     // Not an error state: the receipt is still displayed, the verdict is just
     // unproven on this machine.
     expect(screen.queryByRole('alert')).toBeNull()

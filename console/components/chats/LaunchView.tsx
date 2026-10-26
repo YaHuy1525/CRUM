@@ -24,11 +24,16 @@ import { Textarea } from '@/components/ui/textarea'
  * The gradient is the one reserved token (`--grad-composer`). It is applied as a
  * background-image on the composer card only, never on a second surface, which is
  * what keeps it reading as an accent instead of a theme.
+ *
+ * `initialText` is how other surfaces hand work over — the Capture flow prefills
+ * the composer with the text it parsed. It only seeds the field: nothing is sent
+ * until the operator presses Start, so a hand-off can never mint a thread and a
+ * turn they did not ask for.
  */
 
-export function LaunchView() {
+export function LaunchView({ initialText = '' }: { initialText?: string }) {
   const router = useRouter()
-  const [input, setInput] = useState('')
+  const [input, setInput] = useState(initialText)
   const [starting, setStarting] = useState(false)
 
   const start = (text: string) => {

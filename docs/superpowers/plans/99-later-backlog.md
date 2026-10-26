@@ -277,3 +277,31 @@ detail read. Two surfaces, two answers about the same row.
 
 **Fix:** add the flag to the list SELECT in `src/api/agent.ts`, or stop returning it from the item read
 and derive it in one place. Either way the shapes agree.
+
+## Deferred from the console page-migration phase
+
+One item, again not from Cedar. It surfaced while Home was reading the digest in Phase 4 and is recorded
+here for the same reason as C1 and C2: deferred has to mean written down.
+
+### C3. The digest follow-up label reads a field the table does not have
+
+**Deferred in Phase 4 of `2026-10-26-console-ia-chats-design.md`.**
+
+`src/mastra/workflows/digest.ts` builds the stale follow-up label from `f.note`, and `followups` has no
+such column. `migrations/0002_crum_spine.sql` defines `notes`. `CrumFollowup` in `src/db/queries.ts`
+carries both names, `note` because the `crm.list_followups` tool output schema pins it and `notes`
+because that is the column, so the expression type checks and the label always falls through to
+`Followup <id prefix>`.
+
+**Why it was not fixed in Phase 4.** Nothing renders that label yet. The Home today card shows the
+three counts and the composed summary, and the summary counts items without naming them. There was no
+test to change and no surface to prove a fix against.
+
+**What breaks if it stays.** The first consumer that lists stale follow-ups, including a future digest
+detail view, shows an id fragment where the operator's note belongs, and it will not look broken enough
+for anyone to report.
+
+**Fix:** read `notes` first and keep the pinned `note` as a fallback, or drop `note` from the query
+shape and correct the tool schema that pins it. **Proof it is done:** a test over a follow-up row with
+`notes` set that expects the note to appear in the label.
+

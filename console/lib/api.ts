@@ -16,7 +16,20 @@
  *    that could name a tenant is a client that can read one.
  */
 
-import type { SearchResponse, ThreadMessagesResponse, ThreadRow, ThreadsResponse } from './types'
+import type {
+  CrmContact,
+  CrmFollowup,
+  CrmListResponse,
+  CrmSchedule,
+  CrmTask,
+  CustomerRow,
+  DigestResponse,
+  QueueResponse,
+  SearchResponse,
+  ThreadMessagesResponse,
+  ThreadRow,
+  ThreadsResponse,
+} from './types'
 
 /** A failed plane call, carrying what the plane actually said. */
 export class ApiError extends Error {
@@ -198,3 +211,106 @@ export const deleteThread = (id: string): Promise<{ ok: boolean; id: string }> =
 /** `GET /api/agent/search?query=` — semantic search over the caller's threads. */
 export const searchThreads = (query: string): Promise<SearchResponse> =>
   get<SearchResponse>(`/api/agent/search?query=${encodeURIComponent(query)}`)
+
+/**
+ * Typed clients for the CRM read surface (`src/api/crm.ts`).
+ *
+ * These are the console's only way to the Records lists and to the dashboard
+ * cards. They are read only on purpose: every CRM mutation goes through the
+ * agent's staging plus the approval queue, so there is no `create`/`update`
+ * sibling here to be tempted by.
+ */
+
+/**
+ * Serialise only the keys a caller set. An empty string is dropped rather than
+ * sent as `name=`: the plane treats a present-but-empty filter as its own value,
+ * and an `ILIKE '%%'` is not the same request as no filter at all once someone
+ * adds an index or a stricter parser.
+ */
+function qs(params: Record<string, string | number | undefined>): string {
+  const search = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === '') continue
+    search.set(key, String(value))
+  }
+  const serialised = search.toString()
+  return serialised ? `?${serialised}` : ''
+}
+
+/** `GET /api/crm/customers` — paged, with name/city/tags filters. */
+export const listCustomers = (
+  params: {
+    limit?: number
+    offset?: number
+    name?: string
+    city?: string
+    tags?: string[]
+  } = {},
+): Promise<CrmListResponse<CustomerRow>> =>
+  get<CrmListResponse<CustomerRow>>(
+    `/api/crm/customers${qs({
+      limit: params.limit,
+      offset: params.offset,
+      name: params.name,
+      city: params.city,
+      tags: params.tags?.join(','),
+    })}`,
+  )
+
+/** `GET /api/crm/contacts` — paged, filterable by parent customer and name. */
+export const listContacts = (
+  params: { limit?: number; offset?: number; customerId?: string; name?: string } = {},
+): Promise<CrmListResponse<CrmContact>> =>
+  get<CrmListResponse<CrmContact>>(
+    `/api/crm/contacts${qs({
+      limit: params.limit,
+      offset: params.offset,
+      customerId: params.customerId,
+      name: params.name,
+    })}`,
+  )
+
+/** `GET /api/crm/followups` — paged, filterable by parent customer. */
+export const listFollowups = (
+  params: { limit?: number; offset?: number; customerId?: string } = {},
+): Promise<CrmListResponse<CrmFollowup>> =>
+  get<CrmListResponse<CrmFollowup>>(
+    `/api/crm/followups${qs({
+      limit: params.limit,
+      offset: params.offset,
+      customerId: params.customerId,
+    })}`,
+  )
+
+/** `GET /api/crm/tasks` — paged, filterable by parent customer. */
+export const listTasks = (
+  params: { limit?: number; offset?: number; customerId?: string } = {},
+): Promise<CrmListResponse<CrmTask>> =>
+  get<CrmListResponse<CrmTask>>(
+    `/api/crm/tasks${qs({
+      limit: params.limit,
+      offset: params.offset,
+      customerId: params.customerId,
+    })}`,
+  )
+
+/** `GET /api/crm/schedules` — paged, filterable by parent customer and date. */
+export const listSchedules = (
+  params: { limit?: number; offset?: number; customerId?: string; date?: string } = {},
+): Promise<CrmListResponse<CrmSchedule>> =>
+  get<CrmListResponse<CrmSchedule>>(
+    `/api/crm/schedules${qs({
+      limit: params.limit,
+      offset: params.offset,
+      customerId: params.customerId,
+      date: params.date,
+    })}`,
+  )
+
+/** `GET /api/digest?date=` — the morning digest the Home today card reads. */
+export const getDigest = (date: string): Promise<DigestResponse> =>
+  get<DigestResponse>(`/api/digest${qs({ date })}`)
+
+/** `GET /api/approvals/pending` — the queue the Home awaiting decision card reads. */
+export const listPendingApprovals = (): Promise<QueueResponse> =>
+  get<QueueResponse>('/api/approvals/pending')

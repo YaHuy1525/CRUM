@@ -232,7 +232,7 @@ describe('ApprovalQueue', () => {
     render(<ApprovalQueue />)
 
     expect(await screen.findByText('Nothing waiting for a decision.')).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Decided' }))
+    await user.click(screen.getByRole('tab', { name: 'Decided' }))
 
     expect(await screen.findByText(/Record c-42/)).toBeInTheDocument()
     expect(server.last('/api/approvals/resolved')?.url).toBe('/api/approvals/resolved')
@@ -252,7 +252,7 @@ describe('ApprovalQueue', () => {
     ])
     render(<ApprovalQueue />)
 
-    await user.click(await screen.findByRole('button', { name: 'Decided' }))
+    await user.click(await screen.findByRole('tab', { name: 'Decided' }))
     await user.click(await screen.findByRole('button', { name: 'Show receipt' }))
     expect(await screen.findByText('Signature DOES NOT match this receipt')).toBeInTheDocument()
   })

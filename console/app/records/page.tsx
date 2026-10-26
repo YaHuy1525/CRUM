@@ -1,19 +1,39 @@
 import Link from 'next/link'
 
 import { PageHeader } from '@/components/PageHeader'
+import { RecordsBrowser } from '@/components/records/RecordsBrowser'
+import { isRecordObject } from '@/lib/records'
 
 /**
- * Records index. §"Route map": `/records` is the browsable home for CRM objects.
+ * Records index. §"Route map": `/records` is the browsable home for CRM objects,
+ * with five sub-tabs backed by the read-only list endpoints in `src/api/crm.ts`.
  *
- * The searchable object list is wired to the records endpoints in a later phase,
- * so this renders an honest empty state rather than fabricated rows. The capture
- * flow that already works today — `/records/new`, the paste-to-prefill form — is
- * surfaced as the primary action, and a deep link to any single record resolves
- * at `/records/customers/[id]`. Nothing here invents data.
+ * The tab comes from `?object=` and is validated here rather than in the client:
+ * a hand-typed link like `/records?object=tasks` is a legitimate way in (the Home
+ * today card uses it), and an unknown value should land on Customers instead of
+ * rendering an empty panel. Reading `searchParams` on the server also keeps
+ * `useSearchParams` — and the Suspense boundary it demands — out of the browser
+ * component entirely.
+ *
+ * The key list comes from `lib/records.ts`, not from the browser component. That
+ * component is `'use client'`, so a value imported from it arrives here as a
+ * client reference and every call on it throws at request time. Only the type
+ * may cross that boundary.
+ *
+ * There is no write action on this page. Creating a record means the assistant
+ * stages a draft and the approval queue commits it, so the only "new" affordance
+ * is the capture flow, which hands its parsed text to a chat.
  */
-export default function RecordsIndexPage() {
+export default async function RecordsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ object?: string }>
+}) {
+  const { object } = await searchParams
+  const initialObject = isRecordObject(object) ? object : 'customers'
+
   return (
-    <main className="mx-auto w-full max-w-3xl px-8 py-10">
+    <main className="mx-auto w-full max-w-5xl px-8 py-10">
       <PageHeader
         title="Records"
         description="CRM objects you can read, capture, and route through the approval queue."
@@ -27,27 +47,7 @@ export default function RecordsIndexPage() {
         }
       />
 
-      <div
-        className="mt-6 rounded-lg border border-dashed border-border-strong bg-bg-card p-12 text-center"
-        data-testid="records-empty"
-      >
-        <p className="text-sm font-medium text-text-secondary">No records to browse yet.</p>
-        <p className="mx-auto mt-1 max-w-prose text-sm text-text-muted">
-          The searchable object list lands here soon. In the meantime, capture a record from pasted
-          text with{' '}
-          <Link
-            href="/records/new"
-            className="text-accent-bright underline-offset-4 hover:underline"
-          >
-            New from text
-          </Link>
-          , or open a specific customer by its id at{' '}
-          <code className="rounded bg-bg-raised px-1.5 py-0.5 font-mono text-xs text-text-secondary">
-            /records/customers/&lt;id&gt;
-          </code>
-          .
-        </p>
-      </div>
+      <RecordsBrowser initialObject={initialObject} />
     </main>
   )
 }

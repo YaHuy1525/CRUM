@@ -1,8 +1,13 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+
 import { ApiError, get, post, describeError } from '../lib/api'
 import type { DecisionResponse, QueueItem, QueueResponse } from '../lib/types'
+import { PageHeader } from './PageHeader'
+import { Badge } from './ui/badge'
+import { Button } from './ui/button'
+import { Tabs, TabsList, TabsTrigger } from './ui/tabs'
 import { ReceiptView } from './ReceiptView'
 
 /**
@@ -24,6 +29,12 @@ import { ReceiptView } from './ReceiptView'
  * 3. **No `tenantId` prop.** The caller's tenant comes from the identity the
  *    middleware attaches. Accepting it as a prop would let the browser choose
  *    which tenant's queue to render (§13.2).
+ *
+ * Phase 4 moved the presentation onto the primitives and the token utilities:
+ * `PageHeader` for the title row with the pending count as a badge, Radix `Tabs`
+ * for the two states, `Button`/`Badge` for every control, and the danger, warning
+ * and success token triples for the outcome bands. Behaviour is untouched: same
+ * endpoints, same decision states, same words on screen.
  */
 
 type Tab = 'pending' | 'resolved'
@@ -43,6 +54,17 @@ function decisionState(item: QueueItem): 'decidable' | 'expired' | 'decided' {
   if (item.committed_at) return 'decided'
   if (new Date(item.expires_at).getTime() <= Date.now()) return 'expired'
   return 'decidable'
+}
+
+/**
+ * Risk colour by band, not by presence: anything high enough to matter reads as
+ * danger, a middling score reads as attention, and a low score stays neutral
+ * instead of being painted as safe.
+ */
+function riskVariant(score: number): 'danger' | 'warning' | 'secondary' {
+  if (score >= 70) return 'danger'
+  if (score >= 40) return 'warning'
+  return 'secondary'
 }
 
 export function ApprovalQueue() {
@@ -134,138 +156,169 @@ export function ApprovalQueue() {
   }
 
   return (
-    <div className="approval-queue">
-      <div className="queue-header">
-        <h1>Approvals</h1>
-        <p className="page-sub">Every write to the CRM waits here for a human decision.</p>
-      </div>
-      <div className="tabs">
-        <button
-          className={tab === 'pending' ? 'active focus-ring' : 'focus-ring'}
-          onClick={() => setTab('pending')}
-          aria-current={tab === 'pending' ? 'true' : undefined}
-        >
-          Pending
-        </button>
-        <button
-          className={tab === 'resolved' ? 'active focus-ring' : 'focus-ring'}
-          onClick={() => setTab('resolved')}
-          aria-current={tab === 'resolved' ? 'true' : undefined}
-        >
-          Decided
-        </button>
-        <button onClick={() => void load()} className="focus-ring" aria-label="Refresh queue">
+    <div className="mx-auto w-full max-w-4xl px-8 py-10">
+      <PageHeader
+        title="Governance"
+        description="Every write to the CRM waits here for a human decision."
+        actions={
+          tab === 'pending' && !loading && !listError && items.length > 0 ? (
+            <Badge variant="warning">{items.length} awaiting</Badge>
+          ) : undefined
+        }
+      />
+
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+        <Tabs value={tab} onValueChange={(next) => setTab(next as Tab)}>
+          <TabsList aria-label="Queue state">
+            <TabsTrigger value="pending">Pending</TabsTrigger>
+            <TabsTrigger value="resolved">Decided</TabsTrigger>
+          </TabsList>
+        </Tabs>
+        <Button variant="outline" size="sm" onClick={() => void load()} aria-label="Refresh queue">
           Reload
-        </button>
+        </Button>
       </div>
 
-      {loading && <p>Loading approval queue…</p>}
+      {loading ? <p className="mt-4 text-sm text-text-muted">Loading approval queue…</p> : null}
 
-      {listError && (
-        <div className="error-banner" role="alert">
-          {listError}
+      {listError ? (
+        <div
+          role="alert"
+          className="mt-4 rounded-md border border-danger-line bg-danger-soft px-3 py-2 text-sm text-danger"
+        >
+          <p className="break-words">{listError}</p>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void load()}
+            className="mt-2 h-7 px-2 text-danger hover:bg-danger-soft hover:text-danger"
+          >
+            Retry
+          </Button>
         </div>
-      )}
+      ) : null}
 
-      {justDecided && (
-        <div className="just-decided">
-          <p className="hint ok">
-            {justDecided.approved ? 'Approved' : 'Rejected'} draft <code>{justDecided.draftId.slice(0, 8)}</code> - the signed
-            receipt is the evidence it happened:
+      {justDecided ? (
+        <div className="mt-4 rounded-lg border border-success-line bg-success-soft p-4">
+          <p className="text-sm text-text-secondary">
+            {justDecided.approved ? 'Approved' : 'Rejected'} draft{' '}
+            <code className="font-mono text-text-primary">{justDecided.draftId.slice(0, 8)}</code> -
+            the signed receipt is the evidence it happened:
           </p>
           <ReceiptView receiptId={justDecided.receiptId} />
         </div>
-      )}
+      ) : null}
 
-      {!loading && !listError && items.length === 0 && (
-        <p>{tab === 'pending' ? 'Nothing waiting for a decision.' : 'No decisions recorded yet.'}</p>
-      )}
+      {!loading && !listError && items.length === 0 ? (
+        <div className="mt-4 rounded-lg border border-dashed border-border-strong bg-bg-card p-8 text-center text-sm text-text-muted">
+          {tab === 'pending' ? 'Nothing waiting for a decision.' : 'No decisions recorded yet.'}
+        </div>
+      ) : null}
 
-      <ul>
+      <ul className="mt-4 space-y-3">
         {items.map((item) => {
           const state = decisionState(item)
           const note = feedback[item.id]
           return (
-            <li key={item.id} className="queue-item">
-              <div className="risk-badge">Risk: {item.risk_score}</div>
-              <div className="object-info">
-                {item.operation} {item.object_type}
-                {item.target_id ? ` (${item.target_id})` : ''} · gate {item.gate}
-              </div>
-              <div className="payload-preview">
-                <pre>{JSON.stringify(item.payload, null, 2)}</pre>
-              </div>
+            <li key={item.id} className="rounded-lg border border-border bg-bg-card p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm text-text-primary">
+                    {item.operation} {item.object_type}
+                    {item.target_id ? ` (${item.target_id})` : ''} · gate {item.gate}
+                  </p>
 
-              {tab === 'pending' && (
-                <div className="meta">
-                  <span>Requested by {item.requested_by}</span>
-                  <span>
-                    {state === 'expired' ? (
-                      <em>Expired {new Date(item.expires_at).toLocaleString()}</em>
-                    ) : (
-                      <em>Expires {new Date(item.expires_at).toLocaleString()}</em>
-                    )}
-                  </span>
-                  {/* The §11.3 join. `run_id` is 'pending' for approval tools that
-                      cannot observe their own run, so a null suspension here is
-                      normal and is not shown as a defect. */}
-                  {item.suspension && <span>Suspended run {item.suspension.run_id}</span>}
+                  {tab === 'pending' ? (
+                    <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-muted">
+                      <span>Requested by {item.requested_by}</span>
+                      <span>
+                        {state === 'expired' ? (
+                          <em>Expired {new Date(item.expires_at).toLocaleString()}</em>
+                        ) : (
+                          <em>Expires {new Date(item.expires_at).toLocaleString()}</em>
+                        )}
+                      </span>
+                      {/* The §11.3 join. `run_id` is 'pending' for approval tools that
+                          cannot observe their own run, so a null suspension here is
+                          normal and is not shown as a defect. */}
+                      {item.suspension ? <span>Suspended run {item.suspension.run_id}</span> : null}
+                    </div>
+                  ) : (
+                    <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-muted">
+                      {item.committed_at ? (
+                        <span>Committed {new Date(item.committed_at).toLocaleString()}</span>
+                      ) : null}
+                      {item.rejected_at ? (
+                        <span>Rejected {new Date(item.rejected_at).toLocaleString()}</span>
+                      ) : null}
+                      {item.committed_record_id ? <span>Record {item.committed_record_id}</span> : null}
+                    </div>
+                  )}
                 </div>
-              )}
 
-              {tab === 'resolved' && (
-                <div className="meta">
-                  {item.committed_at && <span>Committed {new Date(item.committed_at).toLocaleString()}</span>}
-                  {item.rejected_at && <span>Rejected {new Date(item.rejected_at).toLocaleString()}</span>}
-                  {item.committed_record_id && <span>Record {item.committed_record_id}</span>}
-                </div>
-              )}
+                <Badge variant={riskVariant(item.risk_score)}>Risk: {item.risk_score}</Badge>
+              </div>
 
-              {tab === 'pending' && state === 'decidable' && (
-                <div className="actions">
-                  <button
-                    className="approve focus-ring"
+              <pre className="mt-3 max-h-64 overflow-auto rounded-md border border-border bg-bg-sunken p-3 font-mono text-xs leading-relaxed text-text-secondary">
+                {JSON.stringify(item.payload, null, 2)}
+              </pre>
+
+              {tab === 'pending' && state === 'decidable' ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button
                     disabled={pending[item.id] === true}
                     onClick={() => void decide(item, true)}
                   >
                     Approve
-                  </button>
-                  <button
-                    className="reject focus-ring"
+                  </Button>
+                  <Button
+                    variant="outline"
                     disabled={pending[item.id] === true}
                     onClick={() => void decide(item, false)}
                   >
                     Reject
-                  </button>
+                  </Button>
                 </div>
-              )}
+              ) : null}
 
-              {tab === 'pending' && state !== 'decidable' && (
-                <p className="hint">
+              {tab === 'pending' && state !== 'decidable' ? (
+                <p className="mt-3 text-sm text-text-muted">
                   {state === 'expired'
                     ? 'No decision possible: the window has closed.'
                     : 'Already decided; see the Decided tab.'}
                 </p>
-              )}
+              ) : null}
 
-              {note && (
-                <p className={note.kind === 'ok' ? 'hint ok' : 'hint bad'} role="status">
+              {note ? (
+                <p
+                  role="status"
+                  className={
+                    note.kind === 'ok'
+                      ? 'mt-3 rounded-md border border-success-line bg-success-soft px-3 py-2 text-sm text-success'
+                      : 'mt-3 rounded-md border border-danger-line bg-danger-soft px-3 py-2 text-sm text-danger'
+                  }
+                >
                   {note.text}
                 </p>
-              )}
+              ) : null}
 
-              {item.receipt_id && (
-                <div className="receipt-toggle">
-                  <button
-                    className="focus-ring"
-                    onClick={() => setOpenReceipt(openReceipt === item.receipt_id ? null : item.receipt_id)}
+              {item.receipt_id ? (
+                <div className="mt-3">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      setOpenReceipt(openReceipt === item.receipt_id ? null : item.receipt_id)
+                    }
                     aria-expanded={openReceipt === item.receipt_id}
                   >
                     {openReceipt === item.receipt_id ? 'Hide' : 'Show'} receipt
-                  </button>
-                  {openReceipt === item.receipt_id && <ReceiptView receiptId={item.receipt_id} />}
+                  </Button>
+                  {openReceipt === item.receipt_id ? (
+                    <ReceiptView receiptId={item.receipt_id} />
+                  ) : null}
                 </div>
-              )}
+              ) : null}
             </li>
           )
         })}
