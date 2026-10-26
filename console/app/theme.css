@@ -66,12 +66,18 @@
     rgba(245, 180, 69, 0.07) 100%
   );
 
-  /* ── Typography ────────────────────────────────────────────────── */
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+  /* ── Typography ──────────────────────────────────────────────────
+   * Each stack opens with the custom property `next/font/google` mints in
+   * `app/layout.tsx` for the self-hosted copy of that family, then keeps the
+   * family name and the system fallbacks: the variables are declared on the
+   * `<html>` element by the font loader rather than here, so a surface rendered
+   * outside the shell still resolves. */
+  --font-sans: var(--font-inter), 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
     'Helvetica Neue', sans-serif;
-  --font-display: 'Source Serif 4', 'Iowan Old Style', Georgia,
+  --font-display: var(--font-source-serif), 'Source Serif 4', 'Iowan Old Style', Georgia,
     'Times New Roman', serif;
-  --font-mono: 'JetBrains Mono', 'Fira Code', 'SFMono-Regular', Consolas, monospace;
+  --font-mono: var(--font-jetbrains-mono), 'JetBrains Mono', 'Fira Code', 'SFMono-Regular', Consolas,
+    monospace;
 
   --text-xs: 12px;
   --text-sm: 13px;
@@ -119,17 +125,27 @@
   --transition: var(--dur) var(--ease);
 
   /* ── Layout ─────────────────────────────────────────────────────── */
+  /* The only shell dimension still expressed as a token. The legacy header row
+   * and the two chats panes that once had tokens here are gone: the header
+   * became the sidebar in the IA redesign, and the pane widths are Tailwind
+   * utilities on the chats section now. */
   --sidebar-w: 240px;
-  --header-h: 0px; /* kept for compatibility; the shell is a sidebar now */
-  --pane-sessions-w: 264px;
-  --pane-context-w: 332px;
 }
 
-/* Respect users who ask for less motion. */
+/* Respect users who ask for less motion.
+ *
+ * Duration alone is not enough for this console, which runs three infinite
+ * loops: `animate-pulse` on every skeleton, `animate-cursor-blink` while the
+ * agent streams, and the fade/zoom Radix puts on dialogs, menus and tooltips.
+ * A 0.001ms infinite animation still restarts forever, so the iteration count
+ * is pinned to one as well, and `scroll-behavior` is forced back to instant
+ * because the app-main column is a scroll container. */
 @media (prefers-reduced-motion: reduce) {
   * {
     animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
   }
 }
 
@@ -138,4 +154,16 @@
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: var(--radius-sm);
+}
+
+/* The ring must not animate in. Tailwind's `transition-colors` includes
+ * `outline-color` in its property list, so a `.focus-ring` element that also
+ * carries it fades the outline from the element's own text colour to emerald
+ * over 180ms. A keyboard user sees a pale, then grey, then green ring on the
+ * very element they are trying to locate, and a screenshot of the first frame
+ * shows no ring at all. Listing the properties by hand (Tailwind's set minus
+ * outline-color) keeps every other colour transition on the element and makes
+ * the ring appear on the frame focus lands. */
+.focus-ring {
+  transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
 }

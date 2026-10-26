@@ -58,7 +58,7 @@ export function CustomerDetail({ customerId }: { customerId: string }) {
   if (customer.isError) {
     if (customer.error instanceof ApiError && customer.error.status === 404) notFound()
     return (
-      <div className="mx-auto w-full max-w-5xl px-8 py-10">
+      <div className="mx-auto w-full max-w-5xl px-4 py-6 md:px-8 md:py-10">
         <div
           role="alert"
           className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-danger-line bg-danger-soft px-3 py-2 text-sm text-danger"
@@ -79,7 +79,7 @@ export function CustomerDetail({ customerId }: { customerId: string }) {
 
   if (customer.isPending) {
     return (
-      <div className="mx-auto w-full max-w-5xl px-8 py-10">
+      <div className="mx-auto w-full max-w-5xl px-4 py-6 md:px-8 md:py-10">
         <p className="sr-only" role="status">
           Loading customer
         </p>
@@ -96,7 +96,7 @@ export function CustomerDetail({ customerId }: { customerId: string }) {
     .join(' · ')
 
   return (
-    <main className="mx-auto w-full max-w-5xl px-8 py-10">
+    <main className="mx-auto w-full max-w-5xl px-4 py-6 md:px-8 md:py-10">
       <PageHeader
         title={row.name}
         description={description || 'Customer record'}

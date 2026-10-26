@@ -156,7 +156,7 @@ export function ApprovalQueue() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-4xl px-8 py-10">
+    <div className="mx-auto w-full max-w-4xl px-4 py-6 md:px-8 md:py-10">
       <PageHeader
         title="Governance"
         description="Every write to the CRM waits here for a human decision."

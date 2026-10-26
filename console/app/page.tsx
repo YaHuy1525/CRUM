@@ -47,7 +47,7 @@ export default function HomePage() {
   }, [])
 
   return (
-    <main className="mx-auto w-full max-w-5xl px-8 py-10">
+    <main className="mx-auto w-full max-w-5xl px-4 py-6 md:px-8 md:py-10">
       <PageHeader
         title="Welcome back."
         description={dateLine || 'Your workbench at a glance.'}

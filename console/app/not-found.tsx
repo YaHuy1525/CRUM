@@ -8,7 +8,7 @@ import Link from 'next/link'
  */
 export default function NotFound() {
   return (
-    <main className="mx-auto w-full max-w-2xl px-8 py-16" data-testid="not-found">
+    <main className="mx-auto w-full max-w-2xl px-4 py-10 md:px-8 md:py-16" data-testid="not-found">
       <p className="font-mono text-sm text-accent-bright">404</p>
       <h1 className="mt-2 font-display text-3xl font-normal tracking-tight text-text-primary">
         We could not find that page.

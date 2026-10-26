@@ -10,7 +10,11 @@ import { useEffect } from 'react'
  *
  * The colours below are inline literals matching the CRUM graphite-and-emerald
  * tokens; they are a fallback for exactly this broken-shell case, not a second
- * source of truth. Honest copy, a retry, and a hard reload as the escape hatch.
+ * source of truth. The one style block here exists for the same reason: the
+ * console's `.focus-ring` utility lives in `theme.css`, which is not loaded on
+ * this surface, so the keyboard focus outline the rest of the app gets from that
+ * utility has to be restated inline. Honest copy, a retry, and a hard reload as
+ * the escape hatch.
  */
 export default function GlobalError({
   error,
@@ -25,6 +29,15 @@ export default function GlobalError({
 
   return (
     <html lang="en">
+      <head>
+        <style>{`
+          button:focus-visible,
+          a:focus-visible {
+            outline: 2px solid #34d399;
+            outline-offset: 2px;
+          }
+        `}</style>
+      </head>
       <body
         style={{
           margin: 0,

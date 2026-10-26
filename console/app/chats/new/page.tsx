@@ -26,7 +26,7 @@ export default async function NewChatPage({
   const initialText = typeof prompt === 'string' ? prompt.slice(0, MAX_PROMPT) : ''
 
   return (
-    <main className="mx-auto w-full max-w-3xl px-8 py-10">
+    <main className="mx-auto w-full max-w-3xl px-4 py-6 md:px-8 md:py-10">
       <PageHeader
         title="New chat"
         description="Start a conversation with the CRUM assistant."

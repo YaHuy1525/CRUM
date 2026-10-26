@@ -77,6 +77,20 @@ function errorFromBody(status: number, body: unknown): ApiError {
 }
 
 /**
+ * The one sentence for "this request never reached a plane that could answer in its
+ * own vocabulary". `status` is 0 when `fetch` itself threw and the proxy's own status
+ * when the proxy answered instead; either way the panel has to say which port to go
+ * and check, because that is the only actionable fact a browser-side caller has.
+ */
+function planeUnreachable(path: string, status: number, cause: string): ApiError {
+  return new ApiError(
+    status,
+    'network_unreachable',
+    `Could not reach ${path.split('/').slice(0, 3).join('/')}. Is the server on :4113 (REST) / :4111 (chat) running? (${cause})`,
+  )
+}
+
+/**
  * One GET/POST/DELETE round trip, JSON in and out, with failures thrown rather
  * than returned. A non-2xx response is parsed for its body first, because the
  * plane's error bodies are the diagnosis.
@@ -98,31 +112,39 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   } catch (err) {
     // The rewrite target was down, so Next returned a connection failure rather
     // than a status. Naming the plane is what makes this debuggable from a browser.
-    throw new ApiError(
-      0,
-      'network_unreachable',
-      `Could not reach ${path.split('/').slice(0, 3).join('/')}. Is the server on :4113 (REST) / :4111 (chat) running? (${
-        err instanceof Error ? err.message : String(err)
-      })`,
-    )
+    throw planeUnreachable(path, 0, err instanceof Error ? err.message : String(err))
   }
 
   // 204 has no body; everything else is read as text and then parsed, so a plane
-  // that crashes into an HTML error page becomes a readable message instead of a
-  // `JSON.parse` throw inside a `.then`.
+  // that answers in something other than JSON still produces a readable message
+  // instead of a `JSON.parse` throw inside a `.then`.
   if (response.status === 204) return undefined as T
 
   const text = await response.text()
   let parsed: unknown = null
+  let answeredInJson = false
   if (text.length > 0) {
     try {
       parsed = JSON.parse(text)
+      answeredInJson = true
     } catch {
       parsed = { detail: text.slice(0, 300) }
     }
   }
 
-  if (!response.ok) throw errorFromBody(response.status, parsed)
+  if (!response.ok) {
+    // A 5xx with a body that is not JSON was not written by the plane. `src/api/serve.ts`
+    // installs `app.onError` and `app.notFound` precisely so that a thrown route and an
+    // unmatched path both still answer as JSON; the only other writer of a plain-text 500
+    // on this path is the Next rewrite proxy in `next.config.js`, which produces it when
+    // nothing is listening on the upstream port. Reporting that as
+    // `request_failed (500): Internal Server Error` tells the operator to go debug a
+    // server that is not even running, so it keeps the unreachable vocabulary.
+    if (!answeredInJson && text.length > 0 && response.status >= 500) {
+      throw planeUnreachable(path, response.status, `proxy answered HTTP ${response.status} ${text.slice(0, 80).trim()}`)
+    }
+    throw errorFromBody(response.status, parsed)
+  }
   return parsed as T
 }
 

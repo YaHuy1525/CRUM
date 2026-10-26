@@ -10,9 +10,9 @@ import { cn } from '@/lib/utils'
  * Colour class names are mapped onto the step-2 Tailwind utilities that point
  * at `theme.css` (`bg-accent`/`text-accent-fg` for the decision colour,
  * `bg-bg-raised`/`bg-bg-hover` for neutral surfaces, `bg-danger` for
- * destructive), so the primitive and the legacy globals.css rules speak one
- * token language. The focus ring is the same emerald outline the rest of the
- * console uses.
+ * destructive), so the primitive and the rest of the console speak one token
+ * language. The focus ring is the same emerald outline the rest of the console
+ * uses.
  */
 const buttonVariants = cva(
   "inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-danger aria-invalid:ring-danger/20 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",

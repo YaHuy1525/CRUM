@@ -54,7 +54,10 @@ const FILTER_KIND: Partial<Record<RecordObject, 'name' | 'date'>> = {
 
 function CaptureLink() {
   return (
-    <Link href="/records/new" className="text-accent-bright underline-offset-4 hover:underline">
+    <Link
+      href="/records/new"
+      className="focus-ring text-accent-bright underline-offset-4 hover:underline"
+    >
       Capture one from text
     </Link>
   )

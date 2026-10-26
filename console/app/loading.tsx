@@ -11,7 +11,7 @@ import { Skeleton } from '@/components/ui/skeleton'
  */
 export default function Loading() {
   return (
-    <main className="mx-auto w-full max-w-3xl px-8 py-10" aria-busy="true" aria-live="polite">
+    <main className="mx-auto w-full max-w-3xl px-4 py-6 md:px-8 md:py-10" aria-busy="true" aria-live="polite">
       <span className="sr-only">Loading…</span>
       <div className="flex flex-wrap items-end justify-between gap-4 border-b border-border pb-5">
         <div className="space-y-2">

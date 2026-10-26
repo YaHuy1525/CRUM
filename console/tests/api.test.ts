@@ -60,11 +60,42 @@ describe('request', () => {
   })
 
   it('reports an unparseable body as text rather than throwing a parse error', async () => {
-    vi.mocked(fetch).mockResolvedValue(jsonResponse(500, '<!doctype html><h1>Boom</h1>'))
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(400, '<!doctype html><h1>Boom</h1>'))
     const err = await rejection(get('/api/usage'))
     expect(err).toBeInstanceOf(ApiError)
-    expect(err.status).toBe(500)
+    expect(err.status).toBe(400)
+    expect(err.code).toBe('request_failed')
     expect(err.detail).toContain('Boom')
+  })
+
+  it('calls a plain-text 5xx an unreachable plane rather than a server bug', async () => {
+    // `src/api/serve.ts` answers every plane failure as JSON, including thrown routes
+    // (`app.onError`) and unmatched paths (`app.notFound`). A 500 whose body is the
+    // framework's bare text therefore came from the Next rewrite proxy in
+    // `next.config.js`, which writes it when the upstream port is not listening, and
+    // the panel has to name that port instead of sending the operator to debug a
+    // server that is not running.
+    vi.mocked(fetch).mockResolvedValue(
+      new Response('Internal Server Error', { status: 500 }),
+    )
+    const err = await rejection(get('/api/usage?from=2026-10-19&to=2026-10-26'))
+    expect(err.code).toBe('network_unreachable')
+    expect(err.status).toBe(500)
+    expect(err.detail).toContain('Could not reach /api/usage')
+    expect(err.detail).toContain(':4113')
+    expect(describeError(err)).toContain(':4113')
+  })
+
+  it('keeps a JSON 503 from the plane as the plane own words', async () => {
+    // The other half of the line above: a 5xx that did answer in JSON is a server
+    // failure with a diagnosis, and relabelling it unreachable would hide it.
+    vi.mocked(fetch).mockResolvedValue(
+      jsonResponse(503, { error: 'metrics_unavailable', detail: 'no metrics store' }),
+    )
+    const err = await rejection(get('/api/usage'))
+    expect(err.code).toBe('metrics_unavailable')
+    expect(describeError(err)).toContain('no metrics store')
+    expect(describeError(err)).not.toContain(':4113')
   })
 
   it('reports a refused connection as unreachable rather than as an empty list', async () => {

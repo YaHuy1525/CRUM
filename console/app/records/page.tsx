@@ -33,7 +33,7 @@ export default async function RecordsPage({
   const initialObject = isRecordObject(object) ? object : 'customers'
 
   return (
-    <main className="mx-auto w-full max-w-5xl px-8 py-10">
+    <main className="mx-auto w-full max-w-5xl px-4 py-6 md:px-8 md:py-10">
       <PageHeader
         title="Records"
         description="CRM objects you can read, capture, and route through the approval queue."

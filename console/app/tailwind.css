@@ -3,18 +3,43 @@
  * theme.css stays the single source of truth for every design decision. This
  * file only teaches Tailwind's utility namespaces (--color-*, --radius-*,
  * --font-*, --shadow-*, --spacing-*) to point at those existing variables, so
- * `bg-bg-card` and the legacy `.rail-card` rule resolve to the same
- * `var(--bg-card)`. Nothing here redeclares a token value: every mapping is a
+ * every surface utility resolves to the same `var(--bg-card)`. Nothing here
+ * redeclares a token value: every mapping is a
  * `var(--token)` reference and the `inline` option means Tailwind writes the
  * reference straight into the generated utility instead of minting a competing
  * custom property that could shadow theme.css.
  *
  * Import order in layout.tsx is deliberate and must not change:
- *   theme.css (tokens)  ->  tailwind.css (this)  ->  globals.css (legacy rules)
+ *   theme.css (tokens)  ->  tailwind.css (this)
+ *
+ * The `@layer base` block at the bottom is the element default layer the legacy
+ * stylesheet used to provide. It lives in a layer on purpose: an unlayered rule
+ * outranks every Tailwind utility in the cascade, so the old `a { color }` and
+ * `h1 { font-size }` rules silently beat the utility classes on migrated
+ * components. Inside `@layer base` a utility always wins, which is the behaviour
+ * the component layer was written assuming.
  */
 @import 'tailwindcss';
 
 @theme inline {
+  /* ── Breakpoints ────────────────────────────────────────────────────
+   * sm / md / lg / xl / 2xl stay at Tailwind's defaults and are the content
+   * contract: 1 column under sm, 2 under md, the full rail from lg. `nav` is
+   * the one CRUM-specific breakpoint, at the width where a 240px permanent
+   * sidebar stops paying for itself and the shell collapses to a horizontal
+   * strip. It replaces the `@media (max-width: 900px)` block the legacy
+   * stylesheet carried, so the collapse point is unchanged. */
+  --breakpoint-nav: 900px;
+
+  /* ── Content column contract ────────────────────────────────────────
+   * Every page renders one `<main className="mx-auto w-full max-w-*xl px-4
+   * py-6 md:px-8 md:py-10">`: a centred column whose cap says how dense the
+   * page is (2xl error and 404, 3xl single-thread reading, 4xl queue and usage,
+   * 5xl records and home, 6xl the conversation split), with the gutter dropping
+   * from 32px to 16px below `md` so narrow screens keep the line length rather
+   * than the margins. Wide data inside a column scrolls in its own
+   * `overflow-x-auto` wrapper instead of widening the page. */
+
   /* ── Surfaces ─────────────────────────────────────────────────────── */
   --color-bg-base: var(--bg-base);
   --color-bg-sunken: var(--bg-sunken);
@@ -90,5 +115,89 @@
   }
   50% {
     opacity: 0;
+  }
+}
+
+/*
+ * Element defaults formerly provided by globals.css.
+ *
+ * These are intentionally inside @layer base, which Tailwind v4 evaluates
+ * before @layer components and @layer utilities. Any component utility
+ * (e.g., `text-text-secondary` on a `<p>` or `font-mono` on an `<a>`)
+ * overrides them without needing `!important`.
+ *
+ * Only rules that affect bare elements in pages and components are here.
+ * Component-specific classes (like `.nav-link` or `.usage-card`) have
+ * migrated onto their component's own Tailwind utilities.
+ */
+@layer base {
+  /* The canvas and default text color. */
+  body {
+    background: var(--bg-base);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: var(--text-base);
+    line-height: var(--line-height-prose);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    margin: 0;
+    padding: 0;
+  }
+
+  /* Display headings use the serif, tight tracking. The bottom margins are the
+   * values the legacy sheet carried, kept verbatim: this migration preserves
+   * what the console renders today rather than re-tuning spacing on the way. */
+  h1, h2, h3, h4 {
+    font-family: var(--font-display);
+    font-weight: 500;
+    letter-spacing: var(--tracking-tight);
+    line-height: var(--line-height-tight);
+    color: var(--text-primary);
+    margin: 0 0 var(--space-2);
+  }
+
+  h1 { font-size: var(--text-2xl); }
+  h2 { font-size: var(--text-xl); }
+  h3 { font-size: var(--text-lg); }
+  h4 { font-size: var(--text-md); }
+
+  /* Links default to accent, but components override freely. */
+  a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+  a:hover {
+    text-decoration: underline;
+  }
+
+  /* Mono for code contexts. */
+  code, pre {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+  }
+  pre {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  /* Buttons inherit font so the utility sets size/family explicitly. */
+  button {
+    font-family: inherit;
+  }
+
+  /* Lists reset (Tailwind preflight does most of this, reinforcing here). */
+  ul, ol {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  /* Prose spacing, kept at the legacy value rather than Tailwind's zero: every
+   * paragraph in the console has rendered with a 12px bottom margin since the
+   * stylesheet existed, and a polish phase that quietly tightens all copy is not
+   * a behaviour-preserving migration. */
+  p {
+    margin: 0 0 var(--space-3);
   }
 }

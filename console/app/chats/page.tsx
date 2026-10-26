@@ -12,7 +12,7 @@ import { ConversationList } from '@/components/chats/ConversationList'
  */
 export default function ChatsIndexPage() {
   return (
-    <main className="mx-auto w-full max-w-3xl px-8 py-10">
+    <main className="mx-auto w-full max-w-3xl px-4 py-6 md:px-8 md:py-10">
       <PageHeader
         title="Conversations"
         description="Your saved conversations, searchable and reopenable with their full transcript."

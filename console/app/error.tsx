@@ -27,7 +27,7 @@ export default function RouteError({
   }, [error])
 
   return (
-    <main className="mx-auto w-full max-w-2xl px-8 py-16">
+    <main className="mx-auto w-full max-w-2xl px-4 py-10 md:px-8 md:py-16">
       <div
         className="rounded-lg border border-danger-line bg-danger-soft p-8"
         role="alert"

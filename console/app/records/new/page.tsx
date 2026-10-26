@@ -76,7 +76,7 @@ export default function NewPage() {
   const prompt = result ? handoffPrompt(objectType, text, result) : ''
 
   return (
-    <main className="mx-auto w-full max-w-3xl px-8 py-10">
+    <main className="mx-auto w-full max-w-3xl px-4 py-6 md:px-8 md:py-10">
       <PageHeader
         title="New from text"
         description="Paste whatever you have. The parser fills in the fields, and creating the record stays in the chat."
