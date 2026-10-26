@@ -70,18 +70,88 @@ export interface ReceiptResponse {
   verification: 'valid' | 'invalid' | 'unavailable'
 }
 
-/** `GET /api/agent/threads` items. */
+/**
+ * A stored conversation thread.
+ *
+ * One shape serves three routes, and they do not agree on every field:
+ * - `GET /api/agent/threads` (the list, served by `src/api/agent.ts`) returns
+ *   `id/title/created_at/updated_at/resource_id` and **omits** `title_pinned`.
+ * - `GET /api/agent/threads/:id` and `PATCH /api/agent/threads/:id` (served by
+ *   `src/api/threads.ts`) return the same row **plus** `title_pinned`.
+ *
+ * `title_pinned` is therefore optional: reading it off a list row yields
+ * `undefined`, which callers must treat as "not pinned" rather than as a fact.
+ * This is a real Phase 2 contract asymmetry (the list row does not carry the
+ * pin flag), reported rather than papered over with a required field that the
+ * list endpoint never sends.
+ */
 export interface ThreadRow {
   id: string
   title: string | null
   created_at: string
   updated_at: string
   resource_id: string | null
+  /** True once a user rename pinned the title. Absent on the list read. */
+  title_pinned?: boolean
 }
 
 export interface ThreadsResponse {
   sessions: ThreadRow[]
   total: number
+}
+
+/**
+ * One part of a stored transcript message, in the AI SDK v5 UI-part vocabulary
+ * that `src/api/message-mapping.ts` normalises onto. The tool states are the
+ * four the console renders; `input`/`output`/`errorText` are present per state.
+ */
+export type ThreadMessagePart =
+  | { type: 'text'; text: string }
+  | { type: 'reasoning'; text: string }
+  | {
+      type: 'dynamic-tool'
+      toolName: string
+      toolCallId: string
+      state: 'input-streaming' | 'input-available' | 'output-available' | 'output-error'
+      input?: unknown
+      output?: unknown
+      errorText?: string
+    }
+
+/**
+ * A stored message as the messages endpoint returns it. `createdAt` is an ISO
+ * string because it crossed an HTTP boundary; `metadata` carries trace/span ids
+ * only when the framework persisted them, which in practice it does not yet
+ * (so `trace_available` on the page is false and feedback stays deferred).
+ */
+export interface ThreadMessage {
+  id: string
+  role: 'user' | 'assistant' | 'system'
+  createdAt: string
+  parts: ThreadMessagePart[]
+  metadata?: { traceId?: string; spanId?: string }
+}
+
+/** `GET /api/agent/threads/:id/messages?page&perPage`. */
+export interface ThreadMessagesResponse {
+  messages: ThreadMessage[]
+  total: number
+  page: number
+  perPage: number | false
+  hasMore: boolean
+  trace_available: boolean
+}
+
+/** One `GET /api/agent/search` hit. `created_at` is null when unobserved. */
+export interface SearchHit {
+  thread_id: string
+  snippet: string
+  score: number
+  created_at: string | null
+}
+
+export interface SearchResponse {
+  hits: SearchHit[]
 }
 
 /** `GET /api/knowledge/documents` items — the SELECT list, verbatim. */

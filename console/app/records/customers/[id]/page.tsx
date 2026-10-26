@@ -2,7 +2,7 @@
 
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
-import { CustomerPanel } from '@/components/ObjectPanel'
+import { CustomerPanel } from '@/components/chats/ContextPanel'
 
 /**
  * Deep link to one CRM object. §4.2.

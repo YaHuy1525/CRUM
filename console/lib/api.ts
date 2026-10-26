@@ -16,6 +16,8 @@
  *    that could name a tenant is a client that can read one.
  */
 
+import type { SearchResponse, ThreadMessagesResponse, ThreadRow, ThreadsResponse } from './types'
+
 /** A failed plane call, carrying what the plane actually said. */
 export class ApiError extends Error {
   readonly status: number
@@ -118,6 +120,12 @@ export const post = <T>(path: string, body?: unknown, headers?: Record<string, s
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     ...(headers ? { headers } : {}),
   })
+export const patch = <T>(path: string, body?: unknown, headers?: Record<string, string>): Promise<T> =>
+  request<T>(path, {
+    method: 'PATCH',
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    ...(headers ? { headers } : {}),
+  })
 export const del = <T>(path: string, headers?: Record<string, string>): Promise<T> =>
   request<T>(path, { method: 'DELETE', ...(headers ? { headers } : {}) })
 
@@ -135,3 +143,58 @@ export function describeError(err: unknown): string {
   }
   return err instanceof Error ? err.message : String(err)
 }
+
+/**
+ * Typed clients for the Chats section's conversation plane (`src/api/threads.ts`).
+ *
+ * Every one goes through `request`, so a 404 arrives as a thrown `ApiError`
+ * with `code === 'not_found'` (the caller decides whether that is a redirect or
+ * a banner), a 503 wiring fault keeps its `agent-not-wired` / `memory-not-wired`
+ * code, and nothing here attaches an identity header — `middleware.ts` injects
+ * identity server-side, and a client that named a tenant could read one.
+ */
+
+/** `GET /api/agent/threads` — the caller's own conversations, newest first. The
+ *  resource is derived server-side from the verified identity; there is no query
+ *  parameter for it, and this client never sends one. */
+export const listThreads = (): Promise<ThreadsResponse> =>
+  get<ThreadsResponse>('/api/agent/threads')
+
+/** `GET /api/agent/threads/:id` — metadata and existence check. 404 `not_found`
+ *  for a missing id or one owned by another user (deliberately indistinguishable). */
+export const getThread = (id: string): Promise<ThreadRow> =>
+  get<ThreadRow>(`/api/agent/threads/${encodeURIComponent(id)}`)
+
+/** `GET /api/agent/threads/:id/messages` — one page of the stored transcript. */
+export const getThreadMessages = (
+  id: string,
+  page = 1,
+  perPage = 50,
+): Promise<ThreadMessagesResponse> =>
+  get<ThreadMessagesResponse>(
+    `/api/agent/threads/${encodeURIComponent(id)}/messages?page=${page}&perPage=${perPage}`,
+  )
+
+/**
+ * `PATCH /api/agent/threads/:id` with `source: 'user'` — a manual rename. The
+ * plane pins the title so a later auto-title never overwrites it, and rejects an
+ * empty title with 400 `invalid_title`.
+ */
+export const renameThread = (id: string, title: string): Promise<ThreadRow> =>
+  patch<ThreadRow>(`/api/agent/threads/${encodeURIComponent(id)}`, { title, source: 'user' })
+
+/**
+ * `PATCH /api/agent/threads/:id` with `source: 'auto'` — the launch view's
+ * first-turn title. Applies only when the stored title is empty and unpinned;
+ * otherwise the plane is a no-op and the current title stands.
+ */
+export const autoTitleThread = (id: string, title: string): Promise<ThreadRow> =>
+  patch<ThreadRow>(`/api/agent/threads/${encodeURIComponent(id)}`, { title, source: 'auto' })
+
+/** `DELETE /api/agent/threads/:id` — deletes the thread and its messages. */
+export const deleteThread = (id: string): Promise<{ ok: boolean; id: string }> =>
+  del<{ ok: boolean; id: string }>(`/api/agent/threads/${encodeURIComponent(id)}`)
+
+/** `GET /api/agent/search?query=` — semantic search over the caller's threads. */
+export const searchThreads = (query: string): Promise<SearchResponse> =>
+  get<SearchResponse>(`/api/agent/search?query=${encodeURIComponent(query)}`)

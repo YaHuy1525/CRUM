@@ -1,16 +1,21 @@
-import Link from 'next/link'
-
-import { PageHeader } from '@/components/PageHeader'
+import { ConversationView } from '@/components/chats/ConversationView'
+import { ContextPanel } from '@/components/chats/ContextPanel'
+import { ThreadHeader } from '@/components/chats/ThreadHeader'
 
 /**
- * One conversation. §"Route map": `/chats/[id]` reopens a single saved thread
- * with its full transcript.
+ * One conversation. §"Route map": `/chats/[id]` reopens a single thread — the
+ * stored transcript hydrates first, live streaming continues in place, the title
+ * is renameable inline, and the customer context bind lives in a side panel that
+ * used to be a Home rail card.
  *
- * The plane does not yet project message history to the browser (§10.2), so this
- * shows the real conversation id from the URL — never a fabricated transcript —
- * and states honestly that the messages will render here once history lands. The
- * id is read from `params` (a promise in Next 15 for a server component) and
- * surfaced verbatim, so a deep link resolves to the thread it names.
+ * The page is a server component only for `params`: every piece below is a client
+ * component, because each one reads or mutates the conversation plane. The id is
+ * passed down rather than re-read, so all four surfaces agree on one conversation
+ * for the life of the route.
+ *
+ * A missing thread — or one belonging to another user — is handled inside
+ * `ConversationView` by raising not-found, so a deep link to someone else's id
+ * renders the not-found boundary instead of an empty conversation.
  */
 export default async function ChatDetailPage({
   params,
@@ -20,37 +25,16 @@ export default async function ChatDetailPage({
   const { id } = await params
 
   return (
-    <main className="mx-auto w-full max-w-3xl px-8 py-10">
-      <PageHeader
-        title="Conversation"
-        description={
-          <>
-            Thread <code className="font-mono text-text-secondary">{id}</code>
-          </>
-        }
-        actions={
-          <Link
-            href="/chats"
-            className="focus-ring inline-flex items-center gap-2 rounded-md border border-border bg-bg-card px-3 py-1.5 text-sm font-medium text-text-secondary transition-colors hover:bg-bg-hover"
-          >
-            All conversations
-          </Link>
-        }
-      />
+    <main className="mx-auto flex min-h-full w-full max-w-6xl flex-col px-8 py-8">
+      <div className="grid min-h-0 flex-1 gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
+        <section className="flex min-h-[60vh] min-w-0 flex-col rounded-lg border border-border bg-bg-card p-5">
+          <ThreadHeader threadId={id} />
+          <ConversationView threadId={id} />
+        </section>
 
-      <div
-        className="mt-6 rounded-lg border border-dashed border-border-strong bg-bg-card p-12 text-center"
-        data-testid="chat-detail-empty"
-      >
-        <p className="text-sm font-medium text-text-secondary">This transcript is not available yet.</p>
-        <p className="mx-auto mt-1 max-w-prose text-sm text-text-muted">
-          The messages for this conversation will render here once transcript history is projected
-          to the console. Start a live conversation on the{' '}
-          <Link href="/" className="text-accent-bright underline-offset-4 hover:underline">
-            Home
-          </Link>{' '}
-          workbench in the meantime.
-        </p>
+        <aside className="min-w-0">
+          <ContextPanel threadId={id} />
+        </aside>
       </div>
     </main>
   )

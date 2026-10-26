@@ -113,7 +113,7 @@ Phase 1: foundation. Tailwind on tokens, primitive batch, icons, self hosted fon
 
 Phase 2: conversation backend. Messages read, metadata read, rename, delete, search, auto-title, mapping module, and their tests.
 
-Phase 3: Chats UI. Index, launch view, conversation view with hydration, feedback, tool inspector, and context panel.
+Phase 3: Chats UI. Index, launch view, conversation view with hydration, tool inspector, and context panel. Shipped without the feedback control, because the stored message shape carries no trace or span ids. Recorded as C1 in `docs/superpowers/plans/99-later-backlog.md` rather than shipped as a control that could not vote.
 
 Phase 4: page migrations. Governance, Knowledge, Records with list endpoints, Home dashboard, retired pages behind redirects.
 
@@ -130,3 +130,24 @@ Light theme. Workspace wide conversation history. LLM based thread summarization
 ## Risks and assumptions
 
 The message mapping is new code with no vendor helper, so its unit tests are the contract. Auto-title is deterministic truncation, which is honest but plain. The root typecheck starts red with pre-existing errors and Phase 0 must clear it before gates are trusted. The working tree carries uncommitted theme work that Phase 0 commits first. Records list endpoints must reuse tool visibility predicates or governance parity breaks. The chat transport, identity middleware, and storage isolation conventions are unchanged by this design.
+
+## Phase log
+
+**Phase 0, baseline.** Theme work committed, pre-existing root typecheck debt cleared, root lint green.
+
+**Phase 1, foundation.** Tailwind mapped onto the token file, the shadcn primitive batch, lucide icons, self hosted fonts, the grouped sidebar shell, the route skeleton with redirects, and the TanStack Query provider. Commits `07b66c3` for the shell and foundation, `5fcacbd` for the token re-theme.
+
+**Phase 2, conversation backend.** Six endpoints on the REST plane, the message mapping module, auto-title on the first turn, and their tests. Commit `4a75ccc`. Two contract asymmetries were found and carried forward rather than papered over. The list row omits `title_pinned`, recorded as C2 in the backlog. Stored messages carry no trace or span ids, recorded as C1.
+
+**Phase 3, Chats UI.** `ConversationList` on TanStack Query with skeleton, honest error and retry, empty state, debounced semantic search, optimistic rename and confirmed delete. `LaunchView` with the single reserved gradient token and the curated starters, minting the thread id in the browser and handing the first message through `sessionStorage`. `ConversationView` hydrating a stored transcript through `setMessages`, refusing to render another user's thread as an empty conversation, continuing live streaming in place, and stopping through the interrupt signal. `ContextPanel` moved off Home into the conversation side column and the Home rail from one implementation.
+
+Three deletions came with it, each because a second copy of the same behaviour is a drift waiting to happen. `ChatPane` and its test were replaced by `ConversationView` and `ConversationView.test.tsx`, which keeps every transport contract the pane proved and adds hydration, the launch handoff and the interrupt. The duplicate `CustomerPanel` inside `components/ObjectPanel.tsx` was removed and its cases moved to `tests/ContextPanel.test.tsx`. The Home context bind form was removed in favour of the panel.
+
+**What Phase 3 is not.** No feedback thumbs, see C1. No route level `loading.tsx`, `error.tsx` or `not-found.tsx` outside the conversation view's own not-found path, which belongs to the Phase 5 pass per the app shell section. Home still mints its own thread id and renders a live transcript, which is what Phase 4 replaces with the dashboard of pointers.
+
+**Phase 3 verification, what was actually run.** Console `tsc --noEmit` clean. Console suite `vitest run` green at 11 files and 87 tests. Root `tsc --noEmit` clean. Root `eslint .` clean. Console `next lint` reports no warnings and no errors, with one standing note that the Next plugin is not registered in the console ESLint config.
+
+**Runnability tier for Phase 3: console renders, data plane unverified.** The console dev server served `/`, `/chats`, `/chats/new` and `/chats/<id>` at HTTP 200, and the served markup contains the expected surfaces, being the conversations header and search field, the launch composer with the reserved gradient token, and the context panel with its bind form. The REST proxy through `/api/agent/threads` answered 500 because no REST plane was listening, so every list and transcript read in this run reached the honest error path and nothing more.
+
+The block is external and is not a console defect. `DATABASE_URL` points at `db.tjvalzjxameymtqbloor.supabase.co`, which fails name resolution with `getaddrinfo ENOENT`, so the Mastra dev server exits during boot on its restart pass. Pointing the stack at a reachable Postgres is what the next live run needs, and three routes are open to it. Restore the Supabase project, start the Docker daemon and use the compose database on `postgres:changeme`, or supply a local database with the migrations in `migrations/` applied. Until one of those is true, no model turn, transcript restore, rename, delete or search has been exercised against a real database, and this phase does not claim otherwise.
+

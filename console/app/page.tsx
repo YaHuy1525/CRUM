@@ -2,19 +2,35 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { SessionList } from '../components/SessionList'
-import { ChatPane } from '../components/ChatPane'
-import { CustomerPanel } from '../components/ObjectPanel'
+import { ConversationView } from '@/components/chats/ConversationView'
+import { ContextPanel } from '@/components/chats/ContextPanel'
 
 /**
  * The console home, on Cedar's skeleton: a chats column, a main thread whose
  * composer sits at the top under a greeting, and a right rail of stacked cards.
  * §11.2.
  *
- * Ownership here is the whole design: the transcript lives inside `ChatPane`
- * (AI SDK state), so the page owns only the two things that must be shared —
- * which conversation is open, and which CRM row is bound to it — and forces a
- * clean remount of the chat when the first changes.
+ * Ownership here is the whole design: the transcript lives inside the
+ * conversation surface (AI SDK state), so the page owns only which conversation
+ * the workbench is *minting* — a fresh id, remounted per conversation so no
+ * fragments of the previous one are still on screen.
+ *
+ * Two things moved out of this file during the Chats phase:
+ *
+ * - The transcript component. Home renders the same `ConversationView` the
+ *   conversation route uses, with `hydrate={false}` because a freshly minted
+ *   thread has no stored row until its first turn. The pane it replaced is gone,
+ *   so the two surfaces cannot drift.
+ * - The customer context bind. It now lives in `ContextPanel`, which `/chats/[id]`
+ *   renders in its side column and Home drops into the rail — one implementation,
+ *   two placements. Home no longer owns the bound row.
+ *
+ * Picking a stored conversation *navigates* to `/chats/[id]` instead of swapping
+ * the pane in place. The old behaviour reopened an empty pane, because a thread
+ * read has always been followed by nothing; the route is where hydration exists,
+ * so the link is the honest one.
  *
  * `ModeSwitch` is gone rather than merely unrendered. The explore/operate lens it
  * implemented has no counterpart on the server: the callable tool surface comes
@@ -117,10 +133,8 @@ function RailPulse() {
 }
 
 export default function Home() {
+  const router = useRouter()
   const [threadId, setThreadId] = useState<string>(() => newThreadId())
-  const [customerId, setCustomerId] = useState<string | null>(null)
-  const [customerInput, setCustomerInput] = useState('')
-  const [refreshKey, setRefreshKey] = useState(0)
   // Computed after mount so the server render and the client render cannot
   // disagree about which local day it is.
   const [dateLine, setDateLine] = useState('')
@@ -141,11 +155,7 @@ export default function Home() {
         <div className="pane-header">
           Chats
           <button
-            onClick={() => {
-              setThreadId(newThreadId())
-              setCustomerId(null)
-              setCustomerInput('')
-            }}
+            onClick={() => setThreadId(newThreadId())}
             className="focus-ring"
             aria-label="Start a new conversation"
           >
@@ -154,21 +164,20 @@ export default function Home() {
         </div>
         <SessionList
           activeThreadId={threadId}
-          refreshKey={refreshKey}
           onSelect={(id) => {
-            setThreadId(id)
-            // The transcript for a stored thread is not reloaded — the plane does
-            // not project message history to the browser (§10.2) — so say which
-            // conversation is open rather than pretending to restore it.
-            setRefreshKey((k) => k + 1)
+            // A stored thread reopens on its own route, where the transcript is
+            // actually hydrated. Swapping the pane in place would show an empty
+            // conversation and claim it was this one.
+            router.push(`/chats/${id}`)
           }}
         />
       </div>
 
       <div className="pane chat-pane">
         {/* Cedar's home opens with a greeting, not a toolbar. The thread id is a
-            subordinate line under it, and the composer (rendered by ChatPane)
-            is ordered directly beneath — CSS `order` does the placement. */}
+            subordinate line under it, and the composer (rendered by
+            ConversationView) is ordered directly beneath — CSS `order` does the
+            placement. */}
         <div className="chat-hero">
           <h1>Welcome back.</h1>
           <p className="hero-sub">
@@ -177,8 +186,10 @@ export default function Home() {
           </p>
         </div>
         {/* The key is what makes a thread switch safe: a fresh Chat instance per
-            conversation, so no fragments of the previous one are still on screen. */}
-        <ChatPane key={threadId} threadId={threadId} />
+            conversation, so no fragments of the previous one are still on screen.
+            `hydrate={false}` because this id is minted, not read — the server
+            creates the row when the first turn lands. */}
+        <ConversationView key={threadId} threadId={threadId} hydrate={false} />
         <div className="quick-chips" aria-label="Quick actions">
           <Link href="/new" className="quick-chip focus-ring">
             New from text
@@ -196,28 +207,11 @@ export default function Home() {
       </div>
 
       <div className="rail">
-        <section className="rail-card" aria-label="Conversation context">
-          <h2 className="rail-card-label">Context</h2>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault()
-              setCustomerId(customerInput.trim() || null)
-            }}
-            className="context-bind"
-          >
-            <input
-              value={customerInput}
-              onChange={(e) => setCustomerInput(e.target.value)}
-              placeholder="Customer uuid"
-              aria-label="Customer id to bind"
-              className="focus-ring"
-            />
-            <button type="submit" className="btn-secondary focus-ring">
-              Load
-            </button>
-          </form>
-          <CustomerPanel customerId={customerId} threadId={threadId} />
-        </section>
+        {/* The panel draws its own card and its own "Context" label, so Home
+            places it directly instead of wrapping it in a second one. One
+            implementation, two placements: `/chats/[id]` puts it in its side
+            column, Home puts it in the rail. */}
+        <ContextPanel threadId={threadId} />
 
         <RailPulse />
       </div>
