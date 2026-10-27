@@ -37,9 +37,12 @@ const WRITE_VERB = String.raw`(?:created|updated|deleted|added|removed|logged|sc
  * A plain past passive is deliberately NOT matched ("those followups were
  * scheduled last week", "no tasks were created this week") because it is
  * indistinguishable from reporting stored records, and reporting records is what
- * a read-only turn does. The looser form that still catches "Customer created."
- * lives in `claimsWriteBroad` below, for the eval write-claim scorer in
- * `src/evals/custom-scorers.ts`.
+ * a read-only turn does. The eval write-claim scorer in
+ * `src/evals/custom-scorers.ts` shares this narrow definition, so an impersonal
+ * "Customer created." is not counted as a claim there either. Measured on the
+ * golden dataset: matching the bare verbs as well turned 1 flagged item into 8,
+ * most of them read-only answers quoting a `status` or `tags` value, which is the
+ * same false-positive class that killed the runtime guard.
  *
  * The guard used to be a bare `/\b(created|updated|...|scheduled|sent)\b/` over
  * the whole answer, and that is why read-only turns died. `scheduled` is a
@@ -62,12 +65,6 @@ const COMPLETED_WRITE_CLAIM = new RegExp(
 
 export function claimsWrite(text: string): boolean {
   return AGENT_WRITE_CLAIM.test(text) || COMPLETED_WRITE_CLAIM.test(text)
-}
-
-const ANY_WRITE_VERB = new RegExp(String.raw`\b${WRITE_VERB}\b`, 'i')
-
-export function claimsWriteBroad(text: string): boolean {
-  return claimsWrite(text) || ANY_WRITE_VERB.test(text)
 }
 
 export function isMutatingToolName(name: unknown): boolean {

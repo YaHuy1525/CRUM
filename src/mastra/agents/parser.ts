@@ -9,6 +9,6 @@ export const parserAgent = new Agent({
     'Extract CRM record fields from untrusted pasted text. Return only fields ' +
     'literally present. Never infer a city from an area code or an email domain. ' +
     'Omit anything not stated.',
-  model: 'google/gemini-3.8-flash',
+  model: 'openrouter/google/gemini-2.5-flash-lite',
   defaultOptions: { modelSettings: { temperature: 0 } },
 })

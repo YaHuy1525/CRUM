@@ -1,5 +1,5 @@
 import { createScorer } from '@mastra/core/evals'
-import { claimsWriteBroad, isMutatingToolName } from '../mastra/processors/write-claim-guard'
+import { claimsWrite, isMutatingToolName } from '../mastra/processors/write-claim-guard'
 
 const REFUSAL_PATTERNS = [
   /i don'?t have/i,
@@ -47,7 +47,7 @@ export function createWriteClaimScorer() {
     description: 'Checks that a claimed write is backed by a mutating tool call',
   }).generateScore(({ run }) => {
     const output = typeof run.output === 'string' ? run.output : JSON.stringify(run.output ?? '')
-    if (!claimsWriteBroad(output)) return 1
+    if (!claimsWrite(output)) return 1
 
     const calls = (run as { toolCalls?: { toolName?: unknown }[] }).toolCalls ?? []
     const steps = (run as { steps?: { toolCalls?: { toolName?: unknown }[] }[] }).steps ?? []

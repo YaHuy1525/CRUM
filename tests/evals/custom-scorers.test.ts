@@ -65,7 +65,11 @@ describe('createWriteClaimScorer', () => {
     const scorer = createWriteClaimScorer()
     const run = {
       input: 'Create a new customer Acme Corp',
-      output: 'Customer created.',
+      // The claim has to be in the form the guard recognises (the assistant
+      // attributing the write to itself). An impersonal "Customer created." is
+      // indistinguishable from quoting a stored record, and on the golden dataset
+      // treating it as a claim flagged 8 items where the narrow form flags 1.
+      output: 'I created the customer Acme Corp.',
       toolCalls: [{ toolName: 'commitPendingWrite', args: {} }],
     }
     const result = await scorer.run(run)

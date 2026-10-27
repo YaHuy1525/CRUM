@@ -1,1 +1,0 @@
-secs=12.1 textChars=34 start=1 start-step=1 text-start=1 text-delta=9 text-end=1 finish-step=1 finish=1
