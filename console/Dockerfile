@@ -15,7 +15,10 @@ ARG NODE_VERSION=22
 FROM node:${NODE_VERSION}-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --no-audit --no-fund
+# --ignore-scripts: install-time lifecycle scripts are the supply-chain attack
+# path (Sonar security hotspot). The console tree needs none: Next ships its
+# compiler as plain optionalDependencies binaries, with no postinstall build.
+RUN npm ci --no-audit --no-fund --ignore-scripts
 
 # ---- build: compile the Next app ----
 FROM node:${NODE_VERSION}-slim AS build

@@ -236,7 +236,29 @@ export async function resolveGmailAccess(
 }
 
 
+/**
+ * Sonar hotspot "API Traversal via unsanitized user input": the path mixes
+ * fixed endpoints with caller-supplied search text (arrives only as
+ * URLSearchParams-encoded values) and resource ids. Two chokepoints keep
+ * every request pinned under GMAIL_API_ROOT: id segments are validated
+ * before interpolation, and gmailFetch refuses any path containing
+ * characters outside the endpoint/encoded-query alphabet, so no scheme,
+ * `//host` override, `..` segment or backslash can ever reach fetch.
+ */
+const SAFE_PATH = /^\/[\w.~%/?&=,+@-]+$/
+const SAFE_ID = /^[\w.~-]+$/
+
+function pathId(id: string, kind: 'thread' | 'message'): string {
+  if (!SAFE_ID.test(id) || id.includes('..')) {
+    throw new GmailApiError(`gmail ${kind} id rejected by path policy`, 400)
+  }
+  return id
+}
+
 async function gmailFetch(accessToken: string, path: string, init?: RequestInit): Promise<Response> {
+  if (!SAFE_PATH.test(path) || path.includes('//') || path.includes('..')) {
+    throw new GmailApiError(`gmail request path rejected by policy: ${path.slice(0, 80)}`, 400)
+  }
   const res = await fetch(`${GMAIL_API_ROOT}${path}`, {
     ...init,
     headers: { ...init?.headers, Authorization: `Bearer ${accessToken}` },
@@ -289,7 +311,7 @@ export async function searchThreadSummaries(
   const ids = (list.threads ?? []).map((t) => t.id)
   const details = await Promise.all(
     ids.map(async (id) => {
-      const res = await gmailFetch(accessToken, `/threads/${id}?format=metadata&metadataInclude=From,Subject,Date`)
+      const res = await gmailFetch(accessToken, `/threads/${pathId(id, 'thread')}?format=metadata&metadataInclude=From,Subject,Date`)
       return (await res.json()) as GmailThread
     }),
   )
@@ -372,7 +394,7 @@ export async function searchInboundMessages(
   const ids = (list.messages ?? []).map((m) => m.id)
   const details = await Promise.all(
     ids.map(async (id) => {
-      const r = await gmailFetch(accessToken, `/messages/${id}?format=metadata&metadataInclude=From,To,Subject,Date`)
+      const r = await gmailFetch(accessToken, `/messages/${pathId(id, 'message')}?format=metadata&metadataInclude=From,To,Subject,Date`)
       return (await r.json()) as GmailMessage
     }),
   )

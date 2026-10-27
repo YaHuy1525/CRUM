@@ -1,5 +1,8 @@
-import { ModerationProcessor, type ModerationOptions } from '@mastra/core/processors'
-import type { ProcessOutputStreamArgs } from '@mastra/core/processors'
+import {
+  ModerationProcessor,
+  type ModerationOptions,
+  type ProcessOutputStreamArgs,
+} from '@mastra/core/processors'
 import type { ChunkType } from '@mastra/core/stream'
 
 /**

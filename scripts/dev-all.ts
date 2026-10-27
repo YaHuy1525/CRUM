@@ -1,6 +1,7 @@
 // scripts/dev-all.ts
 import { spawn, spawnSync } from 'node:child_process'
 import type { ChildProcessByStdio } from 'node:child_process'
+import { join } from 'node:path'
 import type { Readable } from 'node:stream'
 
 /** What `stdio: ['ignore', 'pipe', 'pipe']` actually yields. */
@@ -50,7 +51,10 @@ let shuttingDown = false
 function stopTree(child: Spawned, name: string): void {
   if (child.pid === undefined) return
   if (process.platform === 'win32') {
-    const killed = spawnSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], {
+    // Absolute path, not a bare name: resolving `taskkill` through PATH is a
+    // Sonar security hotspot (PATH can contain writeable directories).
+    const systemRoot = process.env.SystemRoot ?? 'C:\\Windows'
+    const killed = spawnSync(join(systemRoot, 'System32', 'taskkill.exe'), ['/pid', String(child.pid), '/t', '/f'], {
       stdio: 'ignore',
     })
     if (killed.status === 0) return

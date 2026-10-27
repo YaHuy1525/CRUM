@@ -19,6 +19,20 @@ permissions:
 env:
   # One definition of the CI database. Every step that needs it references this.
   CI_DATABASE_URL: postgresql://postgres:changeme@localhost:5432/postgres
+  # src/mastra/tools/knowledge.ts builds its embedder at module scope, so any
+  # test that imports the Mastra entry constructs one during collection. With
+  # EMBEDDING_BASE_URL empty, src/mastra/embeddings.ts:13 hands the pinned id to
+  # the model router, which reads OPENAI_API_KEY from the environment and throws
+  # "API key not found for provider openai" at import time. A developer machine
+  # hides that: this laptop exports OPENAI_API_KEY at user scope, so the suite is
+  # green locally and red on a runner. Pointing EMBEDDING_BASE_URL at any URL
+  # takes the config-object branch instead, which carries its own key and never
+  # looks one up. Nothing in CI embeds a document, so the endpoint is never
+  # contacted and these two values are placeholders, not credentials.
+  # docker-compose.yml:86 solves the same problem for the container with a real
+  # OpenRouter URL. The durable fix is to stop building the embedder at import.
+  EMBEDDING_BASE_URL: http://127.0.0.1:9/v1
+  EMBEDDING_API_KEY: ci-placeholder-not-a-real-key
 
 jobs:
   verify:

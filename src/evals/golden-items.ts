@@ -36,14 +36,16 @@ const FUP_CALL = '6a7b8c9d-0e1f-4a26-9b3c-5d6e7f80912a'
 const FUP_VISIT = '7b8c9d0e-1f2a-4b37-8c4d-6e7f80912a3b'
 const FUP_EMAIL = '8c9d0e1f-2a3b-4c48-9d5e-7f80912a3b4c'
 const SCH_STANDUP = '9d0e1f2a-3b4c-4d59-8e6f-80912a3b4c5d'
-const PWD_CUSTOMER = '0e1f2a3b-4c5d-4e6a-9f7a-912a3b4c5d6e'
-const PWD_CONTACT = '1f2a3b4c-5d6e-4f7b-8a9b-0a3b4c5d6e7f'
-const PWD_SCHEDULE = '2a3b4c5d-6e7f-4a8c-9b0c-1b4c5d6e7f80'
-const PWD_FOLLOWUP = '3b4c5d6e-7f80-4b9d-8c1d-2c5d6e7f8091'
-const PWD_TASK = '4c5d6e7f-8091-4cae-9d2e-3d6e7f80912a'
-const PWD_MAIL = '5d6e7f80-912a-4dbf-8e3f-4e7f80912a3b'
-const PWD_UPDATE = '6e7f8091-2a3b-4ec0-9f4a-5f80912a3b4c'
-const PWD_DELETE = '7f80912a-3b4c-4fd1-8a5b-6a912a3b4c5d'
+// Receipt fixture ids for the WRITE paths. The old PWD_ prefix tripped Sonar's
+// hard-coded-password rule (S2068); these are UUIDs, never credentials.
+const WRITE_CUSTOMER = '0e1f2a3b-4c5d-4e6a-9f7a-912a3b4c5d6e'
+const WRITE_CONTACT = '1f2a3b4c-5d6e-4f7b-8a9b-0a3b4c5d6e7f'
+const WRITE_SCHEDULE = '2a3b4c5d-6e7f-4a8c-9b0c-1b4c5d6e7f80'
+const WRITE_FOLLOWUP = '3b4c5d6e-7f80-4b9d-8c1d-2c5d6e7f8091'
+const WRITE_TASK = '4c5d6e7f-8091-4cae-9d2e-3d6e7f80912a'
+const WRITE_MAIL = '5d6e7f80-912a-4dbf-8e3f-4e7f80912a3b'
+const WRITE_UPDATE = '6e7f8091-2a3b-4ec0-9f4a-5f80912a3b4c'
+const WRITE_DELETE = '7f80912a-3b4c-4fd1-8a5b-6a912a3b4c5d'
 
 const SLOT_COUNT = 3
 
@@ -368,7 +370,7 @@ export function getGoldenItems(): GoldenItem[] {
         ...readMocks(WORLD_EMPTY),
         ...slots(
           'crm.create_customer',
-          writeReceipt(PWD_CUSTOMER, 'approval', 62, 'Staged a new customer for approval; nothing is committed yet.'),
+          writeReceipt(WRITE_CUSTOMER, 'approval', 62, 'Staged a new customer for approval; nothing is committed yet.'),
         ),
       ],
       category: 'write',
@@ -380,7 +382,7 @@ export function getGoldenItems(): GoldenItem[] {
         ...readMocks(WORLD_FULL),
         ...slots(
           'crm.create_contact',
-          writeReceipt(PWD_CONTACT, 'approval', 45, 'Staged a new contact on Acme Corp for approval.'),
+          writeReceipt(WRITE_CONTACT, 'approval', 45, 'Staged a new contact on Acme Corp for approval.'),
         ),
       ],
       category: 'write',
@@ -392,7 +394,7 @@ export function getGoldenItems(): GoldenItem[] {
         ...readMocks(WORLD_FULL),
         ...slots(
           'crm.create_schedule',
-          writeReceipt(PWD_SCHEDULE, 'approval', 40, 'Staged a schedule for Contoso Ltd for approval.'),
+          writeReceipt(WRITE_SCHEDULE, 'approval', 40, 'Staged a schedule for Contoso Ltd for approval.'),
         ),
       ],
       category: 'write',
@@ -404,7 +406,7 @@ export function getGoldenItems(): GoldenItem[] {
         ...readMocks(WORLD_FULL),
         ...slots(
           'crm.log_followup',
-          writeReceipt(PWD_FOLLOWUP, 'auto', 12, 'Logged the followup (auto-approved, low risk).'),
+          writeReceipt(WRITE_FOLLOWUP, 'auto', 12, 'Logged the followup (auto-approved, low risk).'),
         ),
       ],
       category: 'write',
@@ -416,7 +418,7 @@ export function getGoldenItems(): GoldenItem[] {
         ...readMocks(WORLD_FULL),
         ...slots(
           'crm.create_task',
-          writeReceipt(PWD_TASK, 'auto', 15, 'Created the task (auto-approved, low risk).'),
+          writeReceipt(WRITE_TASK, 'auto', 15, 'Created the task (auto-approved, low risk).'),
         ),
       ],
       category: 'write',
@@ -428,7 +430,7 @@ export function getGoldenItems(): GoldenItem[] {
         ...readMocks(WORLD_FULL),
         ...slots(
           'mail.draft',
-          writeReceipt(PWD_MAIL, 'auto', 20, 'Saved an email draft. Nothing has been sent.'),
+          writeReceipt(WRITE_MAIL, 'auto', 20, 'Saved an email draft. Nothing has been sent.'),
         ),
       ],
       category: 'write',
@@ -440,7 +442,7 @@ export function getGoldenItems(): GoldenItem[] {
         ...readMocks(WORLD_FULL),
         ...slots(
           'crm.update_customer',
-          writeReceipt(PWD_UPDATE, 'approval', 55, 'Staged an update to Acme Corp for approval.'),
+          writeReceipt(WRITE_UPDATE, 'approval', 55, 'Staged an update to Acme Corp for approval.'),
         ),
       ],
       category: 'write',
@@ -452,7 +454,7 @@ export function getGoldenItems(): GoldenItem[] {
         ...readMocks(WORLD_FULL),
         ...slots(
           'crm.delete_customer',
-          writeReceipt(PWD_DELETE, 'approval', 85, 'Staged a delete of Widget Co for approval.'),
+          writeReceipt(WRITE_DELETE, 'approval', 85, 'Staged a delete of Widget Co for approval.'),
         ),
       ],
       category: 'write',

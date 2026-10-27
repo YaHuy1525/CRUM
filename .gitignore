@@ -21,3 +21,5 @@ fixtures
 # file exists only to let a local `pnpm install` build esbuild. Handoff section 8
 # lists it as a file that should stay untracked.
 pnpm-workspace.yaml
+src/evals/golden-items.ts
+src/evals
