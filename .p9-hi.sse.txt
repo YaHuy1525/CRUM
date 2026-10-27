@@ -1,0 +1,34 @@
+data: {"type":"start","messageId":"24bd9225-bc28-4504-943e-4c9a8627c243"}
+
+data: {"type":"start-step"}
+
+data: {"type":"text-start","id":"gen-1793063289-cYXwYOfXHvX99nPl6mIi"}
+
+data: {"type":"text-delta","id":"gen-1793063289-cYXwYOfXHvX99nPl6mIi","delta":"Hello"}
+
+data: {"type":"text-delta","id":"gen-1793063289-cYXwYOfXHvX99nPl6mIi","delta":"!"}
+
+data: {"type":"text-delta","id":"gen-1793063289-cYXwYOfXHvX99nPl6mIi","delta":" How"}
+
+data: {"type":"text-delta","id":"gen-1793063289-cYXwYOfXHvX99nPl6mIi","delta":" can"}
+
+data: {"type":"text-delta","id":"gen-1793063289-cYXwYOfXHvX99nPl6mIi","delta":" I"}
+
+: heartbeat
+
+data: {"type":"text-delta","id":"gen-1793063289-cYXwYOfXHvX99nPl6mIi","delta":" assist"}
+
+data: {"type":"text-delta","id":"gen-1793063289-cYXwYOfXHvX99nPl6mIi","delta":" you"}
+
+data: {"type":"text-delta","id":"gen-1793063289-cYXwYOfXHvX99nPl6mIi","delta":" today"}
+
+data: {"type":"text-delta","id":"gen-1793063289-cYXwYOfXHvX99nPl6mIi","delta":"?"}
+
+data: {"type":"text-end","id":"gen-1793063289-cYXwYOfXHvX99nPl6mIi"}
+
+data: {"type":"finish-step"}
+
+data: {"type":"finish","finishReason":"stop"}
+
+data: [DONE]
+

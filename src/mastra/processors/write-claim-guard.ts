@@ -20,10 +20,54 @@ export const MUTATING_TOOL_IDS = [
 
 export const MUTATING_TOOLS = new Set(MUTATING_TOOL_IDS.map(providerToolName))
 
-const WRITE_VERBS = /\b(created|updated|deleted|added|removed|logged|scheduled|sent)\b/i
+/**
+ * The verbs that would mean a write happened.
+ */
+const WRITE_VERB = String.raw`(?:created|updated|deleted|added|removed|logged|scheduled|sent|drafted|stored|recorded)`
+
+/**
+ * A claim that THIS assistant performed one of those verbs.
+ *
+ * Two shapes are matched, and only these two:
+ *   1. the agent speaking about itself: "I created ...", "I've scheduled ...",
+ *      "we have just logged a call ...";
+ *   2. an auxiliary of completion about the record: "the task has been deleted",
+ *      "the draft had been sent".
+ *
+ * A plain past passive is deliberately NOT matched ("those followups were
+ * scheduled last week", "no tasks were created this week") because it is
+ * indistinguishable from reporting stored records, and reporting records is what
+ * a read-only turn does. The looser form that still catches "Customer created."
+ * lives in `claimsWriteBroad` below, for the eval write-claim scorer in
+ * `src/evals/custom-scorers.ts`.
+ *
+ * The guard used to be a bare `/\b(created|updated|...|scheduled|sent)\b/` over
+ * the whole answer, and that is why read-only turns died. `scheduled` is a
+ * `followups.status` value, `added` and `removed` appear in `customers.tags`, and
+ * the assistant's job on "what should I work on today?" is to print exactly those
+ * words in a table. The bare verb matched, no mutating tool had run, so the
+ * processor aborted the step with `retry: true`, the retry tripped again, and the
+ * stream closed with no finish event: the console showed an error over an empty
+ * transcript and nothing was persisted. A state word in a table cell is not a
+ * claim of authorship, so it must not be treated as one.
+ */
+const AGENT_WRITE_CLAIM = new RegExp(
+  String.raw`\b(?:i|we)(?:\s*(?:'ve|'d)|\s+(?:have|had|just|now|previously|already|also|successfully))*\s+${WRITE_VERB}\b`,
+  'i',
+)
+const COMPLETED_WRITE_CLAIM = new RegExp(
+  String.raw`\b(?:has|have|had|was|were)\s+been\s+${WRITE_VERB}\b`,
+  'i',
+)
 
 export function claimsWrite(text: string): boolean {
-  return WRITE_VERBS.test(text)
+  return AGENT_WRITE_CLAIM.test(text) || COMPLETED_WRITE_CLAIM.test(text)
+}
+
+const ANY_WRITE_VERB = new RegExp(String.raw`\b${WRITE_VERB}\b`, 'i')
+
+export function claimsWriteBroad(text: string): boolean {
+  return claimsWrite(text) || ANY_WRITE_VERB.test(text)
 }
 
 export function isMutatingToolName(name: unknown): boolean {

@@ -5,7 +5,6 @@ import type { CrumEnv } from '../config/env'
 import { IdentityError, resolveIdentity } from '../mastra/identity'
 import { CRUM_AGENT_CONTROLLER_ID, queryThreads, resourceIdFor } from '../mastra/sessions'
 
-
 export interface AgentRouterDeps {
   env: CrumEnv
   getMastra?: () => Mastra | null
