@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { RequestContext } from '@mastra/core/request-context'
 import type { MastraDBMessage } from '@mastra/core/agent'
+import type { ProcessInputStepArgs } from '@mastra/core/processors'
 import type { TenantRequestContext } from '../../../src/mastra/tenant-context'
 
 // Mock the queries module
@@ -19,14 +20,14 @@ function makeMessage(overrides: Partial<MastraDBMessage> = {}): MastraDBMessage 
       parts: [{ type: 'text', text: 'Tell me about this customer' }],
     },
     ...overrides,
-  } as MastraDBMessage
+  }
 }
 
 function makeArgs(overrides: {
   requestContext?: RequestContext
   messages?: MastraDBMessage[]
-  systemMessages?: any[]
-} = {}) {
+  systemMessages?: ProcessInputStepArgs['systemMessages']
+} = {}): ProcessInputStepArgs {
   const requestContext = overrides.requestContext ?? new RequestContext()
   const messages = overrides.messages ?? [makeMessage()]
   const systemMessages = overrides.systemMessages ?? []
@@ -38,11 +39,13 @@ function makeArgs(overrides: {
     steps: [],
     state: {},
     retryCount: 0,
-    // Minimal stubs for required fields the processor does not use
+    // Minimal stubs for required fields the processor does not use. The member
+    // type is read off ProcessInputStepArgs so these carry a real type instead of
+    // `any`; the whole literal is then projected onto the argument type.
     abort: vi.fn(),
-    messageList: {} as any,
-    model: {} as any,
-  }
+    messageList: {} as ProcessInputStepArgs['messageList'],
+    model: {} as ProcessInputStepArgs['model'],
+  } as unknown as ProcessInputStepArgs
 }
 
 describe('ObjectBindingProcessor', () => {
@@ -81,25 +84,29 @@ describe('ObjectBindingProcessor', () => {
       id: '770e8400-e29b-41d4-a716-446655440002',
     })
 
-    const result = await processor.processInputStep(
-      makeArgs({ requestContext }) as any,
-    )
+    const result = await processor.processInputStep(makeArgs({ requestContext }))
 
     expect(mockQueryCustomer).toHaveBeenCalledWith(
       tenantContext,
       '770e8400-e29b-41d4-a716-446655440002',
     )
     expect(result).toBeDefined()
-    expect(result!.systemMessages).toBeDefined()
-    expect(result!.systemMessages!.length).toBe(1)
-    const sys = result!.systemMessages![0]
-    expect(sys.role).toBe('system')
+    const systemMessages = result?.systemMessages
+    expect(systemMessages).toBeDefined()
+    expect(systemMessages?.length).toBe(1)
+    const sys = systemMessages?.[0]
+    expect(sys).toBeDefined()
+    expect(sys?.role).toBe('system')
+    const content = sys?.content
+    // This processor emits plain-text system content; the array form is the
+    // framework's generic content shape, so read text from either branch without
+    // falling back to `any`.
     const text =
-      typeof sys.content === 'string'
-        ? sys.content
-        : (sys.content as any[])
-            .filter((p: any) => p.type === 'text')
-            .map((p: any) => p.text)
+      typeof content === 'string'
+        ? content
+        : (content as unknown as { type?: unknown; text?: unknown }[])
+            .filter((p) => p.type === 'text')
+            .map((p) => (typeof p.text === 'string' ? p.text : ''))
             .join('')
     expect(text).toContain('Acme Corp')
     expect(text).toContain('770e8400-e29b-41d4-a716-446655440002')
@@ -120,10 +127,10 @@ describe('ObjectBindingProcessor', () => {
     requestContext.setRaw('tenantContext', tenantContext)
 
     const messages = [makeMessage()]
-    const systemMessages = [{ role: 'system', content: 'Existing instruction' }]
+    const systemMessages = [{ role: 'system' as const, content: 'Existing instruction' }]
 
     const result = await processor.processInputStep(
-      makeArgs({ requestContext, messages, systemMessages }) as any,
+      makeArgs({ requestContext, messages, systemMessages }),
     )
 
     expect(mockQueryCustomer).not.toHaveBeenCalled()
@@ -151,9 +158,7 @@ describe('ObjectBindingProcessor', () => {
       id: 'missing-id',
     })
 
-    const result = await processor.processInputStep(
-      makeArgs({ requestContext }) as any,
-    )
+    const result = await processor.processInputStep(makeArgs({ requestContext }))
 
     expect(mockQueryCustomer).toHaveBeenCalled()
     expect(result).toBeUndefined()

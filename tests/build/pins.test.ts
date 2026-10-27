@@ -37,6 +37,7 @@ const EXPECTED_DEV_DEPENDENCIES: Record<string, string> = {
   'typescript-eslint': '8.72.0',
   '@types/node': '22.20.5',
   '@types/pg': '8.23.1',
+  mastra: '1.35.0',
 }
 
 describe('package.json pins', () => {

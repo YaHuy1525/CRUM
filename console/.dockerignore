@@ -1,0 +1,12 @@
+# Build-context exclusions for the console image (console/ context).
+
+node_modules
+.next
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+npm-debug.log*
+Dockerfile
+.dockerignore

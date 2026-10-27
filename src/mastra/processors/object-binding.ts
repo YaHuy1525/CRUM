@@ -11,15 +11,6 @@ interface ObjectBinding {
   id: string
 }
 
-/**
- * ObjectBindingProcessor loads the bound record and injects it as a system
- * message for the agent.
- *
- * §4.3.2: when a conversation is bound to a specific object (e.g., a customer),
- * the processor loads that object tenant-scoped and makes it available to the
- * agent as context. This allows the agent to answer questions about "this
- * customer" without requiring the user to repeat the customer id.
- */
 export class ObjectBindingProcessor implements Processor<'object-binding-processor'> {
   readonly id = 'object-binding-processor' as const
   readonly name = 'Object Binding Processor'
@@ -30,8 +21,8 @@ export class ObjectBindingProcessor implements Processor<'object-binding-process
     const requestContext = args.requestContext
     if (!requestContext) return undefined
 
-    const binding = requestContext.get('objectBinding') as ObjectBinding | undefined
-    const tenantContext = requestContext.get('tenantContext') as TenantRequestContext | undefined
+    const binding = requestContext.get<'objectBinding', ObjectBinding | undefined>('objectBinding')
+    const tenantContext = requestContext.get<'tenantContext', TenantRequestContext | undefined>('tenantContext')
 
     if (!binding || !tenantContext) return undefined
 

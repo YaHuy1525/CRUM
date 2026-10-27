@@ -47,10 +47,18 @@ describe('crmAssistant', () => {
     expect(crmAssistant.__getMaxProcessorRetries()).toBe(2)
   })
 
-  it('has tools configured', async () => {
+  it('has 24 tools configured (14 read + 3 auto + 7 approval)', async () => {
     const tools = await crmAssistant.listTools()
     expect(tools).toBeDefined()
-    expect(Object.keys(tools).length).toBeGreaterThan(0)
+    expect(Object.keys(tools).length).toBe(24)
+  })
+
+  it('has WriteClaimGuardProcessor in outputProcessors', async () => {
+    const processors = await crmAssistant.listConfiguredOutputProcessors()
+    const hasWriteClaimGuard = processors.some(
+      (p) => p.constructor.name === 'WriteClaimGuardProcessor'
+    )
+    expect(hasWriteClaimGuard).toBe(true)
   })
 
   it('has defaultOptions configured', () => {
@@ -63,7 +71,7 @@ describe('crmAssistant', () => {
   it('has ObjectBindingProcessor in inputProcessors', async () => {
     const processors = await crmAssistant.listConfiguredInputProcessors()
     const hasObjectBinding = processors.some(
-      (p: any) => p.constructor.name === 'ObjectBindingProcessor'
+      (p) => p.constructor.name === 'ObjectBindingProcessor'
     )
     expect(hasObjectBinding).toBe(true)
   })

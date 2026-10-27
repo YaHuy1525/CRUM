@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { RequestContext } from '@mastra/core/request-context'
+import type { ToolObserve } from '@mastra/core/tools'
 import type { TenantRequestContext } from '../../../src/mastra/tenant-context'
 import { listCustomersTool, getCustomerTool } from '../../../src/mastra/tools/customers'
 
@@ -18,10 +19,14 @@ const mockContext: TenantRequestContext = {
   userRole: 'admin',
 }
 
-function makeObserve() {
+function makeObserve(): ToolObserve {
   return {
-    span: vi.fn(async (_name: string, fn: () => Promise<unknown>) => fn()),
-    log: vi.fn(),
+    // Method shorthand keeps `span` generic, which the framework interface needs;
+    // a stub pinned to Promise<unknown> does not satisfy ToolObserve.
+    span(_name, fn) {
+      return Promise.resolve(fn())
+    },
+    log: () => {},
   }
 }
 
@@ -47,7 +52,7 @@ describe('listCustomersTool', () => {
     const observe = makeObserve()
     const result = await listCustomersTool.execute?.(
       {},
-      { requestContext: makeRequestContext(mockContext), observe } as any,
+      { requestContext: makeRequestContext(mockContext), observe },
     )
     expect(Array.isArray(result)).toBe(true)
   })
@@ -67,7 +72,7 @@ describe('getCustomerTool', () => {
     const observe = makeObserve()
     const result = await getCustomerTool.execute?.(
       { id: '550e8400-e29b-41d4-a716-446655440000' },
-      { requestContext: makeRequestContext(mockContext), observe } as any,
+      { requestContext: makeRequestContext(mockContext), observe },
     )
     expect(result === null || typeof result === 'object').toBe(true)
   })

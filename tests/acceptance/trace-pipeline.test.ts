@@ -11,6 +11,7 @@
 //
 import { describe, it, expect } from 'vitest'
 import { InMemoryStore } from '@mastra/core/storage'
+import { ModerationProcessor } from '@mastra/core/processors'
 import { createCrumMastra } from '../../src/mastra'
 import { parseEnv } from '../../src/config/env'
 import type { CrumEnv } from '../../src/config/env'
@@ -48,6 +49,9 @@ describe('Phase 1 acceptance: trace shows processor pipeline firing', () => {
     expect(inputProcessorNames).toContain('TokenLimiterProcessor')
 
     const outputProcessorNames = outputProcessors.map((p) => p.constructor.name)
-    expect(outputProcessorNames).toContain('ModerationProcessor')
+    expect(outputProcessorNames).toContain('StreamModerationGateProcessor')
+    // The output guardrail is a ModerationProcessor subclass, so the exact name above
+    // is not the contract — the prototype chain is what makes it a guardrail.
+    expect(outputProcessors.some((p) => p instanceof ModerationProcessor)).toBe(true)
   })
 })

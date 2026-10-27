@@ -2,18 +2,7 @@ import { createTool } from '@mastra/core/tools'
 import { z } from 'zod'
 import { TenantRequestContextSchema } from '../tenant-context'
 import { queryCustomers, queryCustomer } from '../../db/queries'
-
-const CustomerSchema = z.object({
-  id: z.string(),
-  tenant_id: z.string(),
-  name: z.string(),
-  city: z.string().optional(),
-  tags: z.array(z.string()).optional(),
-  owner_id: z.string(),
-  team_member_ids: z.array(z.string()),
-  created_at: z.string(),
-  updated_at: z.string(),
-})
+import { CustomerRowSchema } from './row-fields'
 
 export const listCustomersTool = createTool({
   id: 'crm.list_customers',
@@ -27,7 +16,7 @@ export const listCustomersTool = createTool({
     limit: z.number().int().positive().optional(),
     offset: z.number().int().nonnegative().optional(),
   }),
-  outputSchema: z.array(CustomerSchema),
+  outputSchema: z.array(CustomerRowSchema),
   execute: async (input, context) => {
     return context.observe.span('crm.list_customers', async () => {
       const rc = context.requestContext.all
@@ -51,7 +40,7 @@ export const getCustomerTool = createTool({
   inputSchema: z.object({
     id: z.string().uuid(),
   }),
-  outputSchema: CustomerSchema.nullable(),
+  outputSchema: CustomerRowSchema.nullable(),
   execute: async (input, context) => {
     return context.observe.span('crm.get_customer', async () => {
       const rc = context.requestContext.all

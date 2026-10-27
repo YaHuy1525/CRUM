@@ -1,0 +1,183 @@
+/* console/app/theme.css — CRUM design system.
+ *
+ * Structure borrows from Cedar (sidebar shell, serif display voice, card rail,
+ * one gradient reserved for the composer), but the color identity stays ours:
+ * a single emerald accent on a light paper canvas, used only where a decision or
+ * a primary action lives. Every token below is a name for a decision;
+ * components reference names and never reach for raw colors.
+ *
+ * The canvas is light by decision (the graphite pass was reversed on request).
+ * Because every surface in the console resolves to a token here rather than to a
+ * literal, the whole theme moves with these values and no component file changes.
+ * The two exceptions are the accent text on emerald fills (`--accent-fg`) and the
+ * standalone `app/global-error.tsx`, which inlines its own colors so it can render
+ * before this sheet loads — it is updated alongside these tokens.
+ */
+:root {
+  color-scheme: light;
+
+  /* ── Brand primitives ───────────────────────────────────────────── */
+  --crum-white: #ffffff;
+  --cedar-900: #06402c;
+  --cedar-700: #047857;
+  /* `--cedar-500` is the bright step, and it is used for *text* (a 404 marker, a
+   * "start a new chat" link, a nav icon). On paper that means it has to clear
+   * 4.5:1 against a white card, so the bright step sits at emerald 600 rather
+   * than the old graphite-era 400; the gradient logo still reads as a bright-to-
+   * deep sweep because `--cedar-900` anchors its far end. */
+  --cedar-500: #059669;
+  --cedar-100: rgba(4, 120, 87, 0.10);
+  /* Retained for compatibility with any older var references. */
+  --crum-emerald-500: var(--cedar-700);
+  --crum-emerald-400: var(--cedar-500);
+
+  /* ── Paper surfaces ─────────────────────────────────────────────── */
+  --bg-base: #f6f7f9;      /* app canvas */
+  --bg-sunken: #eceef2;    /* inputs, wells, tracks */
+  --bg-card: #ffffff;      /* card and pane surface */
+  --bg-raised: #f1f3f7;    /* focus fills, hover fills */
+  --bg-elevated: #ffffff;  /* floating elements */
+  --bg-hover: rgba(11, 14, 20, 0.05);
+  --bg-active-pill: #e7ebf1; /* sidebar/tab active track */
+
+  /* ── Text ──────────────────────────────────────────────────────── */
+  --text-primary: #11161f;
+  --text-secondary: #3f4a5a;
+  --text-muted: #6b7686;
+
+  /* ── Accent: emerald, decision-only ─────────────────────────────── */
+  --accent: var(--cedar-700);
+  --accent-bright: var(--cedar-500);
+  --accent-fg: #ffffff;
+  --accent-soft: var(--cedar-100);
+  --accent-line: rgba(4, 120, 87, 0.34);
+
+  /* ── Lines ──────────────────────────────────────────────────────── */
+  --border: rgba(17, 22, 31, 0.12);
+  --border-strong: rgba(17, 22, 31, 0.22);
+  --border-focus: var(--accent);
+
+  /* ── Semantic states ────────────────────────────────────────────── */
+  --state-danger: #b4232f;
+  --state-danger-soft: rgba(180, 35, 47, 0.10);
+  --state-danger-line: rgba(180, 35, 47, 0.30);
+  --state-warning: #9a6206;
+  --state-warning-soft: rgba(154, 98, 6, 0.12);
+  --state-warning-line: rgba(154, 98, 6, 0.32);
+  --state-success: var(--cedar-700);
+  --state-success-soft: rgba(4, 120, 87, 0.10);
+  --state-success-line: rgba(4, 120, 87, 0.30);
+  --state-info: #1f5fd6;
+  --state-info-soft: rgba(31, 95, 214, 0.10);
+
+  /* ── The one gradient: the composer, tinted to sit on paper ─────── */
+  --grad-composer: linear-gradient(
+    115deg,
+    rgba(31, 95, 214, 0.07) 0%,
+    rgba(4, 120, 87, 0.07) 48%,
+    rgba(154, 98, 6, 0.06) 100%
+  );
+
+  /* ── Typography ──────────────────────────────────────────────────
+   * Each stack opens with the custom property `next/font/google` mints in
+   * `app/layout.tsx` for the self-hosted copy of that family, then keeps the
+   * family name and the system fallbacks: the variables are declared on the
+   * `<html>` element by the font loader rather than here, so a surface rendered
+   * outside the shell still resolves. */
+  --font-sans: var(--font-inter), 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', sans-serif;
+  --font-display: var(--font-source-serif), 'Source Serif 4', 'Iowan Old Style', Georgia,
+    'Times New Roman', serif;
+  --font-mono: var(--font-jetbrains-mono), 'JetBrains Mono', 'Fira Code', 'SFMono-Regular', Consolas,
+    monospace;
+
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-md: 15px;
+  --text-lg: 18px;
+  --text-xl: 22px;
+  --text-2xl: 28px;
+  --tracking-tight: -0.01em;
+  --tracking-label: 0.06em;
+
+  --line-height-prose: 1.55;
+  --line-height-tight: 1.25;
+  --line-height-table: 1.35;
+
+  /* ── Spacing scale (4px grid) ───────────────────────────────────── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* ── Radii ──────────────────────────────────────────────────────── */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-pill: 999px;
+
+  /* ── Elevation ──────────────────────────────────────────────────── */
+  /* On paper, elevation reads as a soft shadow rather than a lighter fill, so
+   * the alpha budget drops to roughly half the graphite values. */
+  --shadow-sm: 0 1px 2px rgba(17, 22, 31, 0.08);
+  --shadow-md: 0 4px 16px -6px rgba(17, 22, 31, 0.18);
+  --shadow-lg: 0 18px 48px -18px rgba(17, 22, 31, 0.26);
+  --shadow-accent: 0 6px 22px -8px rgba(4, 120, 87, 0.42);
+  --ring: 0 0 0 2px var(--bg-base), 0 0 0 4px var(--accent);
+
+  /* ── Motion ─────────────────────────────────────────────────────── */
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --dur-fast: 120ms;
+  --dur: 180ms;
+  --transition: var(--dur) var(--ease);
+
+  /* ── Layout ─────────────────────────────────────────────────────── */
+  /* The only shell dimension still expressed as a token. The legacy header row
+   * and the two chats panes that once had tokens here are gone: the header
+   * became the sidebar in the IA redesign, and the pane widths are Tailwind
+   * utilities on the chats section now. */
+  --sidebar-w: 240px;
+}
+
+/* Respect users who ask for less motion.
+ *
+ * Duration alone is not enough for this console, which runs three infinite
+ * loops: `animate-pulse` on every skeleton, `animate-cursor-blink` while the
+ * agent streams, and the fade/zoom Radix puts on dialogs, menus and tooltips.
+ * A 0.001ms infinite animation still restarts forever, so the iteration count
+ * is pinned to one as well, and `scroll-behavior` is forced back to instant
+ * because the app-main column is a scroll container. */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Focus ring — always visible, emerald, offset from the surface. */
+.focus-ring:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* The ring must not animate in. Tailwind's `transition-colors` includes
+ * `outline-color` in its property list, so a `.focus-ring` element that also
+ * carries it fades the outline from the element's own text colour to emerald
+ * over 180ms. A keyboard user sees a pale, then grey, then green ring on the
+ * very element they are trying to locate, and a screenshot of the first frame
+ * shows no ring at all. Listing the properties by hand (Tailwind's set minus
+ * outline-color) keeps every other colour transition on the element and makes
+ * the ring appear on the frame focus lands. */
+.focus-ring {
+  transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
+}

@@ -2,17 +2,7 @@ import { createTool } from '@mastra/core/tools'
 import { z } from 'zod'
 import { TenantRequestContextSchema } from '../tenant-context'
 import { querySchedules } from '../../db/queries'
-
-const ScheduleSchema = z.object({
-  id: z.string(),
-  tenant_id: z.string(),
-  customer_id: z.string(),
-  scheduled_at: z.string().optional(),
-  owner_id: z.string(),
-  team_member_ids: z.array(z.string()),
-  created_at: z.string(),
-  updated_at: z.string(),
-})
+import { ScheduleRowSchema } from './row-fields'
 
 export const listSchedulesTool = createTool({
   id: 'crm.list_schedules',
@@ -22,7 +12,7 @@ export const listSchedulesTool = createTool({
   inputSchema: z.object({
     customerId: z.string().uuid(),
   }),
-  outputSchema: z.array(ScheduleSchema),
+  outputSchema: z.array(ScheduleRowSchema),
   execute: async (input, context) => {
     return context.observe.span('crm.list_schedules', async () => {
       const rc = context.requestContext.all

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { RequestContext } from '@mastra/core/request-context'
+import type { ToolObserve } from '@mastra/core/tools'
 import type { TenantRequestContext } from '../../../src/mastra/tenant-context'
 import { listTasksTool, myOpenItemsTool } from '../../../src/mastra/tools/tasks'
 
@@ -17,10 +18,14 @@ const mockContext: TenantRequestContext = {
   userRole: 'admin',
 }
 
-function makeObserve() {
+function makeObserve(): ToolObserve {
   return {
-    span: vi.fn(async (_name: string, fn: () => Promise<unknown>) => fn()),
-    log: vi.fn(),
+    // Method shorthand keeps `span` generic, which the framework interface needs;
+    // a stub pinned to Promise<unknown> does not satisfy ToolObserve.
+    span(_name, fn) {
+      return Promise.resolve(fn())
+    },
+    log: () => {},
   }
 }
 
@@ -46,7 +51,7 @@ describe('listTasksTool', () => {
     const observe = makeObserve()
     const result = await listTasksTool.execute?.(
       { customerId: '550e8400-e29b-41d4-a716-446655440000' },
-      { requestContext: makeRequestContext(mockContext), observe } as any,
+      { requestContext: makeRequestContext(mockContext), observe },
     )
     expect(Array.isArray(result)).toBe(true)
   })
@@ -66,11 +71,16 @@ describe('myOpenItemsTool', () => {
     const observe = makeObserve()
     const result = await myOpenItemsTool.execute?.(
       {},
-      { requestContext: makeRequestContext(mockContext), observe } as any,
+      { requestContext: makeRequestContext(mockContext), observe },
     )
     expect(result).toHaveProperty('tasks')
     expect(result).toHaveProperty('followups')
-    expect(Array.isArray((result as any).tasks)).toBe(true)
-    expect(Array.isArray((result as any).followups)).toBe(true)
+    // The declared output is a union with a validation error, so the test pins the
+    // success branch before reading its arrays.
+    if (!result || !('tasks' in result) || !('followups' in result)) {
+      throw new Error(`myOpenItemsTool did not return the staged payload: ${JSON.stringify(result)}`)
+    }
+    expect(Array.isArray(result.tasks)).toBe(true)
+    expect(Array.isArray(result.followups)).toBe(true)
   })
 })

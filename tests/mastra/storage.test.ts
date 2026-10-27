@@ -157,6 +157,7 @@ describe('buildMastraStorage', () => {
       buildMastraStorage(
         parseEnv({
           NODE_ENV: 'production',
+          CRUM_AUTH_MODE: 'jwt',
           APPROVAL_HMAC_SECRET: 'a'.repeat(32),
           MCP_REQUEST_STATE_KEY: 'b'.repeat(32),
           OPENROUTER_API_KEY: 'sk-or-v1-placeholder',
@@ -172,6 +173,7 @@ describe('buildMastraStorage', () => {
       buildMastraStorage(
         parseEnv({
           NODE_ENV: 'production',
+          CRUM_AUTH_MODE: 'jwt',
           APPROVAL_HMAC_SECRET: 'a'.repeat(32),
           MCP_REQUEST_STATE_KEY: 'b'.repeat(32),
           OPENROUTER_API_KEY: 'sk-or-v1-placeholder',

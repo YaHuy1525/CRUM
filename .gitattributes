@@ -18,3 +18,7 @@ policy/** text eol=lf
 *.png binary
 *.jpg binary
 *.pdf binary
+
+# A PEM trust anchor is parsed byte-wise by OpenSSL. Keeping it unnormalised
+# avoids a line-ending rewrite changing a security artifact on checkout.
+*.pem -text

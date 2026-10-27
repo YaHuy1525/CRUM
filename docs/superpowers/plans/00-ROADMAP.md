@@ -107,7 +107,7 @@ score. Implements TECHNICAL_PLAN.md §12.2.
 | 4 | Knowledge RAG | `phase/4-rag` | 3-4 d | written at Phase 4 start | An uploaded document yields a cited answer, an unanswerable question yields a refusal, re-upload replaces rather than duplicates |
 | 5 | Prefill, email, classification, MCP 2.0 | `phase/5-mcp` | 3-4 d | written at Phase 5 start | Pasted text prefills a form, an injection attempt is aborted, an external MCP client reads under its own principal and cannot reach a write |
 | 6 | Evals, LLMOps loop, today view | `phase/6-evals` | 3-4 d | written at Phase 6 start | `eval:seed` then `eval:run` scores in Studio, the gate blocks a degraded prompt, feedback lands on a trace, the weekday digest arrives |
-| 7 | Autonomy and polish | `phase/7-polish` | 2-3 d | written at Phase 7 start | Signals, one narrow goal with a hard run budget, accessibility pass, load test, runbook |
+| 7 | Autonomy and polish | `phase/7-polish` | 2-3 d | [`2026-10-24-phase-7-polish.md`](./2026-10-24-phase-7-polish.md) | ✅ Signals, one narrow goal with hard maxRuns, accessibility pass, load tests, runbook |
 
 **Total 25-33 days part-time.** Phases 0-3 (14-18 days) are the demonstrable core.
 

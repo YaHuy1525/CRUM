@@ -22,11 +22,16 @@ describe('TenantRequestContextSchema', () => {
     const adminContext = { ...validContext, userRole: 'admin' as const }
     const result = TenantRequestContextSchema.safeParse(adminContext)
     expect(result.success).toBe(true)
+    if (!result.success) {
+      throw new Error(
+        `expected admin context to parse, got issues: ${JSON.stringify(result.error.issues)}`,
+      )
+    }
     expect(result.data.userRole).toBe('admin')
   })
 
   it('rejects missing tenantId', () => {
-    const { tenantId, ...missingTenant } = validContext
+    const { tenantId: _tenantId, ...missingTenant } = validContext
     const result = TenantRequestContextSchema.safeParse(missingTenant)
     expect(result.success).toBe(false)
     if (!result.success) {
@@ -36,7 +41,7 @@ describe('TenantRequestContextSchema', () => {
   })
 
   it('rejects missing userId', () => {
-    const { userId, ...missingUser } = validContext
+    const { userId: _userId, ...missingUser } = validContext
     const result = TenantRequestContextSchema.safeParse(missingUser)
     expect(result.success).toBe(false)
     if (!result.success) {

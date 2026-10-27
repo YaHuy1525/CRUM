@@ -1,14 +1,14 @@
 import type { Mastra } from '@mastra/core/mastra'
-import type { AgentController, AgentControllerThread } from '@mastra/core/agent-controller'
+import { isSessionNotStartedError } from '@mastra/core/agent-controller'
+import type { AgentControllerThread, Session } from '@mastra/core/agent-controller'
 
-// §4.2 — Agent Controller session helpers. Phase 1 wires the read path
-// (queryThreads) and basic session creation. Phase 3 adds the approval queue.
+
+export const CRUM_AGENT_CONTROLLER_ID = 'crm-assistant'
 
 export interface CreateSessionOptions {
   agentId: string
   resourceId: string
   threadId?: string
-  /** Explicit session id. Defaults to resourceId when omitted (controller caches by id). */
   id?: string
 }
 
@@ -17,12 +17,9 @@ export interface ListSessionsOptions {
   resourceId: string
 }
 
-/**
- * Resolves the AgentController registered under `agentId` on the Mastra instance.
- * Throws when no controller is found so callers get a clear diagnostic instead
- * of a silent undefined dereference.
- */
-function requireController(mastra: Mastra, agentId: string): AgentController<any> {
+type RegisteredAgentController = NonNullable<ReturnType<Mastra['getAgentController']>>
+
+function requireController(mastra: Mastra, agentId: string): RegisteredAgentController {
   const controller = mastra.getAgentController(agentId)
   if (!controller) {
     throw new Error(
@@ -33,21 +30,12 @@ function requireController(mastra: Mastra, agentId: string): AgentController<any
   return controller
 }
 
-/**
- * Creates a session for the given agent. The AgentController creates (or
- * recovers) a session keyed by resourceId and provisions an initial thread.
- *
- * Returns the Session, which exposes `session.thread.getId()` and
- * `session.identity.getResourceId()` for downstream consumers.
- */
 export async function createSession(
   mastra: Mastra,
   options: CreateSessionOptions,
 ) {
   const controller = requireController(mastra, options.agentId)
 
-  // initStorage ensures the storage layer is ready for thread persistence
-  // without provisioning a full workspace/sandbox.
   await controller.initStorage()
 
   const session = await controller.createSession({
@@ -59,24 +47,6 @@ export async function createSession(
   return session
 }
 
-/**
- * Lists sessions for a resource by recovering live Session objects from stored
- * threads.
- *
- * **Side effects:** For each thread returned by `queryThreads`, this calls
- * `controller.createSession({ resourceId, threadId })`. Despite the name
- * "createSession", this is **idempotent** — when a `threadId` is provided,
- * AgentController.createSession resumes the existing thread rather than
- * creating a duplicate (verified against AgentController `.d.ts`: "Existing
- * threads are resumed; missing threads are created with this id"). The result
- * is a set of live Session objects bound to their respective threads.
- *
- * This recovery pattern is necessary because threads are persisted in storage
- * but Session objects are in-memory; after a restart, the sessions must be
- * reconstructed from their thread state.
- *
- * Returns Session[] — the live session objects recovered from thread state.
- */
 export async function listSessions(
   mastra: Mastra,
   options: ListSessionsOptions,
@@ -84,7 +54,6 @@ export async function listSessions(
   const controller = requireController(mastra, options.agentId)
   await controller.initStorage()
 
-  // Each thread corresponds to a session. Recover the live session for each.
   const threads = await controller.queryThreads({
     resourceId: options.resourceId,
   })
@@ -101,12 +70,62 @@ export async function listSessions(
   return sessions
 }
 
-/**
- * Read-only thread listing. Does NOT create a session — this is the sidebar
- * query that must respond in <300ms without provisioning a workspace.
- *
- * §16 Phase 1 acceptance: session list renders under 300ms.
- */
+export interface ResolveSessionOptions {
+  sessionId: string
+  tenantId: string
+  resourceId: string
+  agentId?: string
+}
+
+export type ResolvedSession =
+  | { ok: true; session: Session<unknown> }
+  | { ok: false; reason: 'not-started' }
+  | { ok: false; reason: 'wrong-resource' }
+  | { ok: false; reason: 'controller-missing' }
+
+export function resourceIdFor(identity: { tenantId: string; userId: string }): string {
+  return `${identity.tenantId}:${identity.userId}`
+}
+
+export async function resolveSession(
+  mastra: Mastra,
+  options: ResolveSessionOptions,
+): Promise<ResolvedSession> {
+  const { sessionId, resourceId } = options
+  const agentId = options.agentId ?? CRUM_AGENT_CONTROLLER_ID
+
+  if (!resourceId.startsWith(`${options.tenantId}:`)) {
+    return { ok: false, reason: 'wrong-resource' }
+  }
+
+  let controller: RegisteredAgentController
+  try {
+    controller = requireController(mastra, agentId)
+  } catch {
+    return { ok: false, reason: 'controller-missing' }
+  }
+
+  const live = await controller.getSession(sessionId)
+  if (live) {
+    if (live.identity.getResourceId() !== resourceId) return { ok: false, reason: 'wrong-resource' }
+    return { ok: true, session: live }
+  }
+
+  try {
+    const session = await controller.createSession({
+      id: sessionId,
+      resourceId,
+      threadId: sessionId,
+      resumeOnly: true,
+    })
+    if (!session) return { ok: false, reason: 'not-started' }
+    return { ok: true, session }
+  } catch (err) {
+    if (isSessionNotStartedError(err)) return { ok: false, reason: 'not-started' }
+    throw err
+  }
+}
+
 export async function queryThreads(
   mastra: Mastra,
   options: ListSessionsOptions,

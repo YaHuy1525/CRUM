@@ -28,6 +28,21 @@ describe('parseEnv', () => {
     expect(env.MASTRA_PG_POOL_MAX).toBe(4)
     expect(env.POLICY_DIR).toBeUndefined()
     expect(env.MASTRA_OBSERVABILITY).toBe(false)
+    expect(env.CRUM_AUTH_MODE).toBe('dev')
+    expect(env.CRUM_API_PORT).toBe(4111)
+    // The REST plane is a second port on purpose: Mastra reserves `/api`.
+    expect(env.CRUM_REST_PORT).toBe(4113)
+  })
+
+  it('refuses dev identity in production (§13.2, §13.8)', () => {
+    expect(() => parseEnv({ NODE_ENV: 'production' })).toThrowError(EnvParseError)
+    expect(() => parseEnv({ NODE_ENV: 'production', CRUM_AUTH_MODE: 'dev' })).toThrowError(
+      /CRUM_AUTH_MODE cannot be "dev" in production/,
+    )
+  })
+
+  it('allows jwt identity in production', () => {
+    expect(parseEnv({ NODE_ENV: 'production', CRUM_AUTH_MODE: 'jwt' }).CRUM_AUTH_MODE).toBe('jwt')
   })
 
   it('coerces numeric strings', () => {
@@ -103,7 +118,7 @@ describe('production readiness', () => {
   })
 
   it('only enforces the list in production', () => {
-    expect(isProduction(parseEnv({ NODE_ENV: 'production' }))).toBe(true)
+    expect(isProduction(parseEnv({ NODE_ENV: 'production', CRUM_AUTH_MODE: 'jwt' }))).toBe(true)
     expect(isProduction(parseEnv({ NODE_ENV: 'development' }))).toBe(false)
     expect(isProduction(parseEnv({ NODE_ENV: 'test' }))).toBe(false)
   })

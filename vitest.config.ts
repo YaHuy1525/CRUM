@@ -34,7 +34,7 @@ export default defineConfig({
         test: {
           name: 'unit',
           include: ['tests/**/*.test.ts'],
-          exclude: ['tests/integration/**'],
+          exclude: ['tests/integration/**', 'tests/load/**'],
         },
       },
       {

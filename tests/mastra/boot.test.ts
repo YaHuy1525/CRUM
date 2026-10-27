@@ -31,6 +31,8 @@ const REMOTE = 'postgresql://crum:secret@db.abcdefgh.supabase.co:5432/postgres'
 /** The six secrets §13.8 requires in production. Placeholders, not credentials. */
 const PRODUCTION_BASE: Record<string, string> = {
   NODE_ENV: 'production',
+  // production + dev auth throws at parseEnv; production fixtures are jwt.
+  CRUM_AUTH_MODE: 'jwt',
   DATABASE_URL: REMOTE,
   OPENROUTER_API_KEY: 'sk-or-v1-placeholder',
   APPROVAL_HMAC_SECRET: 'a'.repeat(32),
@@ -117,7 +119,34 @@ describe('createCrumMastra', () => {
 
   it('registers the crmAssistant agent', () => {
     const mastra = createCrumMastra(envWith())
-    expect(Object.keys(mastra.listAgents())).toEqual(['crm-assistant'])
+    expect(Object.keys(mastra.listAgents())).toContain('crm-assistant')
+  })
+
+  it('registers Phase 5 agents (parser, document-extractor, email-drafter)', () => {
+    const mastra = createCrumMastra(envWith())
+    const agentKeys = Object.keys(mastra.listAgents()).sort()
+    expect(agentKeys).toEqual(['crm-assistant', 'digest', 'document-extractor', 'email-drafter', 'parser'])
+  })
+
+  it('registers Phase 5 classifiers (intent, injection)', () => {
+    const mastra = createCrumMastra(envWith())
+    const classifiers = mastra.listClassifiers?.() ?? {}
+    const classifierKeys = Object.keys(classifiers).sort()
+    expect(classifierKeys).toEqual(['crum-injection', 'crum-intent'])
+  })
+
+  it('registers the intent triage workflow', () => {
+    const mastra = createCrumMastra(envWith())
+    const workflows = mastra.listWorkflows?.() ?? {}
+    expect(workflows).toHaveProperty('crum-intent-triage')
+    expect(workflows).toHaveProperty('knowledge-ingest')
+    expect(workflows).toHaveProperty('crum-document-intake')
+  })
+
+  it('registers the MCP server', () => {
+    const mastra = createCrumMastra(envWith())
+    const mcpServers = mastra.listMCPServers?.() ?? {}
+    expect(mcpServers).toHaveProperty('crum-crm')
   })
 })
 

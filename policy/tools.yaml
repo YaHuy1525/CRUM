@@ -27,7 +27,7 @@ version: 1
 # It is the only such collision in this file. Do not normalise one spelling
 # to the other: doing so silently moves tools across a gate boundary.
 tools:
-  # ── read-only (9) ──────────────────────────────────────────
+  # ── read-only (14) ─────────────────────────────────────────
   - name: crm.list_customers
     description: List customers visible to the caller.
     scope: crm-read
@@ -71,6 +71,31 @@ tools:
   - name: knowledge.retrieve
     description: Reranked retrieval over the tenant knowledge index, citations returned.
     scope: knowledge-domains
+    class: read-only
+
+  - name: mail.search_threads
+    description: Search the caller's connected Gmail mailbox. Snippets capped, bodies never returned.
+    scope: mail-read
+    class: read-only
+
+  - name: doc.list_documents
+    description: List structured business documents (invoices, contracts) for the tenant.
+    scope: doc-read
+    class: read-only
+
+  - name: doc.get_invoice
+    description: Read one invoice header and its line items by document id.
+    scope: doc-read
+    class: read-only
+
+  - name: doc.get_contract
+    description: Read one contract header and its key terms by document id.
+    scope: doc-read
+    class: read-only
+
+  - name: doc.sum_invoices
+    description: Aggregate ready invoice totals by vendor, customer and date range.
+    scope: doc-read
     class: read-only
 
   # ── auto (3) ───────────────────────────────────────────────

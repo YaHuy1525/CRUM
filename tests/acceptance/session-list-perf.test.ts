@@ -41,7 +41,6 @@ describe('Phase 1 acceptance: session list renders under 300ms', () => {
     expect(threads.length).toBeGreaterThanOrEqual(10)
     expect(elapsed).toBeLessThan(300)
 
-    // eslint-disable-next-line no-console
     console.log(`queryThreads latency: ${elapsed.toFixed(2)}ms`)
   })
 })

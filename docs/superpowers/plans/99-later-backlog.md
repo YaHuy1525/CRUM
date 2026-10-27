@@ -234,3 +234,74 @@ Definition of done rule 4 makes `docs/TECHNICAL_PLAN.md` the authority, and this
 contradicts it in two places now corrected and extends it in one. Before any item here enters a phase
 plan, the spec's Later list must be updated to either adopt or reject it, with a change-log entry.
 This document is a proposal to that list, not a substitute for it.
+
+## Deferred from the console Chats phase
+
+These two items did not come from Cedar. They are gaps the console redesign hit while it was being
+built, recorded here so that "deferred" means "written down somewhere findable" rather than "quietly
+dropped". Attribution obligation does not apply.
+
+### C1. Assistant answer feedback (thumbs)
+
+**Deferred in Phase 3 of `2026-10-26-console-ia-chats-design.md`.**
+
+The spec asked `/chats/[id]` to post thumbs on an assistant answer to the existing `/api/feedback`
+endpoint, using the trace and span ids carried in stored message metadata. The pinned storage shape
+does not persist those ids. `console/lib/types.ts` already says so, the messages response reports
+`trace_available: false` in practice, and the conversation view therefore ships without the control.
+
+**Why it was not faked.** A vote that cannot be attached to a trace is a button that writes nothing
+useful. It would also read to the operator as a recorded judgement, which is worse than an absent
+control.
+
+**What has to land first.** The mapping module in `src/api/message-mapping.ts` needs real trace and
+span ids to read out of stored metadata, which means the chat route has to persist them on the
+assistant message when the run finishes. Then `/chats/[id]` can render the control behind the
+`trace_available` flag the response already carries, and the flag stops being a constant.
+
+**Proof it is done:** a test that a message with metadata renders the control and posts both ids, and
+one that a message without metadata renders nothing rather than a disabled button.
+
+### C2. Thread list row omits `title_pinned`
+
+**Deferred in Phase 2, unresolved in Phase 3.**
+
+`GET /api/agent/threads` returns `id, title, created_at, updated_at, resource_id` and does not carry
+`title_pinned`, while `GET /api/agent/threads/:id` and the rename `PATCH` both do. The console types it
+as optional and treats absence as "not pinned", which is safe today because only the rename dialog
+reads the flag.
+
+**What breaks if it stays.** Any list-level affordance that depends on the pin, such as showing a
+"pinned by you" marker on a row, would silently render nothing on the list read and something on the
+detail read. Two surfaces, two answers about the same row.
+
+**Fix:** add the flag to the list SELECT in `src/api/agent.ts`, or stop returning it from the item read
+and derive it in one place. Either way the shapes agree.
+
+## Deferred from the console page-migration phase
+
+One item, again not from Cedar. It surfaced while Home was reading the digest in Phase 4 and is recorded
+here for the same reason as C1 and C2: deferred has to mean written down.
+
+### C3. The digest follow-up label reads a field the table does not have
+
+**Deferred in Phase 4 of `2026-10-26-console-ia-chats-design.md`.**
+
+`src/mastra/workflows/digest.ts` builds the stale follow-up label from `f.note`, and `followups` has no
+such column. `migrations/0002_crum_spine.sql` defines `notes`. `CrumFollowup` in `src/db/queries.ts`
+carries both names, `note` because the `crm.list_followups` tool output schema pins it and `notes`
+because that is the column, so the expression type checks and the label always falls through to
+`Followup <id prefix>`.
+
+**Why it was not fixed in Phase 4.** Nothing renders that label yet. The Home today card shows the
+three counts and the composed summary, and the summary counts items without naming them. There was no
+test to change and no surface to prove a fix against.
+
+**What breaks if it stays.** The first consumer that lists stale follow-ups, including a future digest
+detail view, shows an id fragment where the operator's note belongs, and it will not look broken enough
+for anyone to report.
+
+**Fix:** read `notes` first and keep the pinned `note` as a fallback, or drop `note` from the query
+shape and correct the tool schema that pins it. **Proof it is done:** a test over a follow-up row with
+`notes` set that expects the note to appear in the label.
+

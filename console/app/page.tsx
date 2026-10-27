@@ -1,30 +1,40 @@
 'use client'
 
-import { useState } from 'react'
-import { SessionList } from '../components/SessionList'
-import { ChatPane } from '../components/ChatPane'
-import { ObjectPanel, type Customer } from '../components/ObjectPanel'
-import { ModeSwitch, type Mode } from '../components/ModeSwitch'
+import { useEffect, useState } from 'react'
 
-export default function Home() {
-  const [boundCustomer, setBoundCustomer] = useState<Customer | null>(null)
-  const [mode, setMode] = useState<Mode>('explore')
+import { PageHeader } from '@/components/PageHeader'
+import { AwaitingDecisionCard } from '@/components/home/AwaitingDecisionCard'
+import { QuickLauncher } from '@/components/home/QuickLauncher'
+import { RecentConversationsCard } from '@/components/home/RecentConversationsCard'
+import { TodayCard } from '@/components/home/TodayCard'
+
+export default function HomePage() {
+  const [dateLine, setDateLine] = useState('')
+
+  useEffect(() => {
+    setDateLine(
+      new Date().toLocaleDateString(undefined, {
+        weekday: 'long',
+        month: 'long',
+        day: 'numeric',
+      }),
+    )
+  }, [])
 
   return (
-    <div className="container">
-      <div className="pane">
-        <div className="pane-header">Sessions</div>
-        <SessionList />
+    <main className="mx-auto w-full max-w-5xl px-4 py-6 md:px-8 md:py-10">
+      <PageHeader
+        title="Welcome back."
+        description={dateLine || 'Your workbench at a glance.'}
+      />
+
+      <div className="mt-6 grid items-start gap-4 md:grid-cols-3">
+        <AwaitingDecisionCard />
+        <TodayCard />
+        <RecentConversationsCard />
       </div>
-      <div className="pane chat-pane">
-        <div className="pane-header">Chat</div>
-        <ModeSwitch currentMode={mode} onModeChange={setMode} />
-        <ChatPane />
-      </div>
-      <div className="pane">
-        <div className="pane-header">Context</div>
-        <ObjectPanel customer={boundCustomer} />
-      </div>
-    </div>
+
+      <QuickLauncher />
+    </main>
   )
 }

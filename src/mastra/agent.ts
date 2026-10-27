@@ -1,4 +1,5 @@
 import { Agent } from '@mastra/core/agent'
+import type { AgentControllerSubagent } from '@mastra/core/agent-controller'
 import type {
   InputProcessorOrWorkflow,
   OutputProcessorOrWorkflow,
@@ -12,7 +13,19 @@ import { listTasksTool, myOpenItemsTool } from './tools/tasks'
 import { listSchedulesTool } from './tools/schedules'
 import { searchTool } from './tools/search'
 import { knowledgeRetrieveTool } from './tools/knowledge'
-import { resolveActiveTools } from './active-tools'
+import { searchThreadsTool } from './tools/gmail'
+import {
+  listDocumentsTool,
+  getInvoiceTool,
+  getContractTool,
+  sumInvoicesTool,
+} from './tools/documents'
+import { logFollowupTool, createTaskTool, draftMailTool } from './tools/auto-writes'
+import { createCustomerTool, updateCustomerTool, deleteCustomerTool } from './tools/customer-writes'
+import { createContactTool, createScheduleTool, transferOwnerTool, sendMailTool } from './tools/approval-writes'
+import { approvalFlow } from './workflows/approval-flow'
+import { resolveActiveTools, providerToolName } from './active-tools'
+import { CRUM_MAIN_MODEL, CRUM_LIGHT_MODEL } from './models'
 import type { TenantRequestContext } from './tenant-context'
 
 const crumToolRegistry = {
@@ -25,9 +38,23 @@ const crumToolRegistry = {
   'crm.my_open_items': myOpenItemsTool,
   'crm.search': searchTool,
   'knowledge.retrieve': knowledgeRetrieveTool,
+  'mail.search_threads': searchThreadsTool,
+  'doc.list_documents': listDocumentsTool,
+  'doc.get_invoice': getInvoiceTool,
+  'doc.get_contract': getContractTool,
+  'doc.sum_invoices': sumInvoicesTool,
+  'crm.log_followup': logFollowupTool,
+  'crm.create_task': createTaskTool,
+  'mail.draft': draftMailTool,
+  'crm.create_customer': createCustomerTool,
+  'crm.update_customer': updateCustomerTool,
+  'crm.delete_customer': deleteCustomerTool,
+  'crm.create_contact': createContactTool,
+  'crm.create_schedule': createScheduleTool,
+  'crm.transfer_owner': transferOwnerTool,
+  'mail.send': sendMailTool,
 }
 
-// §4.3.1 — CRUM's main agent. Phase 2 wires tools, defaultOptions, and activeTools resolution.
 export const crmAssistant = new Agent({
   id: 'crm-assistant',
   name: 'CRUM Assistant',
@@ -36,32 +63,73 @@ export const crmAssistant = new Agent({
 
   instructions: CRUM_INSTRUCTIONS,
 
-  // Phase 1: single model. Phase 2 adds fallback array per §4.3.1.
-  model: 'anthropic/claude-sonnet-5-5',
+  model: CRUM_MAIN_MODEL,
 
   tools: crumToolRegistry,
 
-  // Step retries are DISABLED unless this is set. The abort-and-retry path
-  // in WriteClaimGuardProcessor (Phase 3) depends on it. §4.3.
+  workflows: {
+    'approval-flow': approvalFlow,
+  },
+
   maxProcessorRetries: 2,
 
-  // Processors are typed as Processor[] in processors.ts; the Agent constructor
-  // expects the narrower InputProcessorOrWorkflow / OutputProcessorOrWorkflow
-  // unions. The runtime dispatch is correct (the processor runner checks method
-  // presence), so we assert at the boundary.
+  goal: {
+    judge: CRUM_MAIN_MODEL,
+    maxRuns: 12,
+  },
+
   inputProcessors: crumInputProcessors as InputProcessorOrWorkflow[],
   outputProcessors: crumOutputProcessors as OutputProcessorOrWorkflow[],
 
   defaultOptions: ({ requestContext }) => {
-    const tenantContext = requestContext?.get('tenantContext') as TenantRequestContext | undefined
+    const tenantContext = requestContext?.get<'tenantContext', TenantRequestContext | undefined>(
+      'tenantContext',
+    )
     if (!tenantContext) {
       return { activeTools: [] }
     }
     return {
-      activeTools: resolveActiveTools(tenantContext),
+      activeTools: resolveActiveTools(tenantContext).map(providerToolName),
     }
   },
 
-  // Phase 1: no memory. Phase 2 wires coreMemory via Mastra instance.
-  // memory: buildCrumMemory(storage),
+  memory: ({ mastra }) => {
+    const coreMemory = mastra?.getMemory('coreMemory')
+    if (!coreMemory) {
+      throw new Error(
+        'crm-assistant requires `coreMemory` registered on the Mastra instance (see createCrumMastra)',
+      )
+    }
+    return coreMemory
+  },
 })
+
+export const CRUM_SUBAGENTS: AgentControllerSubagent[] = [
+  {
+    id: 'parser',
+    name: 'Record Parser',
+    description:
+      'Turns pasted business cards, email signatures or meeting notes into structured CRM fields.',
+    instructions:
+      'Extract CRM record fields from untrusted pasted text. Return only fields ' +
+      'literally present. Never infer a city from an area code or an email domain. ' +
+      'Omit anything not stated.',
+    tools: {},
+    defaultModelId: CRUM_LIGHT_MODEL,
+    maxSteps: 3,
+  },
+  {
+    id: 'email-drafter',
+    name: 'Email Drafter',
+    description:
+      'Drafts an outbound email body from a customer record and a stated intent. Never sends.',
+    instructions:
+      'Draft a professional email body based on the customer context and intent provided. ' +
+      'Never send the email. Never include placeholders the user must fill in. ' +
+      'Keep the tone matching the relationship stage: formal for new contacts, ' +
+      'warm but professional for established ones.',
+    tools: {},
+    defaultModelId: CRUM_MAIN_MODEL,
+    maxSteps: 1,
+  },
+]

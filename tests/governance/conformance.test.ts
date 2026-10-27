@@ -20,6 +20,11 @@ const SPEC_TOOL_SURFACE: ReadonlyArray<readonly [name: string, klass: string, id
   ['crm.my_open_items', 'read-only', null],
   ['crm.search', 'read-only', null],
   ['knowledge.retrieve', 'read-only', null],
+  ['mail.search_threads', 'read-only', null],
+  ['doc.list_documents', 'read-only', null],
+  ['doc.get_invoice', 'read-only', null],
+  ['doc.get_contract', 'read-only', null],
+  ['doc.sum_invoices', 'read-only', null],
   ['crm.create_customer', 'approval', 'draftHash'],
   ['crm.update_customer', 'approval', 'draftHash'],
   ['crm.delete_customer', 'approval', 'draftHash'],
@@ -69,7 +74,7 @@ describe('tools.yaml conforms to §4.6.2', () => {
     expect(extra).toEqual([])
   })
 
-  it('has exactly the twenty spec tools plus run.side-effect', () => {
+  it('has exactly the twenty-five spec tools plus run.side-effect', () => {
     expect(policy.tools.tools).toHaveLength(SPEC_TOOL_SURFACE.length + TEMPLATE_TOOLS.size)
   })
 })
@@ -127,8 +132,8 @@ describe('class invariants', () => {
     expect(offenders).toEqual([])
   })
 
-  it('has exactly nine read-only tools', () => {
-    expect(policy.toolsByClass('read-only')).toHaveLength(9)
+  it('has exactly fourteen read-only tools', () => {
+    expect(policy.toolsByClass('read-only')).toHaveLength(14)
   })
 
   it('has exactly one refuse-class tool', () => {
@@ -163,9 +168,10 @@ describe('scope discipline', () => {
   })
 
   it('uses distinct scopes for distinct permission boundaries', () => {
-    // crm-read is shared by eight read tools and knowledge-domains by the ninth,
-    // which is intended: each is a single boundary, so each still yields exactly
-    // one class. What must not happen is one scope carrying two classes at all —
+    // crm-read is shared by eight read tools, knowledge-domains by the ninth,
+    // mail-read and doc-read by the rest, which is intended: each is a single
+    // boundary, so each still yields exactly one class. What must not happen is
+    // one scope carrying two classes at all —
     // a read grant covering a write, or the colon/hyphen pair crm:write
     // (approval) and crm-write (auto) being silently normalised into each other,
     // which policy/tools.yaml:13-28 warns about by name. Asserting exactly one
