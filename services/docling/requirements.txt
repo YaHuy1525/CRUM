@@ -1,0 +1,6 @@
+# Pinned major: the app guards known docling API drift, but a new major can
+# move shapes again. Bump deliberately, re-run a /convert against a fixture.
+docling>=2.60,<3
+fastapi>=0.111,<1
+uvicorn>=0.30,<1
+python-multipart>=0.0.9,<0.1

@@ -5,6 +5,9 @@ import mammoth from 'mammoth'
 import { documentExtractorAgent } from '../agents/document-extractor'
 import { invoiceSchema, contractSchema } from '../schemas/documents'
 import type { InvoiceExtract, ContractExtract } from '../schemas/documents'
+import { parseEnv } from '../../config/env'
+import { BLOCK_TYPES, convertWithDocling, layoutBlocks } from '../docling'
+import type { DocumentBlock, ParseRun } from '../docling'
 import {
   insertDocument,
   resolveCustomerByEntity,
@@ -110,32 +113,143 @@ const parsedSchema = z.object({
   text: z.string(),
 })
 
+// One parsed block plus its character span into `text`. bbox/offsets may be
+// null: the fallback parsers cannot localize.
+const blockSchema = z.object({
+  page_number: z.number().int().min(1),
+  block_index: z.number().int().min(0),
+  block_type: z.enum(BLOCK_TYPES),
+  content_md: z.string(),
+  bbox: z.tuple([z.number(), z.number(), z.number(), z.number()]).nullable(),
+  confidence: z.number().nullable(),
+  char_start: z.number().int().nullable(),
+  char_end: z.number().int().nullable(),
+})
+
+const parseRunSchema = z.object({
+  parser: z.enum(['docling', 'unpdf', 'mammoth', 'plain']),
+  parser_version: z.string(),
+  status: z.enum(['ok', 'failed']),
+  duration_ms: z.number().int().nullable(),
+  meta: z.record(z.string(), z.unknown()).nullable(),
+})
+
+// parse-binary's output. dataBase64 stays HERE only: the relay schemas
+// downstream strip it, and persist-structured reads the bytes back out of this
+// step's result, so the base64 is never copied through four more step results.
+const parseOutputSchema = parsedSchema.extend({
+  dataBase64: z.string().min(1),
+  blocks: z.array(blockSchema),
+  parse: parseRunSchema,
+})
+
+const IMAGE_EXT = /\.(png|jpe?g|tiff|tif|bmp|webp)$/i
+
+function fallbackBlocks(text: string, parser: 'unpdf' | 'mammoth' | 'plain'): DocumentBlock[] {
+  // unpdf gives per-page strings; the others give one blob. Paragraph-split
+  // the single-blob case so blocks at least exist for the citation layer.
+  const pages = parser === 'unpdf' ? [text] : text.split(/\n{2,}/).filter((p) => p.trim() !== '')
+  const blocks: DocumentBlock[] = []
+  pages.forEach((pageText, pageIdx) => {
+    const chunks = parser === 'unpdf' ? [pageText] : [pageText]
+    chunks.forEach((content, blockIdx) => {
+      if (content.trim() === '') return
+      blocks.push({
+        page_number: pageIdx + 1,
+        block_index: blockIdx,
+        block_type: 'text',
+        content_md: content,
+        bbox: null,
+        confidence: null,
+      })
+    })
+  })
+  return blocks.length > 0 ? blocks : [{ page_number: 1, block_index: 0, block_type: 'other', content_md: '', bbox: null, confidence: null }]
+}
+
 const parseBinaryStep = createStep({
   id: 'parse-binary',
   inputSchema: workflowInputSchema,
-  outputSchema: parsedSchema,
+  outputSchema: parseOutputSchema,
   execute: async ({ inputData }) => {
     const bytes = Buffer.from(inputData.dataBase64, 'base64')
     if (bytes.byteLength > MAX_DOCUMENT_BYTES) {
       throw new Error(`document exceeds ${MAX_DOCUMENT_BYTES} bytes`)
     }
 
+    const started = Date.now()
     const mime = inputData.mime.toLowerCase()
     const isPdf = mime.includes('pdf') || inputData.title.toLowerCase().endsWith('.pdf')
     const isDocx = mime.includes('wordprocessingml') || inputData.title.toLowerCase().endsWith('.docx')
+    const isImage = mime.startsWith('image/') || IMAGE_EXT.test(inputData.title)
 
-    let text: string
-    if (isPdf) {
-      const result = await extractText(new Uint8Array(bytes), { mergePages: true })
-      text = result.text
-    } else if (isDocx) {
-      const result = await mammoth.extractRawText({ buffer: bytes })
-      text = result.value
-    } else {
-      text = bytes.toString('utf8')
+    let blocks: DocumentBlock[] | null = null
+    let parse: ParseRun | null = null
+
+    // Preferred path: the Docling sidecar (layout + tables + bboxes).
+    const doclingUrl = parseEnv().DOCLING_URL
+    if (doclingUrl && (isPdf || isDocx || isImage)) {
+      try {
+        const conv = await convertWithDocling(doclingUrl, bytes, inputData.title, mime)
+        blocks = conv.blocks
+        parse = {
+          parser: 'docling',
+          parser_version: conv.parserVersion,
+          status: 'ok',
+          duration_ms: null,
+          meta: { page_count: conv.pageCount },
+        }
+      } catch (err) {
+        console.warn(`[document-intake] parse sidecar failed, falling back: ${String(err)}`)
+        blocks = null
+      }
     }
 
-    const clipped = text.length > MAX_DOCUMENT_CHARS ? text.slice(0, MAX_DOCUMENT_CHARS) : text
+    // Fallback path: the in-process extractors (gap-1 behavior, unchanged).
+    if (!blocks) {
+      let text: string
+      let parser: 'unpdf' | 'mammoth' | 'plain'
+      if (isPdf) {
+        const result = await extractText(new Uint8Array(bytes), { mergePages: false })
+        text = result.text.join('\n\n')
+        parser = 'unpdf'
+        blocks = result.text
+          .map((pageText, i) => ({
+            page_number: i + 1,
+            block_index: 0,
+            block_type: 'text' as const,
+            content_md: pageText,
+            bbox: null,
+            confidence: null,
+          }))
+          .filter((b) => b.content_md.trim() !== '')
+      } else if (isDocx) {
+        const result = await mammoth.extractRawText({ buffer: bytes })
+        text = result.value
+        parser = 'mammoth'
+        blocks = fallbackBlocks(text, parser)
+      } else {
+        text = bytes.toString('utf8')
+        parser = 'plain'
+        blocks = fallbackBlocks(text, parser)
+      }
+      if (blocks.length === 0) blocks = fallbackBlocks('', 'plain')
+      parse = { parser, parser_version: '', status: 'ok', duration_ms: null, meta: null }
+    }
+
+    // One layout contract: content_text is the '\n\n' join of block content,
+    // so every block's char span cites exactly what the RAG layer embeds.
+    const laid = layoutBlocks(blocks, MAX_DOCUMENT_CHARS)
+    // Both branches above assign `parse` when `blocks` is non-null, which TS
+    // cannot see through the `!blocks` check, so the nulls are narrowed here.
+    const run: ParseRun = {
+      parser: parse?.parser ?? 'plain',
+      parser_version: parse?.parser_version ?? '',
+      status: parse?.status ?? 'ok',
+      meta: parse?.meta ?? null,
+      duration_ms: Date.now() - started,
+    }
+
     return {
       tenantId: inputData.tenantId,
       ownerId: inputData.ownerId,
@@ -143,7 +257,14 @@ const parseBinaryStep = createStep({
       mime: inputData.mime,
       source: inputData.source,
       sourceRef: inputData.sourceRef ?? null,
-      text: clipped,
+      dataBase64: inputData.dataBase64,
+      text: laid.text,
+      blocks: blocks.map((b, i) => ({
+        ...b,
+        char_start: laid.spans[i]?.char_start ?? null,
+        char_end: laid.spans[i]?.char_end ?? null,
+      })),
+      parse: run,
     }
   },
 })
@@ -151,11 +272,15 @@ const parseBinaryStep = createStep({
 
 const kindChoiceSchema = z.object({ kind: kindEnum })
 
-const classifiedSchema = parsedSchema.extend({ kind: kindEnum })
+const classifiedSchema = parsedSchema.extend({
+  kind: kindEnum,
+  blocks: z.array(blockSchema),
+  parse: parseRunSchema,
+})
 
 const classifyKindStep = createStep({
   id: 'classify-kind',
-  inputSchema: parsedSchema,
+  inputSchema: parseOutputSchema,
   outputSchema: classifiedSchema,
   execute: async ({ inputData }) => {
     const heuristic = classifyKindHeuristic(inputData.title, inputData.text)
@@ -342,9 +467,15 @@ const persistStructuredStep = createStep({
   id: 'persist-structured',
   inputSchema: normalizedSchema,
   outputSchema: persistedSchema,
-  execute: async ({ inputData }) => {
+  execute: async (context) => {
+    const { inputData } = context
     const contentHash = await sha256Hex(inputData.text)
     const status = inputData.needsReview ? 'needs_review' : 'ready'
+
+    // The original bytes live only in parse-binary's step result; pulling them
+    // back here keeps the base64 out of every relay schema in between.
+    const binary = context.getStepResult<{ dataBase64?: string }>('parse-binary')
+    const fileBytes = binary?.dataBase64 ? Buffer.from(binary.dataBase64, 'base64') : null
 
     const invoicePart = inputData.kind === 'invoice' && inputData.normalized
       ? (inputData.normalized as unknown as { header: InvoiceHeaderWrite; lines: InvoiceLineWrite[] })
@@ -371,6 +502,17 @@ const persistStructuredStep = createStep({
       invoiceLines: invoicePart?.lines ?? [],
       contract: contractPart?.header ?? null,
       contractTerms: contractPart?.terms ?? [],
+      file: fileBytes
+        ? { mime: inputData.mime, sizeBytes: fileBytes.byteLength, data: fileBytes }
+        : null,
+      parse: {
+        parser: inputData.parse.parser,
+        parserVersion: inputData.parse.parser_version,
+        status: inputData.parse.status,
+        durationMs: inputData.parse.duration_ms,
+        meta: inputData.parse.meta,
+      },
+      blocks: inputData.blocks,
     })
 
     const finalStatus: 'ready' | 'needs_review' =

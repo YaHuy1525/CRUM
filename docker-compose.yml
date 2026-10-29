@@ -1,9 +1,12 @@
-# CRUM local stack. Four services on one bridge network:
+# CRUM local stack. Four core services plus an optional parse sidecar on one
+# bridge network:
 #
 #   db        pgvector Postgres (mirrors the CI service image + password)
 #   migrate   one-shot: applies migrations/ then exits (runtime never CREATEs)
 #   api       the Mastra server + in-process REST plane (4111 / 4113)
 #   console   the Next.js console (:3000); its server-side rewrites reach api
+#   docling   optional document parse sidecar (profile: parse) — heavy image,
+#             only starts with `--profile parse`
 #
 # Development shape, deliberately: NODE_ENV=development and CRUM_AUTH_MODE=dev so
 # the stack boots with no Supabase. parseEnv refuses production+dev (§13.2), so a
@@ -85,8 +88,13 @@ services:
       # OPENROUTER_API_KEY boots the whole plane (agent ids are already openrouter/*).
       EMBEDDING_BASE_URL: https://openrouter.ai/api/v1
       EMBEDDING_API_KEY: ${OPENROUTER_API_KEY:-}
-      # Dev-only fallbacks so the planes boot with no host .env. Both must be >=
-      # 32 bytes (env.ts). Override them with your own values for anything real.
+      # Parse sidecar, off by default: empty keeps intake on the in-process
+      # fallback path with no failed connection per upload. To enable, run
+      # `docker compose --profile parse up` AND set DOCLING_URL=http://docling:8090
+      # in .env.compose (or this literal here).
+      DOCLING_URL: ${DOCLING_URL:-}
+      # Dev-only signing fallbacks so the planes boot with no host .env. Both
+      # must be >= 32 bytes (env.ts). Override with your own for anything real.
       APPROVAL_HMAC_SECRET: ${APPROVAL_HMAC_SECRET:-dev-only-approval-hmac-secret-change-me-0123}
       MCP_REQUEST_STATE_KEY: ${MCP_REQUEST_STATE_KEY:-dev-only-mcp-request-state-key-change-me-01}
     ports:
@@ -99,6 +107,17 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+
+  docling:
+    # Optional heavyweight parse sidecar (docling pulls torch + model files).
+    # Behind a profile so the default stack never pays for it. First /convert
+    # after a cold start downloads model artifacts (~hundreds of MB).
+    profiles: ["parse"]
+    build:
+      context: ./services/docling
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    # No host port: only the api container talks to it over the network.
 
   console:
     build:

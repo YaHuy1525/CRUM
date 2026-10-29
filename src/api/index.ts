@@ -14,6 +14,10 @@ import { createDocumentsRouter, type DocumentIntakeWorkflowLike } from './docume
 import { createAgentRouter } from './agent'
 import { createThreadsRouter } from './threads'
 import { createMailRouter } from './mail'
+import { createVideoChannelsRouter } from './video-channels'
+import { createVideoOAuthRouter } from './video-oauth'
+import { createVideoSponsorshipRouter, type SponsorshipIntakeWorkflowLike } from './video-sponsorship'
+import { createVideoBillingRouter, createVideoAlertsRouter } from './video-billing'
 
 export interface ApiRouterDeps {
   env: CrumEnv
@@ -25,6 +29,8 @@ const CRUM_AGENT_KEY = 'crm-assistant'
 const INGEST_WORKFLOW_KEY = 'knowledge-ingest'
 
 const DOCUMENT_INTAKE_WORKFLOW_KEY = 'crum-document-intake'
+
+const SPONSORSHIP_INTAKE_WORKFLOW_KEY = 'crum-sponsorship-intake'
 
 function agentGetter(getMastra?: () => Mastra | null): () => SuspendedRunAgent | null {
   return () => {
@@ -64,6 +70,20 @@ function documentIntakeGetter(
   }
 }
 
+function sponsorshipIntakeGetter(
+  getMastra?: () => Mastra | null,
+): () => SponsorshipIntakeWorkflowLike | null {
+  return () => {
+    const mastra = getMastra?.() ?? null
+    if (!mastra) return null
+    try {
+      return mastra.getWorkflow(SPONSORSHIP_INTAKE_WORKFLOW_KEY)
+    } catch {
+      return null
+    }
+  }
+}
+
 export function createApiRouter(deps: ApiRouterDeps): Hono {
   const { env } = deps
   const app = new Hono()
@@ -81,6 +101,11 @@ export function createApiRouter(deps: ApiRouterDeps): Hono {
   app.route('/', createKnowledgeRouter({ env, getIngestWorkflow: ingestGetter(deps.getMastra) }))
   app.route('/', createDocumentsRouter({ env, getIntakeWorkflow: documentIntakeGetter(deps.getMastra) }))
   app.route('/', createMailRouter({ env }))
+  app.route('/', createVideoChannelsRouter({ env }))
+  app.route('/', createVideoOAuthRouter({ env }))
+  app.route('/', createVideoSponsorshipRouter({ env, getSponsorshipWorkflow: sponsorshipIntakeGetter(deps.getMastra) }))
+  app.route('/', createVideoBillingRouter({ env }))
+  app.route('/', createVideoAlertsRouter({ env }))
 
   return app
 }

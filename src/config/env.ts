@@ -100,6 +100,38 @@ export const EnvSchema = z.object({
   GMAIL_OAUTH_CLIENT_ID: optionalString,
   GMAIL_OAUTH_CLIENT_SECRET: optionalString,
   GMAIL_REDIRECT_URI: optionalString,
+
+  // Document parse sidecar (Docling). Unset or unreachable, intake falls back
+  // to the in-process unpdf/mammoth path and still records blocks.
+  DOCLING_URL: optionalString,
+
+  // Video revenue tracking – AES-256-GCM key used to encrypt OAuth refresh
+  // tokens at rest.  Must be a 32-byte value encoded as 64 hex characters.
+  // Required in production; optional in dev/test (tokens stay unencrypted).
+  OAUTH_ENCRYPTION_KEY: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/i, 'must be exactly 64 hex characters (32 bytes)')
+    .optional(),
+
+  // Video revenue tracking - YouTube
+  VIDEO_YOUTUBE_CLIENT_ID: optionalString,
+  VIDEO_YOUTUBE_CLIENT_SECRET: optionalString,
+  VIDEO_YOUTUBE_REDIRECT_URI: optionalString,
+
+  // Video revenue tracking - TikTok
+  VIDEO_TIKTOK_CLIENT_ID: optionalString,
+  VIDEO_TIKTOK_CLIENT_SECRET: optionalString,
+  VIDEO_TIKTOK_REDIRECT_URI: optionalString,
+
+  // Video revenue tracking - Instagram
+  VIDEO_INSTAGRAM_CLIENT_ID: optionalString,
+  VIDEO_INSTAGRAM_CLIENT_SECRET: optionalString,
+  VIDEO_INSTAGRAM_REDIRECT_URI: optionalString,
+
+  // Video revenue tracking - Twitch
+  VIDEO_TWITCH_CLIENT_ID: optionalString,
+  VIDEO_TWITCH_CLIENT_SECRET: optionalString,
+  VIDEO_TWITCH_REDIRECT_URI: optionalString,
 })
 
 export type CrumEnv = z.infer<typeof EnvSchema>
@@ -126,6 +158,7 @@ export const DEFERRED_ENV_VARS: Readonly<Record<string, number>> = {
   RUNS_SWEEP_INTERVAL_SECONDS: 3,
   CORS_ALLOW_ORIGINS: 5,
   TRUSTED_PROXY_IPS: 5,
+  OAUTH_ENCRYPTION_KEY: 6,
 }
 
 export const PRODUCTION_REQUIRED_SECRETS: readonly string[] = [

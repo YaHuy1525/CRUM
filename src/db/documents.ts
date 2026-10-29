@@ -107,6 +107,32 @@ export interface ContractTermWrite {
   end_offset: number | null
 }
 
+// 0011 additions: the original upload, the parse run, and its blocks.
+export interface DocumentFileWrite {
+  mime: string
+  sizeBytes: number
+  data: Uint8Array
+}
+
+export interface DocumentParseWrite {
+  parser: string
+  parserVersion: string
+  status: 'ok' | 'failed'
+  durationMs: number | null
+  meta: unknown
+}
+
+export interface DocumentBlockWrite {
+  page_number: number
+  block_index: number
+  block_type: string
+  content_md: string
+  bbox: number[] | null
+  confidence: number | null
+  char_start: number | null
+  char_end: number | null
+}
+
 function docVisibility(context: TenantRequestContext): { sql: string; params: unknown[] } {
   if (context.userRole === 'admin') {
     return { sql: 'd.tenant_id = $1', params: [context.tenantId] }
@@ -148,6 +174,9 @@ export interface PersistDocumentInput {
   invoiceLines?: InvoiceLineWrite[]
   contract?: ContractHeaderWrite | null
   contractTerms?: ContractTermWrite[]
+  file?: DocumentFileWrite | null
+  parse?: DocumentParseWrite | null
+  blocks?: DocumentBlockWrite[]
 }
 
 export async function insertDocument(
@@ -157,13 +186,18 @@ export async function insertDocument(
   const client = await db.connect()
   try {
     await client.query('BEGIN')
-    const docResult = await client.query<{ id: string; status: string; confidence: string | null }>(
+    const docResult = await client.query<{
+      id: string
+      status: string
+      confidence: string | null
+      is_new: boolean
+    }>(
       `INSERT INTO documents
          (tenant_id, owner_id, kind, title, source, source_ref, content_hash, content_text,
           mime, status, confidence, customer_id, raw_extract)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb)
        ON CONFLICT (tenant_id, content_hash) DO UPDATE SET updated_at = now()
-       RETURNING id, status, confidence`,
+       RETURNING id, status, confidence, (xmax = 0) AS is_new`,
       [
         input.tenantId,
         input.ownerId,
@@ -238,6 +272,71 @@ export async function insertDocument(
            VALUES ($1, $2, $3, $4, $5, $6)`,
           [row.id, term.clause_type, term.title, term.text, term.start_offset, term.end_offset],
         )
+      }
+    }
+
+    // Scan artifacts (0011) belong to the document that FIRST claimed this
+    // content hash. A duplicate upload only bumps updated_at above and must
+    // not duplicate or overwrite the existing file/parse/blocks.
+    if (row.is_new && input.parse) {
+      if (input.file) {
+        await client.query(
+          `INSERT INTO document_files (document_id, tenant_id, mime, size_bytes, data)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (document_id) DO NOTHING`,
+          [row.id, input.tenantId, input.file.mime, input.file.sizeBytes, input.file.data],
+        )
+      }
+      const parseResult = await client.query<{ id: string }>(
+        `INSERT INTO document_parses
+           (document_id, tenant_id, parser, parser_version, status, block_count, duration_ms, meta)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+         RETURNING id`,
+        [
+          row.id,
+          input.tenantId,
+          input.parse.parser,
+          input.parse.parserVersion,
+          input.parse.status,
+          (input.blocks ?? []).length,
+          input.parse.durationMs,
+          JSON.stringify(input.parse.meta ?? {}),
+        ],
+      )
+      const parseId = parseResult.rows[0]?.id
+      const blocks = input.blocks ?? []
+      if (parseId && blocks.length > 0) {
+        // Multi-row VALUES in chunks of 200 (11 params per block) so no
+        // statement approaches the 65535-parameter cap.
+        const CHUNK = 200
+        for (let i = 0; i < blocks.length; i += CHUNK) {
+          const slice = blocks.slice(i, i + CHUNK)
+          const params: unknown[] = []
+          const tuples = slice.map((b, j) => {
+            const base = j * 11
+            params.push(
+              parseId,
+              row.id,
+              input.tenantId,
+              b.page_number,
+              b.block_index,
+              b.block_type,
+              b.content_md,
+              b.bbox === null ? null : JSON.stringify(b.bbox),
+              b.confidence,
+              b.char_start,
+              b.char_end,
+            )
+            return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}::jsonb, $${base + 9}, $${base + 10}, $${base + 11})`
+          })
+          await client.query(
+            `INSERT INTO document_blocks
+               (parse_id, document_id, tenant_id, page_number, block_index, block_type,
+                content_md, bbox, confidence, char_start, char_end)
+             VALUES ${tuples.join(', ')}`,
+            params,
+          )
+        }
       }
     }
 

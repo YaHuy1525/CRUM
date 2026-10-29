@@ -15,6 +15,7 @@ import { buildCrumMemory } from './memory'
 import { buildRecallDeps } from './recall'
 import { ingestWorkflow } from './workflows/ingest'
 import { documentIntakeWorkflow } from './workflows/document-intake'
+import { sponsorshipIntakeWorkflow } from './workflows/sponsorship-intake'
 import { intentClassifier } from './classifiers/intent'
 import { injectionClassifier } from './classifiers/injection'
 import { intentTriageFlow } from './workflows/intent-triage'
@@ -117,6 +118,7 @@ export function createCrumMastra(env: CrumEnv, options: CrumMastraOptions = {}):
     workflows: {
       'knowledge-ingest': ingestWorkflow,
       'crum-document-intake': documentIntakeWorkflow,
+      'crum-sponsorship-intake': sponsorshipIntakeWorkflow,
       'crum-intent-triage': intentTriageFlow,
       'crum-digest': digestWorkflow,
     },
