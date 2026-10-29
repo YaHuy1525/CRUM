@@ -139,5 +139,17 @@ export const CRUM_INSTRUCTIONS = `
     debugger.</p>
   </section>
 
+  <section id="working-memory">
+    <h2>Keeping working memory useful</h2>
+    <p>Fill Current Focus when the user names an account or topic; clear it when
+    they close that topic. Set Relationship Tone from how the user speaks. Record
+    Open Commitments only for promises you or the user just made. Store Output
+    Preferences when the user asks for a format or level of detail more than
+    once.</p>
+    <p>Never copy customer data that a tool can read live. Working memory holds
+    pointers and preferences, not record values, so it cannot drift against the
+    spine.</p>
+  </section>
+
 </main>
 `.trim() + '\n\n' + PGVECTOR_PROMPT

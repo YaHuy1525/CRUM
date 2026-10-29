@@ -48,15 +48,20 @@ describe('CRUM working memory template', () => {
     expect(CRUM_WORKING_MEMORY_TEMPLATE.length).toBeGreaterThan(0)
   })
 
-  it('contains user preferences section', () => {
-    expect(CRUM_WORKING_MEMORY_TEMPLATE).toContain('user preferences')
+  it('contains the current focus section', () => {
+    expect(CRUM_WORKING_MEMORY_TEMPLATE).toContain('## Current Focus')
   })
 
-  it('contains active filters section', () => {
-    expect(CRUM_WORKING_MEMORY_TEMPLATE).toContain('active filters')
+  it('contains the open commitments section', () => {
+    expect(CRUM_WORKING_MEMORY_TEMPLATE).toContain('## Open Commitments')
   })
 
-  it('contains noted facts section', () => {
-    expect(CRUM_WORKING_MEMORY_TEMPLATE).toContain('noted facts')
+  it('contains the output preferences section', () => {
+    expect(CRUM_WORKING_MEMORY_TEMPLATE).toContain('## Output Preferences')
+  })
+
+  it('teaches the agent when to fill and clear each block', () => {
+    expect(CRUM_INSTRUCTIONS).toContain('Keeping working memory useful')
+    expect(CRUM_INSTRUCTIONS).toContain('Never copy customer data that a tool can read live')
   })
 })

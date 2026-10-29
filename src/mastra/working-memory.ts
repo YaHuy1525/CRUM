@@ -1,14 +1,22 @@
+// CRM short form the agent fills during use (spec §6). Pointers, not data
+// copies — anything a tool can read live stays out of memory.
 export const CRUM_WORKING_MEMORY_TEMPLATE = `
 # Working Memory
 
-## user preferences
-- Language: English
-- Timezone: UTC
-- Date format: ISO 8601
+## Current Focus
+- Account:
+- Thread Topic:
 
-## active filters
-- No filters applied
+## Active Filters
+-
 
-## noted facts
-- No facts noted yet
+## Relationship Tone
+- (formal | casual | warm)
+
+## Open Commitments
+- [Item]: [Status]
+
+## Output Preferences
+- Format:
+- Detail Level:
 `.trim()
