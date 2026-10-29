@@ -95,7 +95,10 @@ Write `docs/research/unified-vector-structure-2026-11.md` answering: what is the
 - **Tier B — Postgres row-level security on the recall table:** same shared instance, but the database itself enforces `tenant_id = current_setting(...)` — physical enforcement without per-tenant Memory instances. Cost: RLS policies over a framework-owned table (Mastra creates/owns it; policies must survive `createIndex` idempotent re-runs and future Mastra schema changes — verify feasibility during research; if the framework rewrites the table, this tier is rejected).
 - **Tier C — Per-tenant Memory instances:** rejected by constraint #1 (static vector) unless the research finds a supported multi-memory pattern (e.g. one Memory registered per tenant through the instance `memory` registry — weigh against pool budget and fan-out complexity; document the verdict even if rejected again).
 
-Decision rule: prefer Tier B if it survives verification; otherwise Tier A with the metadata filter mandatory (never bare resourceId alone). Tier C stays rejected unless discovered otherwise. Output must include the final config snippet for `buildCrumMemory` (`vector`, `embedder`, `semanticRecall` options) and the provisioning path for the recall table (idempotent `createIndex` at boot like `ingest.ts`, reviewed migration only if DDL beyond the index is required).
+Decision rule: prefer Tier B if it survives verification; otherwise Tier A with the metadata filter mandatory (never bare resourceId alone) (ruling 2026-10-30,
+user-approved "ship ON, add test first": superseded for the Tier A ship — the
+injective server-derived resourceId is accepted as the boundary, the metadata
+filter deferred as defense-in-depth; see research doc §4). Tier C stays rejected unless discovered otherwise. Output must include the final config snippet for `buildCrumMemory` (`vector`, `embedder`, `semanticRecall` options) and the provisioning path for the recall table (idempotent `createIndex` at boot like `ingest.ts`, reviewed migration only if DDL beyond the index is required).
 
 ### Build (after research approval)
 

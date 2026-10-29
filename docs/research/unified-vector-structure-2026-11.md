@@ -168,20 +168,30 @@ partition).
 
 ## 4. Decision
 
-**Tier A, with the spec §5 double filter restored in its dynamic form.**
-Isolation is `{ resource_id (framework) AND tenantId (per-request filter) }`
-over one shared index in schema `mastra_memory` (spec §5 L94's example name;
-`resource_id = `${tenantId}:${userId}`` makes the first half tenant+user exact,
-and the second half is the mandated independent check).
+**Tier A on the injective resource-id predicate (ruling 2026-10-30, user-approved
+"ship ON, add test first"; supersedes the double-filter mandate below).**
+Isolation is the framework's `{ resource_id }` predicate over one shared index
+in schema `mastra_memory`. `resource_id = `${tenantId}:${userId}`` with BOTH
+components validated `z.string().uuid()` (`src/mastra/tenant-context.ts`): the
+UUID grammar excludes colons, so the mapping tenant×user → key is injective and
+two different principals cannot produce the same key by construction. The key is
+always re-derived server-side from the verified identity — every CRUM read lane
+(`src/api/threads.ts`, `src/api/agent.ts`) fetches with it and re-checks rows
+against it (404 otherwise), and the framework's `requestContext` resourceId
+beats any client-supplied one — so no caller can steer the predicate.
 
-The tenant filter **cannot be static** — one build-time predicate cannot vary
-per caller — so the implementation has two mandatory halves:
+### Deferred defense-in-depth (second predicate)
+
+The double filter this doc originally mandated — a per-request `tenantId`
+metadata clause alongside `resource_id` — is DEFERRED by the 2026-10-30 ruling,
+not discarded. It cannot be static — one build-time predicate cannot vary
+per caller — so wiring it would take two halves together:
 
 1. **Write side**: CRUM stamps new conversation threads with
    `metadata: { tenantId }`, so every embedding written by `saveMessages`
    carries a `tenantId` key (§2 spread). Threads are created lazily by the
    Mastra agent loop / console proxy (`src/mastra/sessions.ts` wires no
-   `createThread` call today); the concrete stamping hook belongs to Task 7.
+   `createThread` call today); no turn seam exists to stamp from.
 2. **Read side**: at each turn the request layer passes
    `memoryConfig.semanticRecall.filter = { tenantId: { $eq: <server-derived
    tenant> } }`. `tenantId` comes from the verified identity
@@ -189,26 +199,38 @@ per caller — so the implementation has two mandatory halves:
    `$and`-combines it with the `resource_id` scope predicate
    (`src-DxZ7N8nO.js:42646`).
 
+Half-wiring either side alone is actively harmful (backfill caveat below), and
+`searchMessages` cannot carry the clause at all — so the original mandate could
+never be fully satisfied for every reader. The three invariants underneath the
+injectivity argument (the zod UUID regex, the framework requestContext-over-body
+precedence, and the `${tenantId}:${userId}` key format itself) have NO dedicated
+regression test; a future change collapsing one would not fail any current check.
+That is the standing cost of the ruling and the first thing a security-hardening
+pass should pin.
+
 Rationale: Tier A is the only tier the pinned `Memory` API supports without
 fighting the framework; Tier B fails spec §5 L95's table-rewrite-survival
 condition and independently cannot be wired per-request on a framework-owned
 static pool; Tier C violates the static-vector constraint, the pool budget, and
 key hygiene. The residual risk — all tenants' embeddings coexist in one index
-behind two `WHERE` predicates rather than in separate schemas — is accepted
-**conditionally**, mitigated by: (1) both filter values are always
+behind one `WHERE` predicate rather than in separate schemas — is accepted
+**conditionally**, mitigated by: (1) the filter value is always
 server-derived, (2) a **cross-tenant leak-guard integration test** in Task 8,
-which must be built to actually falsify the second predicate: because
-`resourceId` is tenant-prefixed, a natural A/B two-tenant scenario passes on
-`resource_id` alone even if the tenant filter is never wired — so the guard
-additionally **plants a row with the caller's own `resource_id` but a foreign
-`metadata.tenantId`** (direct `vector.upsert` into the recall index, simulating
-the resourceId-collapse bug the second predicate exists for) and asserts the
-recall excludes it, and (3) `CRUM_RECALL_ENABLED` kill-switch so the feature
-can be turned off independently.
+which **PASSED LIVE (real Supabase Postgres + real OpenRouter embeddings,
+2026-10-30)**: tenant A's fact recalled from A's second thread, tenant B's
+decoy never present in A's results, positive control proves the decoy was
+embedded and searchable — and (3) `CRUM_RECALL_ENABLED` kill-switch so the
+feature can be turned off independently. The §4 falsification plant (a row with
+the caller's own `resource_id` but a foreign `metadata.tenantId`) remains
+UNWIRED by design: it targets the deferred second predicate and would fail
+against the shipped single-predicate build. The guard is double-gated
+(`CRUM_SEMANTIC_RECALL_LIVE=true` plus the flags; CI pins both kill-switches
+off), so the live tier is a credentialed-runner/manual step, not a PR gate.
 
-**Second reader on the same schema (accepted residual)**: the double filter
-above guards the *semantic-recall* read path. Attaching `vector` + `embedder`
-also activates observational-memory **observation indexing** — a co-resident
+**Second reader on the same schema (accepted residual)**: the (deferred) double
+filter above would guard the *semantic-recall* read path. Attaching
+`vector` + `embedder` also activates observational-memory **observation
+indexing** — a co-resident
 second index (`memory_observations_<dim>`, default dim 384,
 `src-DxZ7N8nO.js:43696-43709`; the writer early-returns only when
 vector/embedder are missing, `:43760`) — and its shipped reader
@@ -217,19 +239,26 @@ filters on the **single hardcoded predicate** `{ resource_id: <caller> }`
 (`src-DxZ7N8nO.js:43719-43724`); its typed `filter` accepts only
 `threadId`/`observedAfter`/`observedBefore` (`@mastra/memory/dist/index.d.ts:349`)
 and **cannot carry a `tenantId` clause at all**. That path therefore runs
-"bare resourceId alone" — the formulation spec §5 L98 forbids for recall
-queries — with the resourceId invariant (§2) as its only boundary. Accepted as
-residual risk here: `resourceId` is server-derived from the verified identity
+on the resourceId predicate alone — under the 2026-10-30 ruling that IS the
+boundary, and it is injective and server-derived, not a weaker variant. The
+residual accepted here is therefore the same single-predicate risk as §4, with
+one addition the ruling notes honestly: no test pins the key format. Mitigations
+in the shipped code: `resourceId` is server-derived from the verified identity
 (`threads.ts:233`), the endpoint returns observation snippets of the caller's
-own threads, and Task 8's leak guard covers it in the natural A/B form. If a
-future requirement demands the double filter there too, the lever is upstream
-support for a per-call filter on `searchMessages`, not CRUM-side monkey-patching.
+own threads, and Task 8's live-passing leak guard covers the same shared index
+from the recall side. If a future requirement demands the double filter there
+too, the lever is upstream support for a per-call filter on `searchMessages`,
+not CRUM-side monkey-patching.
 Kill-switch coupling: `CRUM_RECALL_ENABLED` off omits `vector`/`embedder`
 altogether, which also silences observation indexing and makes
 `searchMessages` throw (`:43716`) — the switch turns the whole vector lane off,
-not just recall.
+not just recall. The OM-on/recall-off combination is no longer a silent 500:
+`GET /api/agent/search` answers **503 `search-unavailable`** when the lane is
+missing (guard added 2026-10-30, `src/api/threads.ts`; pinned by
+`tests/api/threads.test.ts`).
 
-**Backfill caveat (accepted)**: embeddings inherit thread metadata only at
+**Backfill caveat (moot while the second predicate stays deferred; accepted
+for any future wiring)**: embeddings inherit thread metadata only at
 write time, and threads created before the stamping hook have no
 `tenantId` key — so their *new* messages still embed, but every row is
 silently excluded by the `$eq` predicate: recall stays quietly dead for those
@@ -272,8 +301,9 @@ export function buildRecallDeps(env: CrumEnv): RecallDeps | undefined {
     connectionString,
     // Supabase requires TLS; same rule as buildMastraStorage (storage.ts:115).
     ssl: resolveSsl(connectionString, env.MASTRA_PG_SSL),
-    // Tier A: one shared schema for all tenants; isolation is the double
-    // filter (§4), not a per-tenant schema.
+    // Tier A: one shared schema for all tenants; isolation is the server-derived
+    // injective resourceId predicate (§4 ruling 2026-10-30), not a per-tenant
+    // schema.
     schemaName: 'mastra_memory',
     // PgVector's own default pool max is 20 (@mastra/pg/dist/index.js:601);
     // cap it like every other pool or the Supabase budget check breaks (§6).
@@ -301,10 +331,12 @@ export function buildCrumMemory(
   return new Memory({
     storage,
     // Recall needs BOTH constructor keys; omit entirely when the kill-switch
-    // is off or deps are absent, leaving message-history recall unchanged.
+    // is off or deps are absent, so no recall additions leak in (the ungated
+    // generateTitle/working-memory changes still apply — spec §6).
     // Coupling: without vector/embedder, OM observation indexing goes silent
-    // and memory.searchMessages throws (§4 second-reader note).
-    ...(recall ? { vector: recall.vector, embedder: recall.embedder } : {}),
+    // and memory.searchMessages throws (§4 second-reader note; the search
+    // route answers 503 search-unavailable instead).
+    ...(env.CRUM_RECALL_ENABLED && recall ? { vector: recall.vector, embedder: recall.embedder } : {}),
     options: {
       messageHistory: { maxTokens: 24_000, atMaxRemoveTokens: 6_000 },
       workingMemory: { enabled: true, template: CRUM_WORKING_MEMORY_TEMPLATE, scope: 'resource' },
@@ -335,16 +367,20 @@ export function buildCrumMemory(
 }
 ```
 
-Per-request half (Task 7 wires this at the turn-invocation layer):
+Per-request half (DEFERRED defense-in-depth — no turn seam carries `memoryConfig`
+today; `git grep memoryConfig src` = 0 hits):
 
 ```ts
 // memoryConfig passed with every turn, values server-derived from identity:
 { semanticRecall: { filter: { tenantId: { $eq: tenantId } } } }
 ```
 
-The framework then executes
-`{ $and: [{ resource_id: `${tenantId}:${userId}` }, { tenantId: { $eq: tenantId } }] }`
-— the spec §5 double filter, never bare `resourceId` alone. The index lands at
+When wired, the framework would execute
+`{ $and: [{ resource_id: `${tenantId}:${userId}` }, { tenantId: { $eq: tenantId } }] }`.
+The SHIPPED boundary (ruling 2026-10-30) is the first conjunct alone — the
+injective, server-derived `resource_id` equality the framework always applies —
+proven by the live A/B cross-tenant leak guard (§4 mitigation 2). See §4 for
+why the second predicate was deferred rather than rejected. The index lands at
 `mastra_memory.memory_messages` (dimension-derived name, §2);
 `semanticRecall.indexName` is intentionally not set because the pinned version
 ignores it (§2).
