@@ -9,6 +9,11 @@ import { describe, expect, it } from 'vitest'
 // migration takes the next free number.
 const sql = readFileSync('migrations/0015_crum_prospects.sql', 'utf8')
 
+// 0015 was already applied when the trigger and cascade indexes were reviewed
+// in, and the runner refuses to re-apply a migration whose bytes changed, so
+// that delta ships as 0016 rather than as an edit to 0015.
+const hardeningSql = readFileSync('migrations/0016_crum_prospects_hardening.sql', 'utf8')
+
 describe('0015 prospect migration', () => {
   it('creates every prospect table', () => {
     for (const table of [
@@ -62,12 +67,14 @@ describe('0015 prospect migration', () => {
     const body = sql.split('CREATE TABLE IF NOT EXISTS prospect_import_batches')[1] ?? ''
     expect(body.slice(0, 600)).toContain('requested_by')
   })
+})
 
+describe('0016 prospect hardening migration', () => {
   // Every other table with updated_at in this repo carries the shared touch
   // trigger; without it prospects.updated_at would stay at its insert value.
   it('touches prospects.updated_at on update', () => {
-    expect(sql).toContain('DROP TRIGGER IF EXISTS trg_prospects_touch ON prospects;')
-    expect(sql.replace(/\s+/g, ' ')).toContain(
+    expect(hardeningSql).toContain('DROP TRIGGER IF EXISTS trg_prospects_touch ON prospects;')
+    expect(hardeningSql.replace(/\s+/g, ' ')).toContain(
       'CREATE TRIGGER trg_prospects_touch BEFORE UPDATE ON prospects FOR EACH ROW EXECUTE FUNCTION crum_touch_updated_at();',
     )
   })
@@ -75,12 +82,13 @@ describe('0015 prospect migration', () => {
   // A cascading delete walks each referencing column; without an index on it
   // PostgreSQL seq-scans the child table for every parent row deleted.
   it('indexes every cascade path so deletes do not seq-scan', () => {
-    const compact = sql.replace(/\s+/g, ' ')
+    const compact = hardeningSql.replace(/\s+/g, ' ')
     for (const definition of [
       'CREATE INDEX IF NOT EXISTS outreach_drafts_channel_idx ON outreach_drafts (channel_id);',
       'CREATE INDEX IF NOT EXISTS outreach_threads_prospect_idx ON outreach_threads (prospect_id);',
       'CREATE INDEX IF NOT EXISTS outreach_threads_channel_idx ON outreach_threads (channel_id);',
       'CREATE INDEX IF NOT EXISTS outreach_replies_thread_idx ON outreach_replies (thread_id);',
+      'CREATE INDEX IF NOT EXISTS prospect_merge_candidates_left_prospect_idx ON prospect_merge_candidates (left_prospect_id);',
       'CREATE INDEX IF NOT EXISTS prospect_merge_candidates_right_prospect_idx ON prospect_merge_candidates (right_prospect_id);',
     ]) {
       expect(compact).toContain(definition)

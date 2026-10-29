@@ -8,9 +8,8 @@
 -- (see 9ee916d). This file therefore takes the next free number.
 --
 -- Same conventions as 0002/0013: non-nullable tenant_id on every table,
--- IF NOT EXISTS so a partial apply can be retried, a touch trigger on
--- updated_at, and no BEGIN/COMMIT here — the runner wraps this file and its
--- version record in one transaction.
+-- IF NOT EXISTS so a partial apply can be retried, and no BEGIN/COMMIT here —
+-- the runner wraps this file and its version record in one transaction.
 
 CREATE TABLE IF NOT EXISTS prospects (
   id                      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -29,11 +28,6 @@ CREATE TABLE IF NOT EXISTS prospects (
 );
 
 CREATE INDEX IF NOT EXISTS prospects_tenant_name_idx ON prospects (tenant_id, name_normalized);
-
--- Triggers: auto-stamp updated_at on every mutation (same form as 0002/0013).
-DROP TRIGGER IF EXISTS trg_prospects_touch ON prospects;
-CREATE TRIGGER trg_prospects_touch BEFORE UPDATE ON prospects
-  FOR EACH ROW EXECUTE FUNCTION crum_touch_updated_at();
 
 CREATE TABLE IF NOT EXISTS prospect_channels (
   id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -114,9 +108,6 @@ CREATE TABLE IF NOT EXISTS outreach_drafts (
 
 CREATE INDEX IF NOT EXISTS outreach_drafts_prospect_idx ON outreach_drafts (prospect_id, stage);
 
--- Cascade path: deleting a channel walks outreach_drafts by channel_id.
-CREATE INDEX IF NOT EXISTS outreach_drafts_channel_idx ON outreach_drafts (channel_id);
-
 CREATE TABLE IF NOT EXISTS outreach_threads (
   id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id       uuid NOT NULL,
@@ -125,10 +116,6 @@ CREATE TABLE IF NOT EXISTS outreach_threads (
   subject         text,
   created_at      timestamptz NOT NULL DEFAULT now()
 );
-
--- Cascade paths: deleting a prospect or a channel walks threads by both keys.
-CREATE INDEX IF NOT EXISTS outreach_threads_prospect_idx ON outreach_threads (prospect_id);
-CREATE INDEX IF NOT EXISTS outreach_threads_channel_idx ON outreach_threads (channel_id);
 
 CREATE TABLE IF NOT EXISTS outreach_replies (
   id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -143,9 +130,6 @@ CREATE TABLE IF NOT EXISTS outreach_replies (
   created_at            timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT outreach_replies_tenant_external_key UNIQUE (tenant_id, external_message_id)
 );
-
--- Cascade path: deleting a thread walks its replies by thread_id.
-CREATE INDEX IF NOT EXISTS outreach_replies_thread_idx ON outreach_replies (thread_id);
 
 CREATE TABLE IF NOT EXISTS prospect_consents (
   prospect_id   uuid PRIMARY KEY REFERENCES prospects(id) ON DELETE CASCADE,
@@ -186,13 +170,7 @@ CREATE TABLE IF NOT EXISTS prospect_merge_candidates (
     UNIQUE (tenant_id, left_prospect_id, right_prospect_id)
 );
 
--- Cascade path: the pair key is (tenant_id, left_prospect_id, right_prospect_id),
--- so a delete that looks up right_prospect_id alone would scan the table.
-CREATE INDEX IF NOT EXISTS prospect_merge_candidates_right_prospect_idx
-  ON prospect_merge_candidates (right_prospect_id);
-
--- pending_writes currently allows seven object types (0015 follows the
--- 'email' type added in 0007). The prospect lane needs four more.
+-- pending_writes currently allows six object types. The prospect lane needs four more.
 ALTER TABLE pending_writes DROP CONSTRAINT IF EXISTS pending_writes_object_type_check;
 ALTER TABLE pending_writes ADD CONSTRAINT pending_writes_object_type_check
   CHECK (object_type IN ('customer','contact','followup','task','schedule',
