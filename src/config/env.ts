@@ -59,6 +59,10 @@ export const EnvSchema = z.object({
     .default(4),
   MASTRA_DB_DISABLE_INIT: booleanish.prefault('true'),
 
+  // Observational memory (Level 4). On by default; set false to revert to the
+  // plain messageHistory window (spec §4 kill-switch).
+  CRUM_OM_ENABLED: booleanish.prefault('true'),
+
   POLICY_DIR: optionalString,
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).default(120),
   RATE_LIMIT_WINDOW_SECONDS: z.coerce.number().int().min(1).default(60),

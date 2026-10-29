@@ -57,6 +57,12 @@ describe('parseEnv', () => {
     expect(parseEnv({}).MASTRA_OBSERVABILITY).toBe(false)
   })
 
+  it('defaults the observational-memory kill-switch to on', () => {
+    expect(parseEnv({}).CRUM_OM_ENABLED).toBe(true)
+    expect(parseEnv({ CRUM_OM_ENABLED: 'false' }).CRUM_OM_ENABLED).toBe(false)
+    expect(parseEnv({ CRUM_OM_ENABLED: '0' }).CRUM_OM_ENABLED).toBe(false)
+  })
+
   it('rejects a pool max that would exceed the Supabase budget', () => {
     // 2 pools x max must stay under Supabase's session-pooler cap of 15.
     expect(() => parseEnv({ MASTRA_PG_POOL_MAX: '9' })).toThrowError(EnvParseError)
