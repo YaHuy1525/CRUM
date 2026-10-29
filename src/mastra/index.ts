@@ -87,7 +87,7 @@ export function createCrumMastra(env: CrumEnv, options: CrumMastraOptions = {}):
   assertMcpRequestStateKey(env)
 
   const storage = options.storage ?? buildMastraStorage(env)
-  const memory = buildCrumMemory(storage)
+  const memory = buildCrumMemory(storage, env)
 
   const crmController = new AgentController({
     id: CRUM_AGENT_CONTROLLER_ID,
