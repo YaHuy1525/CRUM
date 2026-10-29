@@ -132,7 +132,9 @@ describe.skipIf(!pgUrl)('observational memory client-history gate (postgres stor
   })
 
   it('does not duplicate stored messages across overlapping full-history saves', async () => {
-    const env = parseEnv({ NODE_ENV: 'development', CRUM_OM_ENABLED: 'true', DATABASE_URL: pgUrl })
+    // Recall stays off: this gate exercises message-history dedup only, never
+    // the vector lane, so buildRecallDeps must not spin up a PgVector here.
+    const env = parseEnv({ NODE_ENV: 'development', CRUM_OM_ENABLED: 'true', CRUM_RECALL_ENABLED: 'false', DATABASE_URL: pgUrl })
     const storage = buildMastraStorage(env)
     // Defensive: prove this tier really exercises the PK-backed store, not the
     // id-keyed Map the in-memory tier already covers.

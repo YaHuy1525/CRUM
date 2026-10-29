@@ -34,6 +34,9 @@ const PRODUCTION_BASE: Record<string, string> = {
   // production + dev auth throws at parseEnv; production fixtures are jwt.
   CRUM_AUTH_MODE: 'jwt',
   DATABASE_URL: REMOTE,
+  // With a DATABASE_URL present, buildRecallDeps would construct a real
+  // PgVector + embedder at boot; the switch keeps unit CI fully offline.
+  CRUM_RECALL_ENABLED: 'false',
   OPENROUTER_API_KEY: 'sk-or-v1-placeholder',
   APPROVAL_HMAC_SECRET: 'a'.repeat(32),
   MCP_REQUEST_STATE_KEY: 'b'.repeat(32),
@@ -64,7 +67,7 @@ describe('createCrumMastra', () => {
   })
 
   it('constructs when a remote DATABASE_URL is configured', () => {
-    const mastra = createCrumMastra(envWith({ DATABASE_URL: REMOTE }), { storage: testStore() })
+    const mastra = createCrumMastra(envWith({ DATABASE_URL: REMOTE, CRUM_RECALL_ENABLED: 'false' }), { storage: testStore() })
     expect(mastra).toBeInstanceOf(Mastra)
   })
 
@@ -78,7 +81,7 @@ describe('createCrumMastra', () => {
     // offline-safe. This is the §16 "boots both ways" half the injected-store
     // tests above cannot demonstrate.
     expect(
-      createCrumMastra(envWith({ DATABASE_URL: REMOTE })).getStorage(),
+      createCrumMastra(envWith({ DATABASE_URL: REMOTE, CRUM_RECALL_ENABLED: 'false' })).getStorage(),
     ).toBeInstanceOf(PostgresStoreVNext)
   })
 

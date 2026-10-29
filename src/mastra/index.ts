@@ -12,6 +12,7 @@ import { buildMastraStorage } from './storage'
 import type { CrumStorage } from './storage'
 import { crmAssistant, CRUM_SUBAGENTS } from './agent'
 import { buildCrumMemory } from './memory'
+import { buildRecallDeps } from './recall'
 import { ingestWorkflow } from './workflows/ingest'
 import { documentIntakeWorkflow } from './workflows/document-intake'
 import { intentClassifier } from './classifiers/intent'
@@ -87,7 +88,9 @@ export function createCrumMastra(env: CrumEnv, options: CrumMastraOptions = {}):
   assertMcpRequestStateKey(env)
 
   const storage = options.storage ?? buildMastraStorage(env)
-  const memory = buildCrumMemory(storage, env)
+  // buildRecallDeps is lazy and returns undefined for in-memory CI (no
+  // DATABASE_URL), so nothing external is constructed at boot there.
+  const memory = buildCrumMemory(storage, env, buildRecallDeps(env))
 
   const crmController = new AgentController({
     id: CRUM_AGENT_CONTROLLER_ID,
