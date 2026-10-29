@@ -3,6 +3,7 @@ import { Memory } from '@mastra/memory'
 import { buildCrumMemory } from '../../src/mastra/memory'
 import { buildMastraStorage } from '../../src/mastra/storage'
 import { parseEnv } from '../../src/config/env'
+import { CRUM_LIGHT_MODEL } from '../../src/mastra/models'
 import type { RecallDeps } from '../../src/mastra/recall'
 
 // A minimal stand-in for the lazily-built recall deps: buildCrumMemory only
@@ -99,8 +100,8 @@ describe('buildCrumMemory', () => {
     const memory = buildCrumMemory(buildMastraStorage(env), env)
     const config = memory.getMergedThreadConfig()
     // memoryDefaultOptions.generateTitle is `false`; buildCrumMemory must flip it
-    // to an object. Assert the model key so the check is non-vacuous.
-    expect(config.generateTitle).toBeTruthy()
-    expect((config.generateTitle as { model?: unknown }).model).toBeDefined()
+    // to an object. Pin the model identity (this file's convention: the recall
+    // test pins concrete values) so an accidental switch off the light model fails.
+    expect(config.generateTitle).toMatchObject({ model: CRUM_LIGHT_MODEL })
   })
 })
