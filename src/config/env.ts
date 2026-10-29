@@ -21,7 +21,9 @@ const booleanish = z
   .enum(['true', 'false', '1', '0'])
   .transform((v) => v === 'true' || v === '1')
 
-export const POOL_COUNT = 2
+// Three pg.Pool instances on the main connection: storage, observability, and
+// the semantic-recall PgVector (src/mastra/recall.ts).
+export const POOL_COUNT = 3
 export const SUPABASE_POOL_SIZE = 15
 export const MAX_POOL_PER_CONN = Math.floor(SUPABASE_POOL_SIZE / POOL_COUNT)
 
@@ -55,7 +57,7 @@ export const EnvSchema = z.object({
     .number()
     .int()
     .min(1)
-    .max(MAX_POOL_PER_CONN, `2 pools x max must stay under Supabase pool_size (${SUPABASE_POOL_SIZE})`)
+    .max(MAX_POOL_PER_CONN, `${POOL_COUNT} pools x max must stay under Supabase pool_size (${SUPABASE_POOL_SIZE})`)
     .default(4),
   MASTRA_DB_DISABLE_INIT: booleanish.prefault('true'),
 

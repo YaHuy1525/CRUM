@@ -102,22 +102,22 @@ describe('pgPoolMax and checkPoolBudget', () => {
   it('defaults to four clients per pool', () => {
     expect(pgPoolMax(envWith())).toBe(4)
     expect(checkPoolBudget(envWith())).toEqual({
-      pools: 2,
+      pools: 3,
       perPoolMax: 4,
-      total: 8,
+      total: 12,
       limit: 15,
       ok: true,
     })
   })
 
   it('accepts the highest cap EnvSchema allows', () => {
-    const budget = checkPoolBudget(envWith({ MASTRA_PG_POOL_MAX: '7' }))
-    expect(budget.total).toBe(14)
+    const budget = checkPoolBudget(envWith({ MASTRA_PG_POOL_MAX: '5' }))
+    expect(budget.total).toBe(15)
     expect(budget.ok).toBe(true)
   })
 
-  it('never lets 2 pools exceed Supabase pool_size at any accepted value', () => {
-    for (const max of [1, 2, 3, 4, 5, 6, 7]) {
+  it('never lets 3 pools exceed Supabase pool_size at any accepted value', () => {
+    for (const max of [1, 2, 3, 4, 5]) {
       const budget = checkPoolBudget(envWith({ MASTRA_PG_POOL_MAX: String(max) }))
       expect(budget.ok, `max=${max}`).toBe(true)
     }

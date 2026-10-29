@@ -46,8 +46,8 @@ describe('parseEnv', () => {
   })
 
   it('coerces numeric strings', () => {
-    const env = parseEnv({ MASTRA_PG_POOL_MAX: '7', RATE_LIMIT_PER_MINUTE: '300' })
-    expect(env.MASTRA_PG_POOL_MAX).toBe(7)
+    const env = parseEnv({ MASTRA_PG_POOL_MAX: '5', RATE_LIMIT_PER_MINUTE: '300' })
+    expect(env.MASTRA_PG_POOL_MAX).toBe(5)
     expect(env.RATE_LIMIT_PER_MINUTE).toBe(300)
   })
 
@@ -75,8 +75,8 @@ describe('parseEnv', () => {
   })
 
   it('rejects a pool max that would exceed the Supabase budget', () => {
-    // 2 pools x max must stay under Supabase's session-pooler cap of 15.
-    expect(() => parseEnv({ MASTRA_PG_POOL_MAX: '9' })).toThrowError(EnvParseError)
+    // 3 pools x max must stay under Supabase's session-pooler cap of 15.
+    expect(() => parseEnv({ MASTRA_PG_POOL_MAX: '6' })).toThrowError(EnvParseError)
   })
 
   it('rejects a non-numeric pool max rather than silently defaulting', () => {
