@@ -11,9 +11,16 @@ describe('toScoreRow', () => {
       weaknessSignals: ['no_website'],
       reachability: 'dm',
     })
-    expect(row.prospectId).toBe('11111111-1111-1111-1111-111111111111')
-    expect(row.weightsVersion).toBe('2026-10-30.1')
-    expect(row.band).toBe('small')
-    expect(row.total).toBeGreaterThan(0)
+    expect(row).toEqual({
+      prospectId: '11111111-1111-1111-1111-111111111111',
+      tenantId: '22222222-2222-2222-2222-222222222222',
+      audienceScore: 0.68,
+      monetisationScore: 0.6,
+      funnelGapScore: 0.3,
+      reachabilityScore: 0.8,
+      total: 56,
+      band: 'small',
+      weightsVersion: '2026-10-30.1',
+    })
   })
 })

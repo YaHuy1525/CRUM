@@ -67,7 +67,11 @@ function bandFor(count: number | null): Band {
 }
 
 export function scoreProspect(input: ScoreInput): Score {
-  const count = input.audience.count
+  // A negative or non-finite count would make `Math.log10` NaN (or -Infinity)
+  // and poison the total. Treat it as "unknown size" instead: no audience
+  // points and the micro band, same as a null count.
+  const raw = input.audience.count
+  const count = raw === null || !Number.isFinite(raw) || raw < 0 ? null : raw
   const reach = count === null ? 0 : clamp01(Math.log10(count + 1) / Math.log10(1000000))
   const audience = reach * BASIS_WEIGHT[input.audience.basis]
 

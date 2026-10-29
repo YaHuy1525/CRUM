@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { scoreProspect, WEIGHTS_VERSION } from '../../../src/prospects/score'
+import { scoreProspect } from '../../../src/prospects/score'
 
 const base = {
   audience: { count: 8000, basis: 'followers' as const },
@@ -11,7 +11,9 @@ const base = {
 describe('scoreProspect', () => {
   it('returns a score with the current weights version', () => {
     const s = scoreProspect(base)
-    expect(s.weightsVersion).toBe(WEIGHTS_VERSION)
+    // Literal, not the exported constant: reading WEIGHTS_VERSION would keep
+    // passing after an accidental bump.
+    expect(s.weightsVersion).toBe('2026-10-30.1')
     expect(s.total).toBeGreaterThan(0)
     expect(s.total).toBeLessThanOrEqual(100)
   })
@@ -39,6 +41,20 @@ describe('scoreProspect', () => {
     expect(scoreProspect({ ...base, audience: { count: 9000, basis: 'followers' } }).band).toBe('small')
     expect(scoreProspect({ ...base, audience: { count: 30000, basis: 'followers' } }).band).toBe('mid')
     expect(scoreProspect({ ...base, audience: { count: 90000, basis: 'followers' } }).band).toBe('big')
+  })
+
+  it('bands exactly on the 1999/2000 and 50000/50001 boundaries', () => {
+    expect(scoreProspect({ ...base, audience: { count: 1999, basis: 'followers' } }).band).toBe('micro')
+    expect(scoreProspect({ ...base, audience: { count: 2000, basis: 'followers' } }).band).toBe('small')
+    expect(scoreProspect({ ...base, audience: { count: 50000, basis: 'followers' } }).band).toBe('mid')
+    expect(scoreProspect({ ...base, audience: { count: 50001, basis: 'followers' } }).band).toBe('big')
+  })
+
+  it('treats a negative audience count as unknown rather than NaN', () => {
+    const s = scoreProspect({ ...base, audience: { count: -5, basis: 'followers' } })
+    expect(Number.isFinite(s.total)).toBe(true)
+    expect(Number.isFinite(s.audience)).toBe(true)
+    expect(s.band).toBe('micro')
   })
 
   it('never returns a negative total', () => {

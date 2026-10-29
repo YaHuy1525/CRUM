@@ -4,6 +4,10 @@ export type SendKind = 'dm' | 'email' | 'manual'
 export interface SendLedgerEntry {
   prospectId: string
   channel: SendChannel
+  // Caps are budgets per send kind, not per channel. Without `kind` a day of
+  // 20 DMs on each of five channels reads as 20 DMs rather than 100, and the
+  // dm/email/manual budgets cannot be told apart.
+  kind: SendKind
   sentAt: Date
 }
 
@@ -60,12 +64,14 @@ export function checkSendCaps(input: CapInput): CapDecision {
     return { allowed: false, reason: 'quiet_hours' }
   }
 
-  if (input.kind === 'email' && !input.consented) {
+  // Consent is about the medium, not the send mode: `channel: 'email',
+  // kind: 'manual'` still messages an address and still needs consent.
+  if (input.channel === 'email' && !input.consented) {
     return { allowed: false, reason: 'no_consent' }
   }
 
   const todayCount = input.ledger.filter(
-    (e) => e.channel === input.channel && sameLocalDay(e.sentAt, input.now, input.timeZone),
+    (e) => e.kind === input.kind && sameLocalDay(e.sentAt, input.now, input.timeZone),
   ).length
   if (todayCount >= DAILY_CAP[input.kind]) {
     return { allowed: false, reason: 'daily_cap' }

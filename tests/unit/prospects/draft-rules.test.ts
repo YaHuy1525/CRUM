@@ -17,10 +17,37 @@ describe('checkDraft', () => {
     expect(checkDraft({ body: 'hello there', channel: 'dm', stage: 'first_touch', evidenceSnapshotId: null })).toContain('no_cited_fact')
   })
 
+  it('treats an empty evidence snapshot id as uncited', () => {
+    const violations = checkDraft({ body: 'hello there', channel: 'dm', stage: 'first_touch', evidenceSnapshotId: '' })
+    expect(violations).toContain('no_cited_fact')
+  })
+
+  it('does not count standalone dashes as words', () => {
+    // A hyphen-separated list of exactly 90 words: every word is a word, every
+    // " - " separator is punctuation, so the cap is not exceeded.
+    const body = words(90).split(' ').join(' - ')
+    expect(checkDraft({ body, channel: 'dm', stage: 'first_touch', evidenceSnapshotId: 'abc' })).toEqual([])
+  })
+
   it('bans links in a first touch DM but allows them later', () => {
     const body = 'I watched your reel about pricing https://example.com'
     expect(checkDraft({ body, channel: 'dm', stage: 'first_touch', evidenceSnapshotId: 'abc' })).toContain('link_in_first_touch')
     expect(checkDraft({ body, channel: 'dm', stage: 'followup_1', evidenceSnapshotId: 'abc' })).not.toContain('link_in_first_touch')
+  })
+
+  it('bans a scheme-less bare domain in a first touch DM', () => {
+    const body = 'your pricing page at example.com is hard to find'
+    expect(checkDraft({ body, channel: 'dm', stage: 'first_touch', evidenceSnapshotId: 'abc' })).toContain('link_in_first_touch')
+  })
+
+  it('bans a scheme-less short link in a first touch DM', () => {
+    const body = 'grab the guide at t.me/studio'
+    expect(checkDraft({ body, channel: 'dm', stage: 'first_touch', evidenceSnapshotId: 'abc' })).toContain('link_in_first_touch')
+  })
+
+  it('does not treat a sentence ending in a full stop as a link', () => {
+    const body = 'I loved your Sydney studio.'
+    expect(checkDraft({ body, channel: 'dm', stage: 'first_touch', evidenceSnapshotId: 'abc' })).not.toContain('link_in_first_touch')
   })
 
   it('flags an empty body', () => {

@@ -33,11 +33,13 @@ async function main(): Promise<void> {
   if (!tenantId) throw new Error('PROSPECT_TENANT_ID is required')
 
   const result = await getDbClient().query<ProspectScoreSource>(
+    // Platform selects reachability, so the pick has to be stable across runs:
+    // highest audience count first, ties broken alphabetically, nulls last.
     `SELECT p.id,
             MAX(c.audience_count) AS audience_count,
             (array_agg(c.audience_basis ORDER BY c.audience_count DESC NULLS LAST))[1] AS audience_basis,
             s.price_min_minor, s.what_they_sell, s.weakness_signals,
-            (array_agg(c.platform))[1] AS platform
+            (array_agg(c.platform ORDER BY c.audience_count DESC NULLS LAST, c.platform ASC))[1] AS platform
        FROM prospects p
        LEFT JOIN prospect_channels c ON c.prospect_id = p.id
        LEFT JOIN LATERAL (
