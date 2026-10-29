@@ -17,9 +17,27 @@ export interface Audience {
 
 const CURRENCY_EXPONENT: Record<Currency, number> = { AUD: 2, VND: 0 }
 
-// Smallest plausible price in each currency's major unit. Anything below this is
+// Fallback for cells where no number sits next to a currency marker: the
+// smallest plausible price in each currency's major unit. Anything below this is
 // a session count, a ratio ("1:1") or a course index, not money.
-const PRICE_FLOOR: Record<Currency, number> = { AUD: 10, VND: 1000 }
+const PRICE_FLOOR: Record<Currency, number> = { AUD: 10, VND: 10000 }
+
+// How far from a number a currency marker is still read as belonging to it.
+const MARKER_WINDOW = 3
+
+const NUMBER = /\d[\d.,]*/g
+
+function sitsByCurrencyMarker(text: string, start: number, end: number): boolean {
+  const before = text.slice(Math.max(0, start - MARKER_WINDOW), start)
+  const after = text.slice(end, end + MARKER_WINDOW).toLowerCase()
+  return (
+    before.includes('$') ||
+    before.includes('₫') ||
+    after.includes('aud') ||
+    after.includes('vnd') ||
+    after.includes('đ')
+  )
+}
 
 export function normalizeName(input: string): string {
   return input
@@ -59,18 +77,30 @@ export function parsePriceRange(raw: string, country: 'AU' | 'VN'): PriceRange {
   if (/A\$|AUD/i.test(text)) currency = 'AUD'
   if (/₫|VND|VNĐ|đồng/i.test(text)) currency = 'VND'
 
-  const cleaned = text.replace(/A\$|\$|₫|VND|VNĐ|đồng/gi, ' ')
-  const rawNumbers = cleaned.match(/\d[\d.,]*/g) ?? []
-  const floor = PRICE_FLOOR[currency]
-
-  const values: number[] = []
-  for (const token of rawNumbers) {
-    const parsed = currency === 'VND'
-      ? Number(token.replace(/[.,]/g, ''))
-      : Number(token.replace(/,/g, ''))
-    if (!Number.isFinite(parsed) || parsed < floor) continue
-    values.push(Math.round(parsed * 10 ** CURRENCY_EXPONENT[currency]))
+  // Numbers are read from the raw cell rather than a cleaned copy so that the
+  // currency symbol beside them is still there for the adjacency test.
+  const candidates: { major: number; adjacent: boolean }[] = []
+  for (const match of text.matchAll(NUMBER)) {
+    const major = currency === 'VND'
+      ? Number(match[0].replace(/[.,]/g, ''))
+      : Number(match[0].replace(/,/g, ''))
+    if (!Number.isFinite(major)) continue
+    candidates.push({
+      major,
+      adjacent: sitsByCurrencyMarker(text, match.index, match.index + match[0].length),
+    })
   }
+
+  // A number next to a currency marker is money whichever currency the row
+  // defaults to, so those numbers alone set the range ("1:1 program $2,100" is
+  // 210000, not a ratio; "$9.99" is 999). With no such number the floor still
+  // has to reject session counts and course indexes.
+  const marked = candidates.filter((candidate) => candidate.adjacent)
+  const chosen = marked.length > 0
+    ? marked
+    : candidates.filter((candidate) => candidate.major >= PRICE_FLOOR[currency])
+  const exponent = 10 ** CURRENCY_EXPONENT[currency]
+  const values = chosen.map((candidate) => Math.round(candidate.major * exponent))
 
   if (values.length === 0) return { minMinor: null, maxMinor: null, currency }
   return { minMinor: Math.min(...values), maxMinor: Math.max(...values), currency }

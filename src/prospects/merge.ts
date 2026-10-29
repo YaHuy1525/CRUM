@@ -4,32 +4,13 @@ export type MatchVerdict =
   | { kind: 'candidate'; reason: 'exact' | 'substring'; similarity: number }
   | { kind: 'distinct'; reason: 'none'; similarity: number }
 
-// Category words. Sharing one of these says nothing about identity, so they are
-// dropped before the subset test.
-const GENERIC_TOKENS = new Set([
-  'coach',
-  'coaching',
-  'the',
-  'academy',
-  'consulting',
-  'studio',
-  'fitness',
-  'online',
-  'australia',
-  'vietnam',
-  'group',
-  'services',
-  'training',
-])
-
-// The parenthetical is usually the owner's name, and the token stream is what
-// identifies the business. Dropping it also keeps "Tradie Coach (Paul Rogers)"
-// and "Tech and Tradie Coach (Joel Hayward)" comparable on "Tradie Coach".
+// The parenthetical is usually the owner's name and the words around it are what
+// identify the business, so "Tradie Coach (Paul Rogers)" and "Tech and Tradie
+// Coach (Joel Hayward)" are compared on "Tradie Coach".
 function tokensOf(name: string): string[] {
   return normalizeName(name.replace(/\([^)]*\)/g, ' '))
     .split(' ')
     .filter(Boolean)
-    .filter((token) => !GENERIC_TOKENS.has(token))
 }
 
 function jaccard(left: string[], right: string[]): number {
@@ -52,26 +33,23 @@ export function classifyMatch(
 ): MatchVerdict {
   if (a.country !== b.country) return { kind: 'distinct', reason: 'none', similarity: 0 }
 
-  const left = normalizeName(a.name)
-  const right = normalizeName(b.name)
-  const leftTokens = left.split(' ').filter(Boolean)
-  const rightTokens = right.split(' ').filter(Boolean)
-  const similarity = jaccard(leftTokens, rightTokens)
+  const left = tokensOf(a.name)
+  const right = tokensOf(b.name)
+  const similarity = jaccard(left, right)
 
-  if (left === right) return { kind: 'candidate', reason: 'exact', similarity: 1 }
-
-  // A candidate needs every remaining token of the shorter name inside the
-  // longer one. Sharing a first name or a city is not enough: "Kate Toon" and
-  // "Kate Smith" stay distinct, as do "Nguyen Van A" and "Nguyen Van B".
-  const leftCore = tokensOf(a.name)
-  const rightCore = tokensOf(b.name)
-  if (leftCore.length === 0 || rightCore.length === 0) {
+  // A name that is nothing but a parenthetical leaves no tokens to compare.
+  if (left.length === 0 || right.length === 0) {
     return { kind: 'distinct', reason: 'none', similarity }
   }
 
-  const [shorter, longer] = leftCore.length <= rightCore.length
-    ? [leftCore, rightCore]
-    : [rightCore, leftCore]
+  // Candidates are exactly the equal and the subset pairs. Callers review them
+  // by hand, so a short name inside a longer one ("Jo" in "Jo Green") is
+  // reported rather than guessed away.
+  if (left.length === right.length && left.every((token, i) => token === right[i])) {
+    return { kind: 'candidate', reason: 'exact', similarity }
+  }
+
+  const [shorter, longer] = left.length <= right.length ? [left, right] : [right, left]
   if (isSubsetOf(shorter, longer)) {
     return { kind: 'candidate', reason: 'substring', similarity }
   }

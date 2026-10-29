@@ -27,22 +27,11 @@ describe('parsePriceRange', () => {
     expect(p).toEqual({ minMinor: 2000, maxMinor: 5400, currency: 'AUD' })
   })
 
-  it('reads VND with dot or comma separators', () => {
-    expect(parsePriceRange('2,900,000-3,500,000', 'VN').minMinor).toBe(2900000)
-    expect(parsePriceRange('980.000 - 1.200.000', 'VN').maxMinor).toBe(1200000)
+  it('reads a single number that only makes sense as cents', () => {
+    expect(parsePriceRange('$9.99', 'AU')).toEqual({ minMinor: 999, maxMinor: 999, currency: 'AUD' })
   })
 
-  it('returns nulls for unpublished prices', () => {
-    const p = parsePriceRange('Not published (enquiry)', 'AU')
-    expect(p.minMinor).toBeNull()
-    expect(p.maxMinor).toBeNull()
-  })
-
-  it('detects a VND price inside an AU row', () => {
-    expect(parsePriceRange('5.000.000 VND', 'AU').currency).toBe('VND')
-  })
-
-  it('ignores numbers below the AUD floor instead of reading them as prices', () => {
+  it('takes only the numbers that sit next to a currency marker', () => {
     const ratio = parsePriceRange('1:1 program $2,100', 'AU')
     expect(ratio.minMinor).toBe(210000)
     expect(ratio.maxMinor).toBe(210000)
@@ -52,7 +41,29 @@ describe('parsePriceRange', () => {
     expect(sessions.maxMinor).toBe(90000)
   })
 
-  it('returns nulls when every number is below the VND floor', () => {
+  it('reads VND with dot or comma separators', () => {
+    const commas = parsePriceRange('2,900,000-3,500,000', 'VN')
+    expect(commas.minMinor).toBe(2900000)
+    expect(commas.maxMinor).toBe(3500000)
+
+    const dots = parsePriceRange('980.000 - 1.200.000', 'VN')
+    expect(dots.minMinor).toBe(980000)
+    expect(dots.maxMinor).toBe(1200000)
+  })
+
+  it('returns nulls for unpublished prices', () => {
+    const p = parsePriceRange('Not published (enquiry)', 'AU')
+    expect(p.minMinor).toBeNull()
+    expect(p.maxMinor).toBeNull()
+  })
+
+  it('detects a VND price inside an AU row', () => {
+    const p = parsePriceRange('5.000.000 VND', 'AU')
+    expect(p.currency).toBe('VND')
+    expect(p.minMinor).toBe(5000000)
+  })
+
+  it('returns nulls when no number clears the fallback floor', () => {
     const p = parsePriceRange('course 500 and 900', 'VN')
     expect(p.minMinor).toBeNull()
     expect(p.maxMinor).toBeNull()

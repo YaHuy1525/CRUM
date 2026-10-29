@@ -1,39 +1,45 @@
 import { describe, expect, it } from 'vitest'
 import { classifyMatch } from '../../../src/prospects/merge'
 
-const a = { name: 'Tradie Coach (Paul Rogers)', country: 'AU' as const }
-const b = { name: 'Tech and Tradie Coach (Joel Hayward)', country: 'AU' as const }
+const au = (name: string) => ({ name, country: 'AU' as const })
+const vn = (name: string) => ({ name, country: 'VN' as const })
 
 describe('classifyMatch', () => {
-  it('never merges the two different tradie coaches', () => {
-    const verdict = classifyMatch(a, b)
+  it('ignores parenthetical owner names so the two tradie coaches collide', () => {
+    const verdict = classifyMatch(au('Tradie Coach (Paul Rogers)'), au('Tech and Tradie Coach (Joel Hayward)'))
     expect(verdict.kind).toBe('candidate')
     expect(verdict.kind === 'candidate' && verdict.reason).toBe('substring')
   })
 
-  it('treats identical normalised names in the same country as a candidate not a duplicate', () => {
-    const verdict = classifyMatch({ name: 'Kate Toon', country: 'AU' }, { name: 'kate  toon', country: 'AU' })
+  it('matches a name against the longer name that contains it', () => {
+    expect(classifyMatch(au('Rask'), au('Rask Media Group')).kind).toBe('candidate')
+    expect(classifyMatch(au('Jo'), au('Jo Green')).kind).toBe('candidate')
+  })
+
+  it('treats identical normalised names as a candidate not a duplicate', () => {
+    const verdict = classifyMatch(au('Kate Toon'), au('kate  toon'))
     expect(verdict.kind).toBe('candidate')
-  })
-
-  it('keeps same names in different countries apart', () => {
-    expect(classifyMatch({ name: 'Kate Toon', country: 'AU' }, { name: 'Kate Toon', country: 'VN' }).kind).toBe('distinct')
-  })
-
-  it('keeps unrelated names apart', () => {
-    expect(classifyMatch({ name: 'Jo Green Coaching', country: 'AU' }, { name: 'BusinessSight', country: 'AU' }).kind).toBe('distinct')
-  })
-
-  it('does not fire on a short token shared between names', () => {
-    expect(classifyMatch({ name: 'Rask', country: 'AU' }, { name: 'Rask Media Group', country: 'AU' }).kind).toBe('candidate')
-    expect(classifyMatch({ name: 'Coach', country: 'AU' }, { name: 'Coach Kate', country: 'AU' }).kind).toBe('distinct')
+    expect(verdict.kind === 'candidate' && verdict.reason).toBe('exact')
+    expect(verdict.similarity).toBe(1)
   })
 
   it('keeps people who only share a first name apart', () => {
-    expect(classifyMatch({ name: 'Kate Toon', country: 'AU' }, { name: 'Kate Smith', country: 'AU' }).kind).toBe('distinct')
+    expect(classifyMatch(au('Kate Toon'), au('Kate Smith')).kind).toBe('distinct')
+  })
+
+  it('keeps businesses that only share a city apart', () => {
+    expect(classifyMatch(au('Sydney Coach'), au('Sydney Studio')).kind).toBe('distinct')
   })
 
   it('keeps names that only share the family name tokens apart', () => {
-    expect(classifyMatch({ name: 'Nguyen Van A', country: 'VN' }, { name: 'Nguyen Van B', country: 'VN' }).kind).toBe('distinct')
+    expect(classifyMatch(vn('Nguyen Van A'), vn('Nguyen Van B')).kind).toBe('distinct')
+  })
+
+  it('keeps same names in different countries apart', () => {
+    expect(classifyMatch(au('Kate Toon'), vn('Kate Toon')).kind).toBe('distinct')
+  })
+
+  it('keeps unrelated names apart', () => {
+    expect(classifyMatch(au('Jo Green Coaching'), au('BusinessSight')).kind).toBe('distinct')
   })
 })
