@@ -24,7 +24,7 @@
     "coverage": "vitest run --coverage",
     "db:export-schema": "tsx scripts/db-export-schema.ts",
     "db:migrate": "tsx scripts/db-migrate.ts",
-    "prospects:import": "tsx scripts/prospects-import.ts",
+    "prospects:import": "tsx --env-file-if-exists=.env scripts/prospects-import.ts",
     "prospects:score": "tsx --env-file-if-exists=.env scripts/prospects-score.ts",
     "mail:watch": "tsx scripts/mail-watch.ts",
     "cal:seed": "tsx --env-file-if-exists=.env scripts/calendar-seed.ts",

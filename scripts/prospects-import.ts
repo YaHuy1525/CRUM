@@ -5,6 +5,12 @@
 // requested it and the counts), not a signed receipt, so there is no pending
 // write to approve later.
 //
+// Nothing is written when the file parsed to zero rows or lost even one row:
+// a batch row would otherwise record a partial (or empty) import as a success.
+// The file hash is checked against prospect_import_batches first, because the
+// table is UNIQUE (tenant_id, file_hash) and a re-import would otherwise abort
+// on the constraint after printing a fresh plan.
+//
 // Merge candidates are keyed on prospect ids, never on name_normalized: two
 // prospects can share a name, and the planner hands back the id of an existing
 // prospect or the insert index of an earlier row in the same file.
@@ -14,8 +20,16 @@
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { closeDbClient, getDbClient } from '../src/db/client'
-import { parseCsv, parseProspectRows } from '../src/prospects/csv'
-import { planImport, type ExistingProspect, type MergeCandidatePlan } from '../src/prospects/import'
+import { parseCsv } from '../src/prospects/csv'
+import {
+  buildChannelParams,
+  buildSnapshotParams,
+  importRefusals,
+  inspectImportRows,
+  planImport,
+  type ExistingProspect,
+  type MergeCandidatePlan,
+} from '../src/prospects/import'
 
 interface Options {
   file: string
@@ -68,14 +82,51 @@ function resolveLeftId(candidate: MergeCandidatePlan, insertedIds: string[]): st
   return indexed
 }
 
+interface ImportBatchRow {
+  id: string
+  file_name: string
+  rows_in: number
+  rows_new: number
+  rows_duplicate: number
+  rows_candidate: number
+  imported_at: Date
+}
+
+async function findExistingBatch(tenantId: string, fileHash: string): Promise<ImportBatchRow | null> {
+  const result = await getDbClient().query<ImportBatchRow>(
+    `SELECT id, file_name, rows_in, rows_new, rows_duplicate, rows_candidate, imported_at
+       FROM prospect_import_batches
+      WHERE tenant_id = $1 AND file_hash = $2`,
+    [tenantId, fileHash],
+  )
+  return result.rows[0] ?? null
+}
+
 async function main(): Promise<void> {
   try {
     const options = parseArgs(process.argv)
     const text = readFileSync(options.file, 'utf8')
     const fileHash = createHash('sha256').update(text).digest('hex')
-    const rows = parseProspectRows(parseCsv(text))
+    const inspection = inspectImportRows(parseCsv(text))
+
+    // Refuse before touching the database: a zero-row parse or any dropped row
+    // must not leave a batch row claiming the file was imported.
+    const refusals = importRefusals(inspection)
+    if (refusals.length > 0) {
+      for (const line of refusals) console.error(line)
+      process.exitCode = 1
+      return
+    }
+
+    const previous = await findExistingBatch(options.tenantId, fileHash)
+    if (previous) {
+      console.log(`already imported: ${previous.file_name} on ${previous.imported_at.toISOString()}, batch ${previous.id}`)
+      console.log(`rows_in=${previous.rows_in} rows_new=${previous.rows_new} rows_duplicate=${previous.rows_duplicate} rows_candidate=${previous.rows_candidate}; nothing written`)
+      return
+    }
+
     const existing = await loadExisting(options.tenantId)
-    const plan = planImport(rows, existing)
+    const plan = planImport(inspection.rows, existing)
 
     console.log(JSON.stringify({ fileHash, ...plan.counts }, null, 2))
     if (options.dryRun) {
@@ -108,21 +159,22 @@ async function main(): Promise<void> {
         if (!prospectId) throw new Error(`prospect insert returned no id for ${row.name}`)
         insertedIds.push(prospectId)
 
+        // Parameter order matches buildChannelParams.
         await client.query(
           `INSERT INTO prospect_channels
              (tenant_id, prospect_id, platform, handle, handle_normalized, profile_url,
               audience_count, audience_basis, audience_confidence)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-          [options.tenantId, prospectId, row.platform, row.handle, row.handleNormalized, row.profileUrl,
-            row.audience.count, row.audience.basis, row.audience.confidence],
+          buildChannelParams(row, prospectId, options.tenantId),
         )
+        // Parameter order matches buildSnapshotParams; extractor_version is a
+        // literal, so the eight parameters stop before it.
         await client.query(
           `INSERT INTO prospect_snapshots
              (tenant_id, prospect_id, what_they_sell, price_min_minor, price_max_minor, currency,
               price_visible, source_url, extractor_version)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'import-v1')`,
-          [options.tenantId, prospectId, row.whatTheySell, row.price.minMinor, row.price.maxMinor,
-            row.price.currency, row.price.minMinor !== null, row.profileUrl],
+          buildSnapshotParams(row, prospectId, options.tenantId),
         )
       }
 
