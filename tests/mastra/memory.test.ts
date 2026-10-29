@@ -93,4 +93,14 @@ describe('buildCrumMemory', () => {
     // No static tenant predicate: the value varies per caller (doc §4/§5).
     expect((config.semanticRecall as { filter?: unknown }).filter).toBeUndefined()
   })
+
+  it('configures server-side title generation on a model', () => {
+    const env = parseEnv({ CRUM_OM_ENABLED: 'false' })
+    const memory = buildCrumMemory(buildMastraStorage(env), env)
+    const config = memory.getMergedThreadConfig()
+    // memoryDefaultOptions.generateTitle is `false`; buildCrumMemory must flip it
+    // to an object. Assert the model key so the check is non-vacuous.
+    expect(config.generateTitle).toBeTruthy()
+    expect((config.generateTitle as { model?: unknown }).model).toBeDefined()
+  })
 })

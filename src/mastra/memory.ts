@@ -31,6 +31,10 @@ export function buildCrumMemory(
         template: CRUM_WORKING_MEMORY_TEMPLATE,
         scope: 'resource',
       },
+      // Server-generated thread titles for new chats (spec §6). Runs async on the
+      // light model. The console PATCH auto-flow only fills an empty, unpinned
+      // title, so this coexists; a user-pinned title still wins.
+      generateTitle: { model: CRUM_LIGHT_MODEL },
       // Level 4: background Observer/Reflector compress old turns. Kill-switch
       // off omits the key entirely, restoring the pre-upgrade options object.
       ...(env.CRUM_OM_ENABLED ? { observationalMemory: { model: CRUM_LIGHT_MODEL } } : {}),
