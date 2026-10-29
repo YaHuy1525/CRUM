@@ -42,10 +42,11 @@ describe('buildRecallDeps', () => {
     createdPools.push((buildRecallDeps(other) as { vector: PgVector }).vector)
   })
 
-  it('constructs nothing at module import time', async () => {
-    // The spec §1 key-hygiene trap: importing with no embedding key present
-    // must neither throw nor build deps. The flag-off call below returns
-    // undefined without touching the cache, proving no import-time factory ran.
+  it('exposes the factory without constructing anything at module import', async () => {
+    // The spec §1 key-hygiene trap: importing the module with no embedding key
+    // present must not throw. This checks the import is side-effect-free at the
+    // module top level (no pool/embedder built during evaluation) and that the
+    // flag-off path returns undefined; it does NOT introspect the private cache.
     const recallModule = await import('../../src/mastra/recall')
     expect(recallModule).toBeTypeOf('object')
     expect(typeof recallModule.buildRecallDeps).toBe('function')
