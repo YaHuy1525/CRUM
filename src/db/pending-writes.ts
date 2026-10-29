@@ -27,7 +27,18 @@ export interface CreateDraftParams {
   tenantId: string
   runId: string
   threadId?: string
-  objectType: 'customer' | 'contact' | 'followup' | 'task' | 'schedule' | 'knowledge_document' | 'email'
+  objectType:
+    | 'customer'
+    | 'contact'
+    | 'followup'
+    | 'task'
+    | 'schedule'
+    | 'knowledge_document'
+    | 'email'
+    | 'prospect'
+    | 'prospect_channel'
+    | 'outreach_draft'
+    | 'outreach_send'
   operation: 'create' | 'update' | 'delete'
   targetId?: string
   payload: unknown
@@ -178,6 +189,59 @@ const COMMIT_TARGETS: Record<
       location: 'location',
       attendees: 'attendees',
       status: 'status',
+    },
+  },
+  // Channel and outreach rows carry no owner_id column, so the default owner
+  // injection in mapColumns would name a column that does not exist.
+  prospect: {
+    table: 'prospects',
+    columns: {
+      name: 'name',
+      nameNormalized: 'name_normalized',
+      country: 'country',
+      city: 'city',
+      category: 'category',
+      status: 'status',
+    },
+  },
+  prospect_channel: {
+    table: 'prospect_channels',
+    ownerColumn: false,
+    columns: {
+      prospectId: 'prospect_id',
+      platform: 'platform',
+      handle: 'handle',
+      handleNormalized: 'handle_normalized',
+      profileUrl: 'profile_url',
+      audienceCount: 'audience_count',
+      audienceBasis: 'audience_basis',
+      audienceConfidence: 'audience_confidence',
+    },
+  },
+  outreach_draft: {
+    table: 'outreach_drafts',
+    ownerColumn: false,
+    columns: {
+      prospectId: 'prospect_id',
+      channelId: 'channel_id',
+      stage: 'stage',
+      body: 'body',
+      language: 'language',
+      angle: 'angle',
+      status: 'status',
+      evidenceSnapshotId: 'evidence_snapshot_id',
+      promptVersion: 'prompt_version',
+      draftHash: 'draft_hash',
+    },
+  },
+  // A send is a state change on an existing draft row, not a new table, so it
+  // reuses the update path every other staged update uses.
+  outreach_send: {
+    table: 'outreach_drafts',
+    ownerColumn: false,
+    columns: {
+      status: 'status',
+      sentAt: 'sent_at',
     },
   },
 }
@@ -583,3 +647,6 @@ export async function listDecidedWrites(tenantId: string, limit = 50): Promise<P
   )
   return r.rows.map(rowToPendingWrite)
 }
+
+/** Test-only view of the object-type to table mapping. */
+export const __testing = { COMMIT_TARGETS }

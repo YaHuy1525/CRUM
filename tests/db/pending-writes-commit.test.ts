@@ -705,3 +705,22 @@ describe('getOrCreateDraft — the approval window', () => {
     expect(onlyStep(/^INSERT INTO pending_writes/).values[11]).toBe(600)
   })
 })
+
+describe('prospect object types', () => {
+  async function target(name: string): Promise<{ table: string }> {
+    const { __testing } = await import('../../src/db/pending-writes')
+    const entry = __testing.COMMIT_TARGETS[name]
+    if (!entry) throw new Error(`no commit target for object_type "${name}"`)
+    return entry
+  }
+
+  it('maps prospect to the prospects table', async () => {
+    expect((await target('prospect')).table).toBe('prospects')
+    expect((await target('prospect_channel')).table).toBe('prospect_channels')
+  })
+
+  it('maps outreach_send to outreach_drafts so a send updates the draft row', async () => {
+    expect((await target('outreach_send')).table).toBe('outreach_drafts')
+    expect((await target('outreach_draft')).table).toBe('outreach_drafts')
+  })
+})
