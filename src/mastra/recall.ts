@@ -1,5 +1,5 @@
 import { PgVector } from '@mastra/pg'
-import { crumEmbeddingModel, EMBEDDING_DIMENSIONS } from './embeddings'
+import { crumEmbeddingModel } from './embeddings'
 import { pgPoolMax, resolveSsl } from './storage'
 import type { CrumEnv } from '../config/env'
 
@@ -15,13 +15,40 @@ export function buildRecallDeps(env: CrumEnv): RecallDeps | undefined {
   const connectionString = env.DATABASE_URL
   if (!connectionString) return undefined
 
+  // createCrumMastra runs per-request on the health/feedback/usage/digest REST
+  // lanes, so without this cache each such request would build its own recall
+  // pool. The pool counts against the Supabase budget (POOL_COUNT=3 × max ≤ 15,
+  // env.ts:24-28). Keyed on every value that changes the result: the passed
+  // env for storage/embedder-override inputs, and process.env for the
+  // embedding endpoint, which crumEmbeddingModel reads via its own argless
+  // parseEnv (embeddings.ts:14) — credentials are stable within a process.
+  const key = [
+    connectionString,
+    env.MASTRA_PG_SSL ?? '',
+    String(env.MASTRA_PG_POOL_MAX),
+    env.MASTRA_MEMORY_EMBEDDER ?? '',
+    process.env.EMBEDDING_BASE_URL ?? '',
+    process.env.EMBEDDING_API_KEY ?? '',
+    process.env.MODEL_API_KEY ?? '',
+  ].join('\u0000')
+  const cached = depsCache.get(key)
+  if (cached) return cached
+  const deps = createRecallDeps(connectionString, env)
+  depsCache.set(key, deps)
+  return deps
+}
+
+const depsCache = new Map<string, RecallDeps>()
+
+function createRecallDeps(connectionString: string, env: CrumEnv): RecallDeps {
   const vector = new PgVector({
     id: 'pg-crum-recall',
     connectionString,
     // Supabase requires TLS; same rule as buildMastraStorage (storage.ts:115).
     ssl: resolveSsl(connectionString, env.MASTRA_PG_SSL),
-    // Tier A: one shared schema for all tenants; isolation is the double
-    // filter (research doc §4), not a per-tenant schema.
+    // Tier A: one shared schema for all tenants; isolation is the server-derived
+    // injective resourceId predicate (research doc §4, ruling 2026-10-30), not
+    // a per-tenant schema.
     schemaName: 'mastra_memory',
     // PgVector's own default pool max is 20 (@mastra/pg/dist/index.js:601);
     // cap it like every other pool or the Supabase budget check breaks (§6).
@@ -36,14 +63,4 @@ export function buildRecallDeps(env: CrumEnv): RecallDeps | undefined {
     override && override.includes('/') ? (override as `${string}/${string}`) : undefined,
   )
   return { vector, embedder }
-}
-
-// Shared with Memory's semanticRecall.indexConfig: the recall index must match
-// the RAG index dimensions and metric (research doc §5). Without indexConfig,
-// PgVector's lazy createIndex silently builds ivfflat, diverging from
-// CRUM_VECTOR_CONFIG.
-export const RECALL_VECTOR_CONFIG = {
-  dimension: EMBEDDING_DIMENSIONS,
-  metric: 'cosine' as const,
-  indexConfig: { type: 'hnsw' as const, hnsw: { m: 16, efConstruction: 64 } },
 }

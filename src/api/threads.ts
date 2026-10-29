@@ -230,6 +230,20 @@ export function createThreadsRouter(deps: ThreadsRouterDeps): Hono {
       return c.json({ error: 'memory-not-wired', detail: `No Memory is registered under "${CORE_MEMORY_KEY}".` }, 503)
     }
 
+    // searchMessages needs the semantic-recall vector lane; with
+    // CRUM_RECALL_ENABLED=false (or no DATABASE_URL) no store is attached and
+    // the framework throws (src-DxZ7N8nO.js:43716). 503 beats a 500 for a
+    // documented, deliberate kill-switch combination.
+    if (!(memory as { vector?: unknown }).vector) {
+      return c.json(
+        {
+          error: 'search-unavailable',
+          detail: 'Message search requires the semantic-recall vector lane (CRUM_RECALL_ENABLED=false).',
+        },
+        503,
+      )
+    }
+
     const resourceId = resourceIdFor(gate.identity)
     const found = await memory.searchMessages({ query: query.trim(), resourceId, topK: 20 })
 

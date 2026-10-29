@@ -45,7 +45,7 @@ describe('buildCrumMemory', () => {
     expect(config.lastMessages).toBeUndefined()
   })
 
-  it('leaves options unchanged when the kill-switch is off', () => {
+  it('omits observationalMemory when the OM kill-switch is off', () => {
     const env = parseEnv({ CRUM_OM_ENABLED: 'false' })
     const memory = buildCrumMemory(buildMastraStorage(env), env)
     const config = memory.getMergedThreadConfig()
@@ -60,7 +60,7 @@ describe('buildCrumMemory', () => {
     expect(config.observationalMemory).toBeTruthy()
   })
 
-  it('omits semantic recall when deps are absent', () => {
+  it('omits semantic recall when the flag is off and deps are absent', () => {
     const env = parseEnv({ CRUM_RECALL_ENABLED: 'false' })
     const memory = buildCrumMemory(buildMastraStorage(env), env)
     // The pinned Memory normalizes an unconfigured semanticRecall to `false`
@@ -68,16 +68,28 @@ describe('buildCrumMemory', () => {
     expect(memory.getMergedThreadConfig().semanticRecall).toBeFalsy()
   })
 
-  it('leaves options unchanged when the recall kill-switch is off even with deps', () => {
+  it('omits recall keys when the recall kill-switch is off even with deps', () => {
     // The kill-switch is authoritative: passing deps must not resurrect recall
-    // when the flag is off, so the object stays byte-identical to the base.
+    // when the flag is off, so no recall addition leaks in.
     const env = parseEnv({ CRUM_OM_ENABLED: 'false', CRUM_RECALL_ENABLED: 'false' })
     const memory = buildCrumMemory(buildMastraStorage(env), env, stubRecall)
     expect(memory.getMergedThreadConfig().semanticRecall).toBeFalsy()
-    // Byte-identity is a constructor-level claim, not just options: the flag-off
-    // branch must omit vector+embedder entirely, so no unused store is attached.
+    // No-store-attached is a constructor-level claim, not just options: the
+    // flag-off branch must omit vector+embedder entirely.
     expect(memory.vector).toBeUndefined()
     expect(memory.embedder).toBeUndefined()
+  })
+
+  it('builds OM-on/recall-off without a vector lane (search route answers 503)', () => {
+    // The two switches stay independent (spec §7). This combination is the
+    // degraded one research doc §4 names: observationalMemory is configured
+    // but no vector store exists, so searchMessages would throw — the GET
+    // /api/agent/search route guards it with 503 search-unavailable
+    // (tests/api/threads.test.ts pins the route half).
+    const env = parseEnv({ CRUM_OM_ENABLED: 'true', CRUM_RECALL_ENABLED: 'false' })
+    const memory = buildCrumMemory(buildMastraStorage(env), env)
+    expect(memory.getMergedThreadConfig().observationalMemory).toBeTruthy()
+    expect(memory.vector).toBeUndefined()
   })
 
   it('adds resource-scoped semantic recall when deps are present', () => {

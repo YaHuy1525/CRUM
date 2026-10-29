@@ -29,6 +29,10 @@ type MemoryStub = {
   updateThread: ReturnType<typeof vi.fn>
   deleteThread: ReturnType<typeof vi.fn>
   searchMessages: ReturnType<typeof vi.fn>
+  // Mirrors the real Memory: the vector lane is a constructor-injected field,
+  // present only when recall deps exist. The stub fixture carries it so the
+  // search tests exercise the happy path; the 503 guard case deletes it.
+  vector: object
 }
 
 function makeMemory(): MemoryStub {
@@ -38,6 +42,7 @@ function makeMemory(): MemoryStub {
     updateThread: vi.fn(),
     deleteThread: vi.fn(),
     searchMessages: vi.fn(),
+    vector: {},
   }
 }
 
@@ -340,5 +345,18 @@ describe('GET /api/agent/search', () => {
   it('answers 401 without identity', async () => {
     const res = await router(mem()).request('/api/agent/search?query=acme')
     expect(res.status).toBe(401)
+  })
+
+  it('answers 503 search-unavailable when the vector lane is off', async () => {
+    // CRUM_OM_ENABLED=true with CRUM_RECALL_ENABLED=false builds a Memory
+    // without vector; the framework's searchMessages would throw (a 500) and
+    // the route must answer the documented 503 instead.
+    const noVector = { ...memory, vector: undefined }
+    const res = await router(noVector).request('/api/agent/search?query=acme', {
+      headers: AUTH,
+    })
+    expect(res.status).toBe(503)
+    expect((await json<{ error: string }>(res)).error).toBe('search-unavailable')
+    expect(memory.searchMessages).not.toHaveBeenCalled()
   })
 })

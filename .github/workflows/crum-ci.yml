@@ -33,6 +33,16 @@ env:
   # OpenRouter URL. The durable fix is to stop building the embedder at import.
   EMBEDDING_BASE_URL: http://127.0.0.1:9/v1
   EMBEDDING_API_KEY: ci-placeholder-not-a-real-key
+  # Pin the memory-upgrade kill-switches OFF so the vector lane never activates
+  # in CI regardless of the DATABASE_URL exports below: the recall deps factory
+  # short-circuits on the flag (src/mastra/recall.ts). The cross-tenant leak
+  # guard (tests/integration/semantic-recall.test.ts) additionally requires
+  # CRUM_SEMANTIC_RECALL_LIVE=true and skips offline; it ran LIVE and passed
+  # against real Supabase + OpenRouter embeddings on 2026-10-30 (SDD ledger).
+  # This workflow deliberately holds no API secrets, so the live tier stays a
+  # credentialed-runner/manual step, not a PR gate.
+  CRUM_OM_ENABLED: 'false'
+  CRUM_RECALL_ENABLED: 'false'
 
 jobs:
   verify:

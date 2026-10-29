@@ -88,8 +88,9 @@ export function createCrumMastra(env: CrumEnv, options: CrumMastraOptions = {}):
   assertMcpRequestStateKey(env)
 
   const storage = options.storage ?? buildMastraStorage(env)
-  // buildRecallDeps is lazy and returns undefined for in-memory CI (no
-  // DATABASE_URL), so nothing external is constructed at boot there.
+  // buildRecallDeps is lazy, returns undefined for in-memory CI (no
+  // DATABASE_URL), and memoizes per credential set — so even REST lanes that
+  // rebuild the runtime per request share a single recall pool.
   const memory = buildCrumMemory(storage, env, buildRecallDeps(env))
 
   const crmController = new AgentController({
