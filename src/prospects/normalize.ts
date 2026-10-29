@@ -17,6 +17,10 @@ export interface Audience {
 
 const CURRENCY_EXPONENT: Record<Currency, number> = { AUD: 2, VND: 0 }
 
+// Smallest plausible price in each currency's major unit. Anything below this is
+// a session count, a ratio ("1:1") or a course index, not money.
+const PRICE_FLOOR: Record<Currency, number> = { AUD: 10, VND: 1000 }
+
 export function normalizeName(input: string): string {
   return input
     .normalize('NFD')
@@ -39,7 +43,7 @@ export function normalizeHandle(input: string): string {
     }
   }
   const segments = path.split('/').filter(Boolean)
-  const last = segments.length > 0 ? segments[segments.length - 1] : path
+  const last = segments.at(-1) ?? path
   return last.replace(/^@/, '').toLowerCase()
 }
 
@@ -57,14 +61,14 @@ export function parsePriceRange(raw: string, country: 'AU' | 'VN'): PriceRange {
 
   const cleaned = text.replace(/A\$|\$|₫|VND|VNĐ|đồng/gi, ' ')
   const rawNumbers = cleaned.match(/\d[\d.,]*/g) ?? []
+  const floor = PRICE_FLOOR[currency]
 
   const values: number[] = []
   for (const token of rawNumbers) {
     const parsed = currency === 'VND'
       ? Number(token.replace(/[.,]/g, ''))
       : Number(token.replace(/,/g, ''))
-    if (!Number.isFinite(parsed) || parsed <= 0) continue
-    if (parsed < 1 && currency === 'AUD') continue
+    if (!Number.isFinite(parsed) || parsed < floor) continue
     values.push(Math.round(parsed * 10 ** CURRENCY_EXPONENT[currency]))
   }
 
@@ -74,12 +78,25 @@ export function parsePriceRange(raw: string, country: 'AU' | 'VN'): PriceRange {
 
 const DISQUALIFYING = /sold|per cohort|trainees|per year|minimum|sessions|rating|years experience|per course|products/i
 
+// How much text around the winning number is read when naming its source. A
+// whole `;`-segment is too coarse: "24.5K FB followers and 500 students" is one
+// segment but only the 24.5K figure belongs to followers.
+const BASIS_CONTEXT = 20
+
 function toCount(token: string, suffix?: string): number | null {
   const base = Number(token.replace(/,/g, ''))
   if (!Number.isFinite(base)) return null
   if (!suffix) return base
   const multiplier = { k: 1e3, m: 1e6, b: 1e9 }[suffix.toLowerCase() as 'k' | 'm' | 'b']
   return Math.round(base * multiplier)
+}
+
+function basisOf(context: string): AudienceBasis {
+  const lowered = context.toLowerCase()
+  if (lowered.includes('connection') || lowered.includes('linkedin')) return 'linkedin_connections'
+  if (lowered.includes('student') || lowered.includes('learner')) return 'students'
+  if (lowered.includes('client') || lowered.includes('coached')) return 'clients'
+  return 'followers'
 }
 
 export function parseAudience(raw: string): Audience {
@@ -91,19 +108,17 @@ export function parseAudience(raw: string): Audience {
   let best: { count: number; basis: AudienceBasis } | null = null
   for (const segment of text.split(';')) {
     if (DISQUALIFYING.test(segment)) continue
-    const matches = [...segment.matchAll(/(\d[\d,.]*)\s*([KkMmBb])?/g)]
-    const counts = matches
-      .map((m) => toCount(m[1], m[2]))
-      .filter((n): n is number => n !== null && n >= 100)
-    if (counts.length === 0) continue
-    const count = Math.max(...counts)
-    const lowered = segment.toLowerCase()
-    let basis: AudienceBasis = 'unknown'
-    if (lowered.includes('connection') || lowered.includes('linkedin')) basis = 'linkedin_connections'
-    else if (lowered.includes('student') || lowered.includes('learner')) basis = 'students'
-    else if (lowered.includes('client') || lowered.includes('coached')) basis = 'clients'
-    else basis = 'followers'
-    if (best === null || count > best.count) best = { count, basis }
+    for (const match of segment.matchAll(/(\d[\d,.]*)\s*([KkMmBb])?/g)) {
+      const token = match[1]
+      if (token === undefined) continue
+      const count = toCount(token, match[2])
+      if (count === null || count < 100) continue
+      if (best !== null && count <= best.count) continue
+      const at = match.index
+      const start = Math.max(0, at - BASIS_CONTEXT)
+      const context = segment.slice(start, at + match[0].length + BASIS_CONTEXT)
+      best = { count, basis: basisOf(context) }
+    }
   }
 
   if (best === null) return { count: null, basis: 'unknown', confidence: 'unverified' }

@@ -28,4 +28,12 @@ describe('classifyMatch', () => {
     expect(classifyMatch({ name: 'Rask', country: 'AU' }, { name: 'Rask Media Group', country: 'AU' }).kind).toBe('candidate')
     expect(classifyMatch({ name: 'Coach', country: 'AU' }, { name: 'Coach Kate', country: 'AU' }).kind).toBe('distinct')
   })
+
+  it('keeps people who only share a first name apart', () => {
+    expect(classifyMatch({ name: 'Kate Toon', country: 'AU' }, { name: 'Kate Smith', country: 'AU' }).kind).toBe('distinct')
+  })
+
+  it('keeps names that only share the family name tokens apart', () => {
+    expect(classifyMatch({ name: 'Nguyen Van A', country: 'VN' }, { name: 'Nguyen Van B', country: 'VN' }).kind).toBe('distinct')
+  })
 })

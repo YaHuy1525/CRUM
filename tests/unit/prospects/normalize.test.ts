@@ -41,6 +41,22 @@ describe('parsePriceRange', () => {
   it('detects a VND price inside an AU row', () => {
     expect(parsePriceRange('5.000.000 VND', 'AU').currency).toBe('VND')
   })
+
+  it('ignores numbers below the AUD floor instead of reading them as prices', () => {
+    const ratio = parsePriceRange('1:1 program $2,100', 'AU')
+    expect(ratio.minMinor).toBe(210000)
+    expect(ratio.maxMinor).toBe(210000)
+
+    const sessions = parsePriceRange('3 sessions for $900', 'AU')
+    expect(sessions.minMinor).toBe(90000)
+    expect(sessions.maxMinor).toBe(90000)
+  })
+
+  it('returns nulls when every number is below the VND floor', () => {
+    const p = parsePriceRange('course 500 and 900', 'VN')
+    expect(p.minMinor).toBeNull()
+    expect(p.maxMinor).toBeNull()
+  })
 })
 
 describe('parseAudience', () => {
@@ -55,6 +71,13 @@ describe('parseAudience', () => {
 
   it('takes the largest number across channels', () => {
     expect(parseAudience('1.9K IG; 24.5K FB; 2,000+ puppy parents').count).toBe(24500)
+  })
+
+  it('derives the basis from the text next to the number it selected', () => {
+    expect(parseAudience('24.5K FB followers and 500 students')).toMatchObject({
+      count: 24500,
+      basis: 'followers',
+    })
   })
 
   it('refuses to invent a number', () => {

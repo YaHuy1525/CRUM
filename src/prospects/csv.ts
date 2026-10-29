@@ -103,9 +103,26 @@ function toPlatform(raw: string): string {
   return hit ?? 'website'
 }
 
+// Country decides the price exponent, so an unreadable value must never fall
+// back to AU: "VN" or "Việt" defaulting to AUD multiplies a VND price by 100.
+// Keys are run through normalizeName, which folds "Việt" to "viet" for us.
+const COUNTRY_ALIASES: Record<string, 'AU' | 'VN'> = {
+  au: 'AU',
+  aus: 'AU',
+  australia: 'AU',
+  vn: 'VN',
+  viet: 'VN',
+  vietnam: 'VN',
+}
+
+function toCountry(raw: string): 'AU' | 'VN' | null {
+  return COUNTRY_ALIASES[normalizeName(raw)] ?? null
+}
+
 export function parseProspectRows(rows: string[][]): ParsedRow[] {
   if (rows.length < 2) return []
   const header = rows[0]
+  if (!header) return []
   const col = {
     name: indexOfHeader(header, HEADER_ALIASES.name),
     country: indexOfHeader(header, HEADER_ALIASES.country),
@@ -129,8 +146,9 @@ export function parseProspectRows(rows: string[][]): ParsedRow[] {
     const profileUrl = cell(col.profileUrl)
     if (!name || !profileUrl.startsWith('http')) continue
 
-    const countryRaw = cell(col.country).toLowerCase()
-    const country: 'AU' | 'VN' = countryRaw.includes('viet') ? 'VN' : 'AU'
+    const countryRaw = cell(col.country)
+    const country = toCountry(countryRaw)
+    if (!country) continue
     const platform = toPlatform(cell(col.platform) || profileUrl)
     const handle = normalizeHandle(profileUrl)
 

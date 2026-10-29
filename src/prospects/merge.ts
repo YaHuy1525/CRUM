@@ -4,27 +4,32 @@ export type MatchVerdict =
   | { kind: 'candidate'; reason: 'exact' | 'substring'; similarity: number }
   | { kind: 'distinct'; reason: 'none'; similarity: number }
 
-const MIN_TOKEN_LENGTH = 4
+// Category words. Sharing one of these says nothing about identity, so they are
+// dropped before the subset test.
 const GENERIC_TOKENS = new Set([
   'coach',
   'coaching',
-  'consultant',
+  'the',
+  'academy',
   'consulting',
-  'agency',
-  'media',
+  'studio',
+  'fitness',
+  'online',
+  'australia',
+  'vietnam',
   'group',
   'services',
-  'service',
-  'academy',
-  'school',
-  'studio',
-  'official',
-  'the',
-  'and',
+  'training',
 ])
 
+// The parenthetical is usually the owner's name, and the token stream is what
+// identifies the business. Dropping it also keeps "Tradie Coach (Paul Rogers)"
+// and "Tech and Tradie Coach (Joel Hayward)" comparable on "Tradie Coach".
 function tokensOf(name: string): string[] {
-  return normalizeName(name).split(' ').filter(Boolean)
+  return normalizeName(name.replace(/\([^)]*\)/g, ' '))
+    .split(' ')
+    .filter(Boolean)
+    .filter((token) => !GENERIC_TOKENS.has(token))
 }
 
 function jaccard(left: string[], right: string[]): number {
@@ -36,26 +41,9 @@ function jaccard(left: string[], right: string[]): number {
   return shared / (a.size + b.size - shared)
 }
 
-function longestSharedRun(left: string[], right: string[]): number {
-  let best = 0
-  for (let i = 0; i < left.length; i += 1) {
-    for (let j = 0; j < right.length; j += 1) {
-      let run = 0
-      while (i + run < left.length && j + run < right.length && left[i + run] === right[j + run]) {
-        run += 1
-      }
-      if (run > best) best = run
-    }
-  }
-  return best
-}
-
-function sharesDistinctiveToken(left: string[], right: string[]): boolean {
-  for (const token of new Set(left)) {
-    if (token.length < MIN_TOKEN_LENGTH || GENERIC_TOKENS.has(token)) continue
-    if (right.includes(token)) return true
-  }
-  return false
+function isSubsetOf(shorter: string[], longer: string[]): boolean {
+  const longerSet = new Set(longer)
+  return shorter.every((token) => longerSet.has(token))
 }
 
 export function classifyMatch(
@@ -71,7 +59,20 @@ export function classifyMatch(
   const similarity = jaccard(leftTokens, rightTokens)
 
   if (left === right) return { kind: 'candidate', reason: 'exact', similarity: 1 }
-  if (longestSharedRun(leftTokens, rightTokens) >= 2 || sharesDistinctiveToken(leftTokens, rightTokens)) {
+
+  // A candidate needs every remaining token of the shorter name inside the
+  // longer one. Sharing a first name or a city is not enough: "Kate Toon" and
+  // "Kate Smith" stay distinct, as do "Nguyen Van A" and "Nguyen Van B".
+  const leftCore = tokensOf(a.name)
+  const rightCore = tokensOf(b.name)
+  if (leftCore.length === 0 || rightCore.length === 0) {
+    return { kind: 'distinct', reason: 'none', similarity }
+  }
+
+  const [shorter, longer] = leftCore.length <= rightCore.length
+    ? [leftCore, rightCore]
+    : [rightCore, leftCore]
+  if (isSubsetOf(shorter, longer)) {
     return { kind: 'candidate', reason: 'substring', similarity }
   }
   return { kind: 'distinct', reason: 'none', similarity }
