@@ -63,6 +63,17 @@ describe('parseEnv', () => {
     expect(parseEnv({ CRUM_OM_ENABLED: '0' }).CRUM_OM_ENABLED).toBe(false)
   })
 
+  it('promotes the memory embedder override and recall kill-switch', () => {
+    expect(parseEnv({}).CRUM_RECALL_ENABLED).toBe(true)
+    expect(parseEnv({ CRUM_RECALL_ENABLED: 'false' }).CRUM_RECALL_ENABLED).toBe(false)
+    expect(parseEnv({ MASTRA_MEMORY_EMBEDDER: 'openai/text-embedding-3-large' })
+      .MASTRA_MEMORY_EMBEDDER).toBe('openai/text-embedding-3-large')
+    expect(parseEnv({ MASTRA_MEMORY_EMBEDDER: '' }).MASTRA_MEMORY_EMBEDDER).toBeUndefined()
+    // Promotion means both halves: parsed now, and no longer parked as deferred.
+    expect(parseEnv({}).MASTRA_MEMORY_EMBEDDER).toBeUndefined()
+    expect(DEFERRED_ENV_VARS).not.toHaveProperty('MASTRA_MEMORY_EMBEDDER')
+  })
+
   it('rejects a pool max that would exceed the Supabase budget', () => {
     // 2 pools x max must stay under Supabase's session-pooler cap of 15.
     expect(() => parseEnv({ MASTRA_PG_POOL_MAX: '9' })).toThrowError(EnvParseError)

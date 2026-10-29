@@ -72,6 +72,14 @@ export const EnvSchema = z.object({
   EMBEDDING_BASE_URL: optionalString,
   EMBEDDING_API_KEY: optionalString,
 
+  // Model-id override for the semantic-recall embedder, wired by the recall
+  // factory (see src/mastra/recall.ts); unset falls back to EMBEDDING_MODEL_ID.
+  MASTRA_MEMORY_EMBEDDER: optionalString,
+  // Level 3 semantic recall kill-switch (spec §5). Off keeps message-history
+  // recall and drops the vector lane altogether, which also silences
+  // observational indexing and makes thread search throw (research doc §4).
+  CRUM_RECALL_ENABLED: booleanish.prefault('true'),
+
   TYPESAFE_AI_API_KEY: optionalString,
   TYPESAFE_AI_BASE_URL: optionalString,
 
@@ -100,7 +108,6 @@ export const DEFERRED_ENV_VARS: Readonly<Record<string, number>> = {
   MASTRA_BASE_URL: 1,
   MASTRA_REQUEST_TIMEOUT_SECONDS: 1,
   MASTRA_API_PREFIX: 1,
-  MASTRA_MEMORY_EMBEDDER: 1,
   NEXT_PUBLIC_SUPABASE_URL: 1,
   NEXT_PUBLIC_SUPABASE_ANON_KEY: 1,
   RETRIEVAL_TOP_K: 4,
