@@ -13,10 +13,14 @@ export function buildCrumMemory(
   return new Memory({
     storage,
     // Level 3 recall needs BOTH constructor keys; omit entirely when the
-    // kill-switch is off or deps are absent, leaving message-history recall
-    // unchanged. Coupling: without vector/embedder, OM observation indexing
-    // goes silent and memory.searchMessages throws (research doc §4).
-    ...(recall ? { vector: recall.vector, embedder: recall.embedder } : {}),
+    // kill-switch is off OR deps are absent, leaving message-history recall
+    // byte-identical to the base. Gating on the flag here (not just deps) makes
+    // the coupling self-enforcing rather than relying on buildRecallDeps to
+    // return undefined. Coupling: without vector/embedder, OM observation
+    // indexing goes silent and memory.searchMessages throws (research doc §4).
+    ...(env.CRUM_RECALL_ENABLED && recall
+      ? { vector: recall.vector, embedder: recall.embedder }
+      : {}),
     options: {
       messageHistory: {
         maxTokens: 24_000,

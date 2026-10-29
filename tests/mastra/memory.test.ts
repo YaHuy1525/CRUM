@@ -73,6 +73,10 @@ describe('buildCrumMemory', () => {
     const env = parseEnv({ CRUM_OM_ENABLED: 'false', CRUM_RECALL_ENABLED: 'false' })
     const memory = buildCrumMemory(buildMastraStorage(env), env, stubRecall)
     expect(memory.getMergedThreadConfig().semanticRecall).toBeFalsy()
+    // Byte-identity is a constructor-level claim, not just options: the flag-off
+    // branch must omit vector+embedder entirely, so no unused store is attached.
+    expect(memory.vector).toBeUndefined()
+    expect(memory.embedder).toBeUndefined()
   })
 
   it('adds resource-scoped semantic recall when deps are present', () => {
