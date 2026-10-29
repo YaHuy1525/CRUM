@@ -105,18 +105,20 @@ function toPlatform(raw: string): string {
 
 // Country decides the price exponent, so an unreadable value must never fall
 // back to AU: "VN" or "Việt" defaulting to AUD multiplies a VND price by 100.
-// Keys are run through normalizeName, which folds "Việt" to "viet" for us.
-const COUNTRY_ALIASES: Record<string, 'AU' | 'VN'> = {
-  au: 'AU',
-  aus: 'AU',
-  australia: 'AU',
-  vn: 'VN',
-  viet: 'VN',
-  vietnam: 'VN',
-}
+// Real prospect cells carry qualifiers ("Australia (also Dubai)", "Việt Nam
+// (online)"), so a country word anywhere in the cell counts. normalizeName
+// folds "Việt" to "viet" and punctuation to spaces, which gives both the
+// containment check and the standalone tokens. Short codes must match a whole
+// token, otherwise "Saudi" would read as AU.
+const AU_TOKENS = new Set(['au', 'aus'])
 
 function toCountry(raw: string): 'AU' | 'VN' | null {
-  return COUNTRY_ALIASES[normalizeName(raw)] ?? null
+  const folded = normalizeName(raw)
+  if (folded === '') return null
+  const tokens = folded.split(' ')
+  if (folded.includes('viet') || tokens.includes('vn')) return 'VN'
+  if (folded.includes('austral') || tokens.some((token) => AU_TOKENS.has(token))) return 'AU'
+  return null
 }
 
 export function parseProspectRows(rows: string[][]): ParsedRow[] {

@@ -69,6 +69,25 @@ describe('parseProspectRows', () => {
     expect(viet.price.minMinor).toBe(2900000)
   })
 
+  it('imports "Australia (also Dubai)" as AU', () => {
+    const row = parseFirstRow(`${header}\nJo,Australia (also Dubai),Coach,Instagram,https://www.instagram.com/jo-dubai,d,s,"$2,100",1K,loc,c,n`)
+    expect(row.name).toBe('Jo')
+    expect(row.country).toBe('AU')
+    expect(row.price.currency).toBe('AUD')
+  })
+
+  it('imports "Việt Nam (online)" as VN', () => {
+    const row = parseFirstRow(`${header}\nTrang,Việt Nam (online),Teacher,TikTok,https://www.tiktok.com/@trang-online,d,s,"2,900,000",1K,loc,c,n`)
+    expect(row.name).toBe('Trang')
+    expect(row.country).toBe('VN')
+    expect(row.price.currency).toBe('VND')
+  })
+
+  it('rejects a row whose country cell is the empty string', () => {
+    const rows = parseCsv(`${header}\nNo Country,"",Coach,Instagram,https://www.instagram.com/no-country-empty,d,s,"$2,100",1K,loc,c,n`)
+    expect(parseProspectRows(rows)).toHaveLength(0)
+  })
+
   it('rejects a row whose country is unrecognised', () => {
     const rows = parseCsv(`${header}\nElsewhere,NZ,Coach,Instagram,https://www.instagram.com/elsewhere,Description,Sells,"$2,100",1K Instagram,Auckland,contact,note`)
     expect(parseProspectRows(rows)).toHaveLength(0)
