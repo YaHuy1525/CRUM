@@ -18,14 +18,16 @@ const TOKEN_PATTERN = /[a-z0-9]+(?:-[a-z0-9]+)*/g
 // a single word is a whole-token hit, a multi-word marker is a substring hit on
 // the lowercased JSON. Copying only the token half is how 'bank account' slips
 // through a sweep that reads as exhaustive.
-const TERMS: readonly string[] = [
-  ...risk.preflight.irreversible_terms,
-  ...risk.preflight.high_blast_terms,
-  ...Object.values(risk.preflight.domains).flatMap(
-    (domain) => domain.require_approval_terms ?? [],
-  ),
-  ...risk.sensitive.markers,
-]
+const TERMS: readonly string[] = Array.from(
+  new Set([
+    ...risk.preflight.irreversible_terms,
+    ...risk.preflight.high_blast_terms,
+    ...Object.values(risk.preflight.domains).flatMap(
+      (domain) => domain.require_approval_terms ?? [],
+    ),
+    ...risk.sensitive.markers,
+  ]),
+)
 
 function forbiddenTermsIn(value: unknown): string[] {
   const haystack = JSON.stringify(value).toLowerCase()
@@ -84,6 +86,76 @@ describe('the marketing payload rule', () => {
   it('sweeps a non-empty term list, so an emptied yaml cannot make the rule vacuous', () => {
     expect(TERMS.length).toBeGreaterThan(0)
     expect(TERMS.filter((term) => term.includes(' ')).length).toBeGreaterThan(0)
+  })
+
+  it('catches a forbidden term in a prose value, so the sweep cannot pass by being deaf', () => {
+    // Multi-word half. 'bank account' tokenises to `bank` and `account`, neither
+    // of which is in any term list, so a matcher that only did whole-token hits
+    // would report this payload as clean while scoreRisk refused it. This input
+    // is type-legal: StagePayload.objective is `string`, not the
+    // MARKETING_OBJECTIVES union (src/marketing/payload.ts:28). The tools close
+    // that door with a zod enum upstream; this case proves that if it ever
+    // opened, the sweep above would see it rather than shrugging.
+    expect(forbiddenTermsIn({ objective: 'bank account reconciliation' })).toEqual([
+      'bank account',
+    ])
+
+    // Single-word half, the same rule's other branch.
+    expect(forbiddenTermsIn({ note: 'send' })).toEqual(['send'])
+
+    // And the shape the real payloads have: five payloads, no hits, no accident.
+    expect(forbiddenTermsIn(stagePayload({
+      bundleId: BUNDLE,
+      draftHash: HASH,
+      objective: 'outreach_support',
+      artifactCount: 1,
+      requestedCeilingMinor: 100,
+      actionCount: 1,
+    }))).toEqual([])
+  })
+
+  it('gives the scorer a fixed key set and no field that can hold a sentence', () => {
+    const view = saveRiskView({
+      objective: 'outreach_support',
+      artifactCount: 3,
+      bundleDraftHash: HASH,
+    })
+    // A fourth key carrying prose shows up here as a diff, which is the earliest
+    // moment anyone can catch it. Spec §7 is about the shape, not about whether
+    // today's three fields happen to be clean.
+    expect(Object.keys(view).sort()).toEqual([
+      'artifactCount',
+      'bundleDraftHash',
+      'objective',
+    ])
+
+    const payload = stagePayload({
+      bundleId: BUNDLE,
+      draftHash: HASH,
+      objective: 'proof_asset',
+      artifactCount: 0,
+      requestedCeilingMinor: 0,
+      actionCount: 0,
+    })
+    expect(Object.keys(payload).sort()).toEqual([
+      'actionCount',
+      'artifactCount',
+      'bundleId',
+      'draftHash',
+      'objective',
+      'requestedCeilingMinor',
+    ])
+
+    // Every scored string is an identifier, a hash or a slug, so none of them can
+    // contain a space — which is exactly what makes the multi-word branch of the
+    // sweep unreachable on real payloads, stated as a fact rather than implied by
+    // a passing loop. `Object.values` of the StagePayload interface (no index
+    // signature) resolves to the `values(o: {}): any[]` overload, so the spread is
+    // widened to `unknown[]` to keep the array element type safe; the assertion is
+    // unchanged.
+    for (const value of [...Object.values(view), ...(Object.values(payload) as unknown[])]) {
+      if (typeof value === 'string') expect(value).not.toContain(' ')
+    }
   })
 
   it('proves the trap is real, so this file cannot be satisfied by an empty payload', () => {
