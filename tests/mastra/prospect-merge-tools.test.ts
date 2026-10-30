@@ -83,23 +83,34 @@ beforeEach(() => {
 })
 
 describe('crm.resolve_merge_candidate', () => {
-  it('dismisses the candidate without staging a pending write', async () => {
+  it('stages a dismissal instead of applying it', async () => {
     stubQueries({
       'FROM prospect_merge_candidates m': [candidateRow()],
-      'UPDATE prospect_merge_candidates': [{ id: CANDIDATE }],
+      'INSERT INTO pending_writes': [{ id: PENDING }],
     })
 
     const result = await runResolve(resolution())
 
-    expect(result.status).toBe('dismissed')
-    expect(result.pendingWriteId).toBeNull()
-    const update = queryCall('UPDATE prospect_merge_candidates')
-    expect(update?.sql).toContain("SET status = 'dismissed'")
-    expect(update?.params).toEqual([CANDIDATE, rc.tenantId])
-    expect(queryCall('INSERT INTO pending_writes')).toBeUndefined()
+    expect(result.status).toBe('pending')
+    expect(result.pendingWriteId).toBe(PENDING)
+    expect(result.duplicateId).toBe(DUPLICATE)
+    // Nothing may touch the candidate row: the approval commit is the only
+    // thing that dismisses it.
+    expect(queryCall('UPDATE prospect_merge_candidates')).toBeUndefined()
+    const insert = queryCall('INSERT INTO pending_writes')
+    expect(insert?.params[3]).toBe('prospect_merge')
+    expect(insert?.params[4]).toBe('update')
+    expect(insert?.params[5]).toBe(CANDIDATE)
+    expect(insert?.params[9]).toBe(`merge:${CANDIDATE}:${SURVIVOR}:dismiss`)
+    expect(JSON.parse(insert?.params[6] as string)).toEqual({
+      candidateId: CANDIDATE,
+      survivorId: SURVIVOR,
+      duplicateId: DUPLICATE,
+      decision: 'dismiss',
+    })
   })
 
-  it('stages a merge as a prospect_merge update keyed on the correlation id', async () => {
+  it('stages a merge as a prospect_merge update keyed on the decision triple', async () => {
     stubQueries({
       'FROM prospect_merge_candidates m': [candidateRow()],
       'INSERT INTO pending_writes': [{ id: PENDING }],
@@ -114,7 +125,9 @@ describe('crm.resolve_merge_candidate', () => {
     expect(insert?.params[3]).toBe('prospect_merge')
     expect(insert?.params[4]).toBe('update')
     expect(insert?.params[5]).toBe(CANDIDATE)
-    expect(insert?.params[9]).toBe('merge:corr-1')
+    // The same key the REST staging route writes, so both surfaces queue one
+    // decision and one approval handler serves both.
+    expect(insert?.params[9]).toBe(`merge:${CANDIDATE}:${SURVIVOR}:merge`)
     // The same four keys the REST staging route writes, so one approval
     // handler serves both paths.
     expect(JSON.parse(insert?.params[6] as string)).toEqual({
@@ -135,6 +148,7 @@ describe('crm.resolve_merge_candidate', () => {
 
     expect(result.duplicateId).toBe(SURVIVOR)
     const insert = queryCall('INSERT INTO pending_writes')
+    expect(insert?.params[9]).toBe(`merge:${CANDIDATE}:${DUPLICATE}:merge`)
     expect(JSON.parse(insert?.params[6] as string)).toEqual({
       candidateId: CANDIDATE,
       survivorId: DUPLICATE,
@@ -160,6 +174,7 @@ describe('crm.resolve_merge_candidate', () => {
       'survivor_not_in_candidate',
     )
     expect(queryCall('INSERT INTO pending_writes')).toBeUndefined()
+    expect(queryCall('UPDATE prospect_merge_candidates')).toBeUndefined()
   })
 
   it('replays a committed merge instead of staging it twice', async () => {

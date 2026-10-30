@@ -5,16 +5,17 @@ import { loadPolicy } from '../../governance/policy'
 import { scoreRisk } from '../../governance/risk'
 import { getOrCreateDraft, createHumanTask } from '../../db/pending-writes'
 import { getDbClient } from '../../db/client'
-import { dismissMergeCandidate, duplicateProspectId, listMergeCandidates } from '../../db/prospect-merge'
+import { duplicateProspectId, listMergeCandidates } from '../../db/prospect-merge'
 
 // ── Duplicate resolution ─────────────────────────────────────────────────────
 //
 // The import CLI stages prospect_merge_candidates; these two tools are what
-// closes them. Reading is open to every role. Resolving is approval class: a
-// merge deletes one prospect and folds its children into the other, so it is
-// staged as a pending write (object type prospect_merge) and only the approval
-// commit performs it. A dismissal touches nothing but the candidate row, so it
-// is applied directly — no business record changes.
+// closes them. Reading is open to every role. Resolving is approval class, so
+// every decision — merge or dismiss — is staged as a pending write (object type
+// prospect_merge) and only the approval commit performs it. Staging a dismissal
+// matters even though it touches only the candidate row: the same decision made
+// through the console route is staged, and one action must not carry two
+// different safety levels depending on how it was invoked.
 
 const MergeCandidateSideSchema = z.object({
   id: z.string().uuid(),
@@ -49,9 +50,10 @@ export const listMergeCandidatesTool = createTool({
 
 const ResolutionOutputSchema = z.object({
   candidateId: z.string().uuid(),
-  // Null for a dismissal and for a replay: neither stages a write, so a caller
-  // must not take a missing draft id for a failure.
-  pendingWriteId: z.string().uuid().nullable(),
+  // Every decision stages a write, so a resolved candidate always carries the
+  // draft (or refusal task) id — a decision that applies nothing is not a
+  // successful resolution.
+  pendingWriteId: z.string().uuid(),
   survivorId: z.string().uuid(),
   duplicateId: z.string().uuid().nullable(),
   status: z.enum(['pending', 'merged', 'dismissed']),
@@ -69,11 +71,24 @@ interface CandidateRow {
   right_name: string
 }
 
+/**
+ * The REST route's key, verbatim. One candidate/survivor/decision triple is
+ * one staged decision, so a tool call and a console click cannot queue the
+ * same resolution twice under different keys.
+ */
+function idempotencyKeyFor(input: {
+  candidateId: string
+  survivorId: string
+  decision: 'merge' | 'dismiss'
+}): string {
+  return `merge:${input.candidateId}:${input.survivorId}:${input.decision}`
+}
+
 export const resolveMergeCandidateTool = createTool({
   id: 'crm.resolve_merge_candidate',
   title: 'Resolve Merge Candidate',
   description:
-    'Dismiss a duplicate pair, or stage a merge of the duplicate into the survivor. A merge needs human approval before it commits.',
+    'Stage a dismissal of a duplicate pair, or a merge of the duplicate into the survivor. Both decisions need human approval before they commit.',
   requestContextSchema: TenantRequestContextSchema,
   inputSchema: z.object({
     candidateId: z.string().uuid(),
@@ -147,13 +162,14 @@ export const resolveMergeCandidateTool = createTool({
 
       if (!row) {
         // A completed merge deletes the duplicate, which cascades its candidate
-        // rows away. A replay of the same correlationId therefore finds no
-        // candidate; the committed draft is what proves the merge happened.
+        // rows away. A replay of the same candidate/survivor/decision therefore
+        // finds no candidate; the committed draft is what proves the merge
+        // happened. A dismissed candidate keeps its row and is refused above.
         const prior = await db.query<{ id: string; committed_at: string | null }>(
           `SELECT id, committed_at FROM pending_writes
             WHERE tenant_id = $1 AND draft_hash = $2
             ORDER BY created_at DESC LIMIT 1`,
-          [rc.tenantId, `merge:${input.correlationId}`],
+          [rc.tenantId, idempotencyKeyFor(input)],
         )
         const committed = prior.rows[0]
         if (committed?.committed_at) {
@@ -182,31 +198,14 @@ export const resolveMergeCandidateTool = createTool({
       )
       if (!duplicateId) throw new Error('survivor_not_in_candidate')
 
-      if (input.decision === 'dismiss') {
-        // Dismissing changes only the candidate's own status: no prospect,
-        // channel, draft or consent row is touched, so it needs no business
-        // record behind an approval receipt.
-        await dismissMergeCandidate(db, {
-          tenantId: rc.tenantId,
-          candidateId: input.candidateId,
-        })
-        return {
-          candidateId: input.candidateId,
-          pendingWriteId: null,
-          survivorId: input.survivorId,
-          duplicateId,
-          status: 'dismissed' as const,
-          riskScore: assessment.score,
-          gate: approvalGate,
-          message: `Candidate dismissed (${input.candidateId}).`,
-        }
-      }
-
       const survivorName =
         input.survivorId === row.left_prospect_id ? row.left_name : row.right_name
       const duplicateName =
         duplicateId === row.left_prospect_id ? row.left_name : row.right_name
 
+      // Dismissal takes the same path as a merge: the decision is staged and
+      // the approval commit applies it. Applying it here would make the tool's
+      // dismissal bypass the gate the console route honours.
       const draft = await getOrCreateDraft({
         tenantId: rc.tenantId,
         runId: 'pending',
@@ -225,7 +224,9 @@ export const resolveMergeCandidateTool = createTool({
         riskScore: assessment.score,
         gate: approvalGate,
         requestedBy: rc.userId,
-        idempotencyKey: `merge:${input.correlationId}`,
+        // The same key the route uses: one candidate/survivor/decision triple
+        // is one staged decision, no matter which surface asked for it.
+        idempotencyKey: idempotencyKeyFor(input),
       })
 
       return {
@@ -236,7 +237,10 @@ export const resolveMergeCandidateTool = createTool({
         status: 'pending' as const,
         riskScore: assessment.score,
         gate: approvalGate,
-        message: `Merge of ${duplicateName} into ${survivorName} staged for approval (${draft.id}).`,
+        message:
+          input.decision === 'merge'
+            ? `Merge of ${duplicateName} into ${survivorName} staged for approval (${draft.id}).`
+            : `Dismissal of ${duplicateName} against ${survivorName} staged for approval (${draft.id}).`,
       }
     })
   },
