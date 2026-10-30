@@ -26,6 +26,10 @@ export type WeaknessSignal =
   | 'no_online_course'
 
 export interface EnrichmentResult {
+  // False when the fetched markup held too little visible copy to read: a
+  // login wall, a JS-only shell or a redirect stub. Such a page is evidence of
+  // nothing, so its weakness signals are empty rather than complete.
+  usable: boolean
   whatTheySell: string | null
   priceVisible: boolean
   priceMinMinor: number | null
@@ -37,6 +41,13 @@ export interface EnrichmentResult {
   hasFunnel: boolean
   weaknessSignals: WeaknessSignal[]
 }
+
+// Below this many characters of stripped visible text the page is treated as
+// unread: a login wall, a JS-only shell or a redirect stub carries nothing to
+// analyse. Reading that emptiness as absence ("no funnel", "no website", "no
+// email capture") was how every social prospect reached the maximum funnel gap
+// of 1.0, which inflated the whole list and destroyed the ranking.
+export const MIN_USABLE_TEXT_CHARS = 200
 
 // Only evidence of an actual funnel: a campaign page, a named funnel or the
 // platform hosting one. Generic conversion words ("register", "đăng ký",
@@ -268,6 +279,27 @@ export function analysePage(input: EnrichmentInput): EnrichmentResult {
   const markup = stripNoise(input.html)
   const text = visibleText(markup)
 
+  // "Could not observe" is not "observed absent". A login wall yields a page
+  // whose text is short precisely because the content was withheld, so no
+  // absence signal may be inferred from it. Every has* flag falls back to its
+  // conservative false and the signal list stays empty, which keeps the
+  // prospect out of the funnel-gap score instead of maxing it out.
+  if (text.length < MIN_USABLE_TEXT_CHARS) {
+    return {
+      usable: false,
+      whatTheySell: null,
+      priceVisible: false,
+      priceMinMinor: null,
+      priceMaxMinor: null,
+      currency: null,
+      hasWebsite: false,
+      hasLeadMagnet: false,
+      hasEmailCapture: false,
+      hasFunnel: false,
+      weaknessSignals: [],
+    }
+  }
+
   // Presence of a website is a fact about the prospect's channels, never an
   // inference from the page shape or from the platform that happened to be
   // fetched: a Linktree profile cannot turn a real site into "no website".
@@ -291,6 +323,7 @@ export function analysePage(input: EnrichmentInput): EnrichmentResult {
   if (price.minMinor === null) weaknessSignals.push('pricing_hidden')
 
   return {
+    usable: true,
     whatTheySell: whatTheySellOf(markup),
     priceVisible: price.minMinor !== null,
     priceMinMinor: price.minMinor,

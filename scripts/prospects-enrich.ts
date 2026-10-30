@@ -12,6 +12,11 @@ import { getDbClient } from '../src/db/client'
 import { analysePage } from '../src/prospects/enrich'
 
 const EXTRACTOR_VERSION = 'enrich-v1'
+// A page that returned a login wall or a JS-only shell is not evidence, but the
+// attempt still has to be remembered or the next run fetches the same hopeless
+// URL again. The marker version carries no weakness signals, so it satisfies
+// the freshness guard without scoring as an observation.
+const UNUSABLE_EXTRACTOR_VERSION = 'enrich-unusable'
 const STALE_DAYS = 30
 const TIMEOUT_MS = 8000
 const REQUEST_DELAY_MS = 1000
@@ -27,12 +32,17 @@ const LIMIT = Number(process.env.PROSPECT_ENRICH_LIMIT ?? '25')
 // the fetched page, and it is what the analyser reports as hasWebsite.
 // DISTINCT ON requires p.id first in the ORDER BY, and the LIMIT then counts
 // prospects, not joined channel rows.
-// A prospect is stale when none of its enrichment snapshots is recent, so
+// A prospect is stale when none of its enrichment attempts is recent, so
 // re-running the command an hour later refetches nothing.
 // The import CLI writes a baseline snapshot for every prospect with the
 // 'import-v1' extractor. That baseline is not a reading of the page, so it
 // must not count as freshness: without the extractor_version guard the import
 // hides every prospect from enrichment for STALE_DAYS.
+// A reading the analyser marked unusable is recorded as 'enrich-unusable'. It
+// counts as an attempt, not as evidence: skipping the prospect for STALE_DAYS
+// stops the same login wall being fetched every run. The marker also matches
+// the 'enrich-%' prefix; the explicit equality is kept so the retry contract
+// stays visible (and survives any future narrowing of the prefix pattern).
 export const ENRICH_TARGETS_SQL = `SELECT DISTINCT ON (p.id) p.id, p.country, c.platform, c.profile_url,
             EXISTS (
               SELECT 1 FROM prospect_channels w
@@ -44,11 +54,21 @@ export const ENRICH_TARGETS_SQL = `SELECT DISTINCT ON (p.id) p.id, p.country, c.
         AND NOT EXISTS (
           SELECT 1 FROM prospect_snapshots s
            WHERE s.prospect_id = p.id
-             AND s.extractor_version LIKE 'enrich-%'
+             AND (s.extractor_version LIKE 'enrich-%'
+                  OR s.extractor_version = 'enrich-unusable')
              AND s.fetched_at > now() - ($2 || ' days')::interval
         )
       ORDER BY p.id, (c.platform = 'website') DESC, c.audience_count DESC NULLS LAST
       LIMIT $3`
+
+// One insert shape for both an observation and an unusable marker. The marker
+// reuses conservative field values from the analyser (no signals, no price,
+// flags false) and differs only in extractor_version.
+const SNAPSHOT_INSERT_SQL = `INSERT INTO prospect_snapshots
+           (tenant_id, prospect_id, what_they_sell, price_min_minor, price_max_minor, currency,
+            price_visible, has_website, has_lead_magnet, has_email_capture, has_funnel,
+            weakness_signals, source_url, extractor_version)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`
 
 type EnrichmentTarget = {
   id: string
@@ -76,6 +96,7 @@ async function main(): Promise<void> {
   ])
 
   let enriched = 0
+  let unusable = 0
   let failed = 0
   for (const [index, row] of targets.rows.entries()) {
     // Pause between requests, never after the last one, so the run does not
@@ -95,18 +116,17 @@ async function main(): Promise<void> {
         country: row.country,
         hasWebsiteChannel: row.has_website_channel,
       })
-      await db.query(
-        `INSERT INTO prospect_snapshots
-           (tenant_id, prospect_id, what_they_sell, price_min_minor, price_max_minor, currency,
-            price_visible, has_website, has_lead_magnet, has_email_capture, has_funnel,
-            weakness_signals, source_url, extractor_version)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
-        [tenantId, row.id, result.whatTheySell, result.priceMinMinor, result.priceMaxMinor,
-          result.currency, result.priceVisible, result.hasWebsite, result.hasLeadMagnet,
-          result.hasEmailCapture, result.hasFunnel, result.weaknessSignals,
-          row.profile_url, EXTRACTOR_VERSION],
-      )
-      enriched += 1
+      await db.query(SNAPSHOT_INSERT_SQL, [
+        tenantId, row.id, result.whatTheySell, result.priceMinMinor, result.priceMaxMinor,
+        result.currency, result.priceVisible, result.hasWebsite, result.hasLeadMagnet,
+        result.hasEmailCapture, result.hasFunnel, result.weaknessSignals,
+        row.profile_url,
+        result.usable ? EXTRACTOR_VERSION : UNUSABLE_EXTRACTOR_VERSION,
+      ])
+      // An unread page is recorded only as a retry marker, never counted as
+      // evidence: it must not look like a successful reading in the summary.
+      if (result.usable) enriched += 1
+      else unusable += 1
     } catch (error) {
       failed += 1
       // One unreachable page must not abort the run; the next session retries it
@@ -114,7 +134,7 @@ async function main(): Promise<void> {
       console.warn(`skip ${row.id}: ${(error as Error).message}`)
     }
   }
-  console.log(`enriched ${enriched}, failed ${failed}, of ${targets.rows.length}`)
+  console.log(`enriched ${enriched}, unusable ${unusable}, failed ${failed}, of ${targets.rows.length}`)
 }
 
 // Only run when invoked directly. The test suite imports ENRICH_TARGETS_SQL,
