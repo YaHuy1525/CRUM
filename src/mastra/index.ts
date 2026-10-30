@@ -24,6 +24,12 @@ import { parserAgent } from './agents/parser'
 import { documentExtractorAgent } from './agents/document-extractor'
 import { emailDrafterAgent } from './agents/email-drafter'
 import { digestAgent } from './agents/digest'
+import { offerStrategistAgent } from './agents/offer-strategist'
+import { marketerCopywriterAgent } from './agents/marketer-copywriter'
+import { creativeDesignerAgent } from './agents/creative-designer'
+import { mediaBuyerAgent } from './agents/media-buyer'
+import { funnelBuilderAgent } from './agents/funnel-builder'
+import { campaignAnalystAgent } from './agents/campaign-analyst'
 import { createCrumMcpServer } from './mcp-server'
 import { buildScorers } from '../evals/scorers'
 import { buildScheduleHooks } from './schedule-hooks'
@@ -114,6 +120,12 @@ export function createCrumMastra(env: CrumEnv, options: CrumMastraOptions = {}):
       'document-extractor': documentExtractorAgent,
       'email-drafter': emailDrafterAgent,
       'digest': digestAgent,
+      'offer-strategist': offerStrategistAgent,
+      'marketer-copywriter': marketerCopywriterAgent,
+      'creative-designer': creativeDesignerAgent,
+      'media-buyer': mediaBuyerAgent,
+      'funnel-builder': funnelBuilderAgent,
+      'campaign-analyst': campaignAnalystAgent,
     },
     workflows: {
       'knowledge-ingest': ingestWorkflow,

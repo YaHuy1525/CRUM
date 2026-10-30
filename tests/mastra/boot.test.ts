@@ -125,10 +125,22 @@ describe('createCrumMastra', () => {
     expect(Object.keys(mastra.listAgents())).toContain('crm-assistant')
   })
 
-  it('registers Phase 5 agents (parser, document-extractor, email-drafter)', () => {
+  it('registers the assistant, the Phase 5 helpers and the six marketing roles', () => {
     const mastra = createCrumMastra(envWith())
     const agentKeys = Object.keys(mastra.listAgents()).sort()
-    expect(agentKeys).toEqual(['crm-assistant', 'digest', 'document-extractor', 'email-drafter', 'parser'])
+    expect(agentKeys).toEqual([
+      'campaign-analyst',
+      'creative-designer',
+      'crm-assistant',
+      'digest',
+      'document-extractor',
+      'email-drafter',
+      'funnel-builder',
+      'marketer-copywriter',
+      'media-buyer',
+      'offer-strategist',
+      'parser',
+    ])
   })
 
   it('registers Phase 5 classifiers (intent, injection)', () => {

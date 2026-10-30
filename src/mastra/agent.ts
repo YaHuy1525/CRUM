@@ -36,6 +36,12 @@ import { createContactTool, createScheduleTool, transferOwnerTool, sendMailTool 
 import { approvalFlow } from './workflows/approval-flow'
 import { resolveActiveTools, providerToolName } from './active-tools'
 import { CRUM_MAIN_MODEL, CRUM_LIGHT_MODEL } from './models'
+import { offerStrategistSubagent } from './agents/offer-strategist'
+import { marketerCopywriterSubagent } from './agents/marketer-copywriter'
+import { creativeDesignerSubagent } from './agents/creative-designer'
+import { mediaBuyerSubagent } from './agents/media-buyer'
+import { funnelBuilderSubagent } from './agents/funnel-builder'
+import { campaignAnalystSubagent } from './agents/campaign-analyst'
 import type { TenantRequestContext } from './tenant-context'
 
 const crumToolRegistry = {
@@ -154,4 +160,10 @@ export const CRUM_SUBAGENTS: AgentControllerSubagent[] = [
     defaultModelId: CRUM_MAIN_MODEL,
     maxSteps: 1,
   },
+  offerStrategistSubagent,
+  marketerCopywriterSubagent,
+  creativeDesignerSubagent,
+  mediaBuyerSubagent,
+  funnelBuilderSubagent,
+  campaignAnalystSubagent,
 ]
