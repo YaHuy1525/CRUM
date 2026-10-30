@@ -39,6 +39,15 @@ CREATE TABLE IF NOT EXISTS marketing_bundles (
 CREATE INDEX IF NOT EXISTS marketing_bundles_tenant_status_idx
   ON marketing_bundles (tenant_id, status, created_at);
 
+-- The bundle row is UPDATEd on every status change (draft -> staged -> approved
+-- -> live|failed), so updated_at needs the same trigger every other table with
+-- that column has: 0002 defines crum_touch_updated_at(), and 0016 was written
+-- specifically to retrofit the one table that shipped without it.
+DROP TRIGGER IF EXISTS trg_marketing_bundles_touch ON marketing_bundles;
+CREATE TRIGGER trg_marketing_bundles_touch
+  BEFORE UPDATE ON marketing_bundles
+  FOR EACH ROW EXECUTE FUNCTION crum_touch_updated_at();
+
 CREATE TABLE IF NOT EXISTS marketing_artifacts (
   -- Ids are content-addressed in src/marketing/hash.ts, not random, so the same
   -- asset saved twice is one row. The default only covers hand-written inserts.
@@ -58,9 +67,12 @@ CREATE TABLE IF NOT EXISTS marketing_artifacts (
   status       text NOT NULL DEFAULT 'pending_review'
                CHECK (status IN ('pending_review','approved','rejected')),
   created_at   timestamptz NOT NULL DEFAULT now(),
-  -- One line: tests/db/marketing-migration.test.ts asserts this exact shape by
-  -- contiguous text, so a future re-wrap would fail the test on purpose.
-  CONSTRAINT marketing_artifacts_payload_shape CHECK ((kind = 'image' AND document_id IS NOT NULL) OR (kind <> 'image' AND text_content IS NOT NULL))
+  -- An image must carry bytes (document_id); every other kind must carry text.
+  -- The shape is enforced here, not only in the tool, so a row written by a
+  -- future migration or by hand can never be unrenderable.
+  CONSTRAINT marketing_artifacts_payload_shape
+    CHECK ((kind = 'image' AND document_id IS NOT NULL)
+           OR (kind <> 'image' AND text_content IS NOT NULL))
 );
 
 CREATE INDEX IF NOT EXISTS marketing_artifacts_bundle_idx
@@ -90,8 +102,10 @@ CREATE TABLE IF NOT EXISTS marketing_actions (
   executed_at timestamptz
 );
 
--- One line, same reason as the payload-shape CHECK above.
-CREATE INDEX IF NOT EXISTS marketing_actions_queued_idx ON marketing_actions (created_at) WHERE status = 'queued';
+-- The drain query only ever reads queued rows, so the partial index covers just
+-- those; once an action reaches a terminal status it drops out of the index.
+CREATE INDEX IF NOT EXISTS marketing_actions_queued_idx
+  ON marketing_actions (created_at) WHERE status = 'queued';
 
 ALTER TABLE pending_writes DROP CONSTRAINT IF EXISTS pending_writes_object_type_check;
 ALTER TABLE pending_writes ADD CONSTRAINT pending_writes_object_type_check

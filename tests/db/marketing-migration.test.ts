@@ -63,8 +63,11 @@ describe('0018 marketing migration', () => {
   it('makes an image carry bytes and every other kind carry text', () => {
     // Content shape is enforced in the schema, not only in the tool, so a row
     // written by a future migration or a manual psql cannot be unrenderable.
-    expect(tableBlock('marketing_artifacts')).toContain(
-      "(kind = 'image' AND document_id IS NOT NULL) OR (kind <> 'image' AND text_content IS NOT NULL)",
+    // Whitespace-tolerant on purpose: the SQL wraps this constraint across lines
+    // to match the repo's formatting, and `toContain` cannot see past a newline.
+    // Assert the shape, never the layout.
+    expect(tableBlock('marketing_artifacts')).toMatch(
+      /CHECK \(\(kind = 'image' AND document_id IS NOT NULL\)\s+OR \(kind <> 'image' AND text_content IS NOT NULL\)\)/,
     )
   })
 
@@ -72,9 +75,19 @@ describe('0018 marketing migration', () => {
     expect(tableBlock('marketing_actions')).toContain('attempts >= 0 AND attempts <= 3')
   })
 
+  it('touches updated_at when a bundle moves through its states', () => {
+    // 0002 establishes crum_touch_updated_at() for every table that carries
+    // updated_at, and 0016 exists only because prospects shipped with the column
+    // and without the trigger. A bundle is UPDATEd on every status change, so the
+    // same trap is live here unless something asserts the trigger.
+    expect(sql).toMatch(
+      /CREATE TRIGGER trg_marketing_bundles_touch\s+BEFORE UPDATE ON marketing_bundles\s+FOR EACH ROW EXECUTE FUNCTION crum_touch_updated_at\(\);/,
+    )
+  })
+
   it('indexes only the queued rows the drain query reads', () => {
-    expect(sql).toContain(
-      'CREATE INDEX IF NOT EXISTS marketing_actions_queued_idx ON marketing_actions (created_at) WHERE status = \'queued\'',
+    expect(sql).toMatch(
+      /CREATE INDEX IF NOT EXISTS marketing_actions_queued_idx\s+ON marketing_actions \(created_at\) WHERE status = 'queued';/,
     )
   })
 
