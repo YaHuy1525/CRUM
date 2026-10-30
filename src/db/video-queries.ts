@@ -109,9 +109,9 @@ export async function insertVideoChannel(
   status?: ChannelStatus,
 ): Promise<VideoChannel> {
   if (typeof contextOrTenantId !== 'string' && typeof platformOrData !== 'string') {
-    const d = platformOrData as InsertVideoChannelData
+    const d = platformOrData
     return insertVideoChannelBase(
-      (contextOrTenantId as TenantRequestContext).tenantId,
+      (contextOrTenantId).tenantId,
       d.platform, d.platformChannelId,
       d.channelName ?? null, d.channelUrl ?? null,
       d.customerId ?? null, d.contactId ?? null,

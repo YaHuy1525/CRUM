@@ -15,7 +15,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 const db = vi.hoisted(() => ({
   getOAuthTokenById: vi.fn(),
   getLatestOAuthToken: vi.fn(),
-  updateOAuthToken: vi.fn(),
+  // Typed with the real writer signature so the recorded patch read back at
+  // the write-back assertions is `OAuthTokenUpdates`, not `any`.
+  updateOAuthToken: vi.fn<
+    (tenantId: string, id: string, updates: OAuthTokenUpdates) => Promise<OAuthToken | null>
+  >(),
 }))
 vi.mock('../../../src/db/video-queries', () => db)
 
@@ -35,6 +39,7 @@ import {
   unpackEncrypted,
 } from '../../../src/video/oauth-encryption'
 import type { OAuthToken } from '../../../src/db/types'
+import type { OAuthTokenUpdates } from '../../../src/db/video-queries'
 import type { CrumEnv } from '../../../src/config/env'
 import type { DateRange } from '../../../src/video/platform-adapters'
 
@@ -89,8 +94,34 @@ function stubResponse(status: number, body: unknown): Response {
   return {
     ok: status >= 200 && status < 300,
     status,
-    text: async () => JSON.stringify(body),
+    // Non-async on purpose: `Response#text()` returns a Promise, but the fixture
+    // body is already in memory, so there is nothing to await.
+    text: () => JSON.stringify(body),
   } as unknown as Response
+}
+
+/**
+ * The requested URL as text. The adapter always passes a `string` href; URL and
+ * Request are resolved by field instead of `String(input)`, which would turn a
+ * Request into `[object Object]`.
+ */
+function requestUrlOf(input: string | URL | Request): string {
+  if (typeof input === 'string') return input
+  if (input instanceof URL) return input.href
+  return input.url
+}
+
+/**
+ * The adapter sends every body as a string (`URLSearchParams#toString()`), so
+ * the recorded body is narrowed to that instead of stringified via
+ * `String(BodyInit)`.
+ */
+function bodyTextAt(fetchImpl: ReturnType<typeof makeFetch>, index = 0): string {
+  const body = vi.mocked(fetchImpl).mock.calls[index]![1]?.body
+  if (typeof body !== 'string') {
+    throw new Error(`fake fetch: expected a string request body, got ${typeof body}`)
+  }
+  return body
 }
 
 /**
@@ -103,13 +134,16 @@ interface Route {
 }
 
 function makeFetch(routes: Route[]) {
-  const fetchFn = vi.fn(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
-    const url = String(input)
+  // The `_init` parameter stays in the signature because it defines the
+  // recorded-call tuple the helpers below read back; the body is a plain
+  // `Promise.resolve`, so an `async` wrapper would have nothing to await.
+  const fetchFn = vi.fn((input: string | URL | Request, _init?: RequestInit): Promise<Response> => {
+    const url = requestUrlOf(input)
     for (const route of routes) {
       if (route.match(url)) {
         const next = route.responses.shift()
         if (!next) throw new Error(`fake fetch: route exhausted for ${url}`)
-        return stubResponse(next.status, next.body)
+        return Promise.resolve(stubResponse(next.status, next.body))
       }
     }
     throw new Error(`fake fetch: unexpected URL ${url}`)
@@ -123,7 +157,7 @@ const isToken = (url: string) => url.startsWith(TOKEN_URL)
 
 /** All recorded fetch calls whose URL matches the route predicate. */
 function callsMatching(fetchImpl: ReturnType<typeof makeFetch>, match: (url: string) => boolean) {
-  return vi.mocked(fetchImpl).mock.calls.filter((c) => match(String(c[0])))
+  return vi.mocked(fetchImpl).mock.calls.filter((c) => match(requestUrlOf(c[0])))
 }
 
 function queryAt(
@@ -132,7 +166,7 @@ function queryAt(
   index = 0,
 ): URLSearchParams {
   const call = callsMatching(fetchImpl, match)[index]
-  return new URL(String(call![0])).searchParams
+  return new URL(requestUrlOf(call![0])).searchParams
 }
 
 function headersAt(
@@ -398,12 +432,12 @@ describe('TwitchAdapter.refreshOAuthToken', () => {
 
     // Token endpoint is on id.twitch.tv (different host from Helix) and takes
     // its credentials in the url-encoded body, not a Client-Id header.
-    expect(String(vi.mocked(fetchImpl).mock.calls[0]![0])).toBe(TOKEN_URL)
+    expect(requestUrlOf(vi.mocked(fetchImpl).mock.calls[0]![0])).toBe(TOKEN_URL)
 
     // Real decrypt happened: the form body carries the plaintext refresh token.
-    const init = vi.mocked(fetchImpl).mock.calls[0]![1]!
-    expect(String(init.body)).toBeTruthy()
-    const form = new URLSearchParams(String(init.body))
+    const formBody = bodyTextAt(fetchImpl)
+    expect(formBody).toBeTruthy()
+    const form = new URLSearchParams(formBody)
     expect(form.get('grant_type')).toBe('refresh_token')
     expect(form.get('client_id')).toBe('client-id')
     expect(form.get('client_secret')).toBe('client-secret')
@@ -512,7 +546,7 @@ describe('TwitchAdapter 401 refresh-and-retry', () => {
     const data = await adapter.fetchAudienceMetrics('141991764', RANGE)
 
     // Order: followers(401) → token refresh → followers(retry) → streams.
-    const urls = vi.mocked(fetchImpl).mock.calls.map((c) => String(c[0]))
+    const urls = vi.mocked(fetchImpl).mock.calls.map((c) => requestUrlOf(c[0]))
     expect(urls).toHaveLength(4)
     expect(isFollowers(urls[0]!)).toBe(true)
     expect(urls[1]!.startsWith(TOKEN_URL)).toBe(true)

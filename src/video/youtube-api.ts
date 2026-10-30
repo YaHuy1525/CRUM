@@ -313,7 +313,7 @@ function parseAnalyticsReport(raw: RawAnalyticsReport): AnalyticsReport {
     headers.forEach((_, i) => {
       const key = columnNames[i] ?? `column_${i}`
       const cell = cells[i]
-      out[key] = isNumeric[i] ? toNumber(cell) : cell == null ? '' : String(cell)
+      out[key] = isNumeric[i] ? toNumber(cell) : cellText(cell)
     })
     return out
   })
@@ -335,6 +335,26 @@ function toNumber(value: unknown): number {
     return Number.isFinite(n) ? n : 0
   }
   return 0
+}
+
+/**
+ * A text dimension cell as the row object should expose it. The analytics API
+ * answers with `unknown[][]`, so this is the one place that decides what a cell
+ * means: null/absent is an empty string, primitives render as their own text,
+ * and the unexpected object/array shape is serialised rather than degrading to
+ * "[object Object]" the way a bare String(cell) would.
+ */
+function cellText(value: unknown): string {
+  if (value === null || value === undefined) return ''
+  if (typeof value === 'string') return value
+  if (
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    typeof value === 'bigint'
+  ) {
+    return String(value)
+  }
+  return JSON.stringify(value) ?? ''
 }
 
 function messageOf(err: unknown): string {

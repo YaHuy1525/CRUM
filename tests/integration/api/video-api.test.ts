@@ -83,7 +83,7 @@ function channelRow(over: Record<string, unknown> = {}) {
     channel_url: 'https://youtube.com/@test',
     customer_id: null,
     contact_id: null,
-    ownership: 'owned',
+    ownership: 'self',
     status: 'active',
     oauth_token_id: null,
     last_sync_at: null,
@@ -114,7 +114,7 @@ describe('identity gate', () => {
     const res = await channelsRouter().request('/api/video/channels', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ platform: 'youtube', platformChannelId: 'UCx', ownership: 'owned' }),
+      body: JSON.stringify({ platform: 'youtube', platformChannelId: 'UCx', ownership: 'self' }),
     })
     expect(res.status).toBe(401)
     expect(videoQueries.insertVideoChannel).not.toHaveBeenCalled()
@@ -154,7 +154,7 @@ describe('tenant isolation', () => {
       body: JSON.stringify({
         platform: 'youtube',
         platformChannelId: 'UCxxxxx',
-        ownership: 'owned',
+        ownership: 'self',
       }),
     })
 
@@ -166,7 +166,7 @@ describe('tenant isolation', () => {
       undefined,
       undefined,
       undefined,
-      'owned',
+      'self',
     )
   })
 
@@ -278,7 +278,7 @@ describe('POST /api/video/channels', () => {
         platform: 'tiktok',
         platformChannelId: 'TT_12345',
         channelName: 'My TikTok',
-        ownership: 'managed',
+        ownership: 'client',
       }),
     })
 
@@ -305,7 +305,7 @@ describe('POST /api/video/channels', () => {
       body: JSON.stringify({
         platform: 'facebook',
         platformChannelId: 'fb_1',
-        ownership: 'owned',
+        ownership: 'self',
       }),
     })
 
@@ -317,19 +317,19 @@ describe('POST /api/video/channels', () => {
 describe('PATCH /api/video/channels/:id', () => {
   it('updates the channel and returns the result', async () => {
     videoQueries.updateVideoChannel.mockResolvedValue(
-      channelRow({ channel_name: 'Updated Name', status: 'paused' }),
+      channelRow({ channel_name: 'Updated Name', status: 'suspended' }),
     )
 
     const res = await channelsRouter().request(`/api/video/channels/${channelId}`, {
       method: 'PATCH',
       headers: { ...AUTH, 'content-type': 'application/json' },
-      body: JSON.stringify({ channelName: 'Updated Name', status: 'paused' }),
+      body: JSON.stringify({ channelName: 'Updated Name', status: 'suspended' }),
     })
 
     expect(res.status).toBe(200)
     expect(videoQueries.updateVideoChannel).toHaveBeenCalledWith(tenant(), channelId, {
       channelName: 'Updated Name',
-      status: 'paused',
+      status: 'suspended',
     })
   })
 

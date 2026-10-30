@@ -19,6 +19,7 @@ import { createVideoChannelsRouter } from './video-channels'
 import { createVideoOAuthRouter } from './video-oauth'
 import { createVideoSponsorshipRouter, type SponsorshipIntakeWorkflowLike } from './video-sponsorship'
 import { createVideoBillingRouter, createVideoAlertsRouter } from './video-billing'
+import { createVideoRevenueRouter } from './video-revenue'
 
 export interface ApiRouterDeps {
   env: CrumEnv
@@ -108,6 +109,7 @@ export function createApiRouter(deps: ApiRouterDeps): Hono {
   app.route('/', createVideoSponsorshipRouter({ env, getSponsorshipWorkflow: sponsorshipIntakeGetter(deps.getMastra) }))
   app.route('/', createVideoBillingRouter({ env }))
   app.route('/', createVideoAlertsRouter({ env }))
+  app.route('/', createVideoRevenueRouter({ env }))
 
   return app
 }

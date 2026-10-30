@@ -1,5 +1,9 @@
 
 import type {
+  AlertActionResponse,
+  AlertScanResponse,
+  BillingInvoicesResponse,
+  BillingProfilesResponse,
   CrmContact,
   CrmFollowup,
   CrmListResponse,
@@ -7,15 +11,19 @@ import type {
   CrmTask,
   CustomerRow,
   DigestResponse,
+  InvoiceActionResponse,
   MailConnectUrl,
   MailDraftResponse,
   MailStatus,
   MailThreadSearchResponse,
   QueueResponse,
+  RevenueOverviewResponse,
   SearchResponse,
   ThreadMessagesResponse,
   ThreadRow,
   ThreadsResponse,
+  VideoAlertsResponse,
+  VideoChannel,
 } from './types'
 
 export class ApiError extends Error {
@@ -286,3 +294,93 @@ export const createMailDraft = (input: {
   subject?: string
   body: string
 }): Promise<MailDraftResponse> => post<MailDraftResponse>('/api/mail/drafts', input)
+
+// ── Video revenue (Phase 6) ─────────────────────────────────────────────────
+//
+// Typed wrappers over the /api/video/* routers. Identity headers are injected
+// by the Next proxy/middleware, never by these helpers.
+
+export const getRevenueOverview = (
+  params: { from?: string; to?: string } = {},
+): Promise<RevenueOverviewResponse> =>
+  get<RevenueOverviewResponse>(`/api/video/revenue/overview${qs({ from: params.from, to: params.to })}`)
+
+export const listVideoChannels = (
+  params: {
+    platform?: string
+    status?: string
+    ownership?: string
+    customerId?: string
+    limit?: number
+    offset?: number
+  } = {},
+): Promise<CrmListResponse<VideoChannel>> =>
+  get<CrmListResponse<VideoChannel>>(
+    `/api/video/channels${qs({
+      platform: params.platform,
+      status: params.status,
+      ownership: params.ownership,
+      customerId: params.customerId,
+      limit: params.limit,
+      offset: params.offset,
+    })}`,
+  )
+
+export const listVideoAlerts = (
+  params: { status?: string; channelId?: string; customerId?: string; kind?: string } = {},
+): Promise<VideoAlertsResponse> =>
+  get<VideoAlertsResponse>(
+    `/api/video/alerts${qs({
+      status: params.status,
+      channelId: params.channelId,
+      customerId: params.customerId,
+      kind: params.kind,
+    })}`,
+  )
+
+export const acknowledgeVideoAlert = (id: string): Promise<AlertActionResponse> =>
+  post<AlertActionResponse>(`/api/video/alerts/${encodeURIComponent(id)}/acknowledge`)
+
+export const dismissVideoAlert = (id: string): Promise<AlertActionResponse> =>
+  post<AlertActionResponse>(`/api/video/alerts/${encodeURIComponent(id)}/dismiss`)
+
+export const scanVideoAlerts = (
+  body?: { thresholds: { dropPct: number; spikePct: number } },
+): Promise<AlertScanResponse> => post<AlertScanResponse>('/api/video/alerts/scan', body)
+
+export const listBillingProfiles = (
+  params: { customerId?: string; active?: boolean } = {},
+): Promise<BillingProfilesResponse> =>
+  get<BillingProfilesResponse>(
+    `/api/video/billing/profiles${qs({
+      customerId: params.customerId,
+      active: params.active === undefined ? undefined : String(params.active),
+    })}`,
+  )
+
+export const listBillingInvoices = (
+  params: { customerId?: string; status?: string; from?: string; to?: string } = {},
+): Promise<BillingInvoicesResponse> =>
+  get<BillingInvoicesResponse>(
+    `/api/video/billing/invoices${qs({
+      customerId: params.customerId,
+      status: params.status,
+      from: params.from,
+      to: params.to,
+    })}`,
+  )
+
+export const generateBillingInvoice = (input: {
+  customerId: string
+  periodStart: string
+  periodEnd: string
+}): Promise<InvoiceActionResponse> => post<InvoiceActionResponse>('/api/video/billing/invoices', input)
+
+export const approveBillingInvoice = (id: string): Promise<InvoiceActionResponse> =>
+  post<InvoiceActionResponse>(`/api/video/billing/invoices/${encodeURIComponent(id)}/approve`)
+
+export const issueBillingInvoice = (id: string): Promise<InvoiceActionResponse> =>
+  post<InvoiceActionResponse>(`/api/video/billing/invoices/${encodeURIComponent(id)}/issue`)
+
+export const voidBillingInvoice = (id: string): Promise<InvoiceActionResponse> =>
+  post<InvoiceActionResponse>(`/api/video/billing/invoices/${encodeURIComponent(id)}/void`)

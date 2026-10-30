@@ -479,3 +479,59 @@ describe('billing – setInvoiceStatus', () => {
     expect(mockQuery).toHaveBeenCalledTimes(1)
   })
 })
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Driver Date -> declared string shape
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('billing – pg Dates are serialised the way the row types claim', () => {
+  it('renders a date column as its own calendar day, never as a shifted ISO instant', async () => {
+    // pg builds a `date` at LOCAL midnight. On a UTC+10 runner
+    // new Date(2026, 0, 1).toISOString() is '2025-12-31T14:00:00.000Z', so a
+    // naive ISO render would bill the wrong month. The invoice REST routes and
+    // the console Billing tab both read these fields verbatim.
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        rawInvoiceRow({
+          period_start: new Date(2026, 0, 1),
+          period_end: new Date(2026, 0, 31),
+          issued_at: new Date('2026-02-01T04:00:00Z'),
+          created_at: new Date('2026-01-31T00:00:00Z'),
+          updated_at: new Date('2026-01-31T00:00:00Z'),
+        }),
+      ],
+    })
+
+    const { getInvoice } = await import('../../../src/db/billing')
+    const invoice = await getInvoice(ADMIN_CTX, 'bi1')
+
+    expect(invoice!.period_start).toBe('2026-01-01')
+    expect(invoice!.period_end).toBe('2026-01-31')
+    // A timestamptz is an instant: ISO UTC is the right render for it.
+    expect(invoice!.issued_at).toBe('2026-02-01T04:00:00.000Z')
+    expect(invoice!.created_at).toBe('2026-01-31T00:00:00.000Z')
+  })
+
+  it('keeps already-string dates and null stamps intact', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [rawInvoiceRow()] })
+
+    const { getInvoice } = await import('../../../src/db/billing')
+    const invoice = await getInvoice(ADMIN_CTX, 'bi1')
+
+    expect(invoice!.period_start).toBe('2026-01-01')
+    expect(invoice!.issued_at).toBeNull()
+  })
+
+  it('normalises a profile validity window the same way', async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [rawProfileRow({ valid_from: new Date(2026, 0, 1), valid_to: new Date(2026, 11, 31) })],
+    })
+
+    const { getActiveBillingProfile } = await import('../../../src/db/billing')
+    const profile = await getActiveBillingProfile(TENANT, CUSTOMER)
+
+    expect(profile!.valid_from).toBe('2026-01-01')
+    expect(profile!.valid_to).toBe('2026-12-31')
+  })
+})
+

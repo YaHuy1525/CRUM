@@ -20,6 +20,13 @@ import {
   getContractTool,
   sumInvoicesTool,
 } from './tools/documents'
+import {
+  listChannelsTool,
+  sumEarningsTool,
+  revenueTotalsTool,
+  listInvoicesTool,
+  listAlertsTool,
+} from './tools/revenue'
 import { logFollowupTool, createTaskTool, draftMailTool } from './tools/auto-writes'
 import { createCustomerTool, updateCustomerTool, deleteCustomerTool } from './tools/customer-writes'
 import { listProspectsTool, getProspectTool } from './tools/prospects'
@@ -45,6 +52,11 @@ const crumToolRegistry = {
   'doc.get_invoice': getInvoiceTool,
   'doc.get_contract': getContractTool,
   'doc.sum_invoices': sumInvoicesTool,
+  'revenue.list_channels': listChannelsTool,
+  'revenue.sum_earnings': sumEarningsTool,
+  'revenue.revenue_totals': revenueTotalsTool,
+  'revenue.list_invoices': listInvoicesTool,
+  'revenue.list_alerts': listAlertsTool,
   'crm.log_followup': logFollowupTool,
   'crm.create_task': createTaskTool,
   'mail.draft': draftMailTool,

@@ -31,7 +31,9 @@ function stubResponse(stub: StubResponse): Response {
   return {
     ok: stub.status >= 200 && stub.status < 300,
     status: stub.status,
-    text: async () => text,
+    // Non-async on purpose: `Response#text()` returns a Promise, but the body
+    // is already in memory, so there is nothing to await.
+    text: () => text,
   } as unknown as Response
 }
 
@@ -41,25 +43,58 @@ function stubResponse(stub: StubResponse): Response {
  */
 function configWithFetch(...responses: StubResponse[]) {
   const queue = [...responses]
-  const fetchFn = vi.fn(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+  // The `_`-prefixed parameters stay in the signature because they define the
+  // recorded-call tuple the helpers below read back; the body is a plain
+  // `Promise.resolve`, so an `async` wrapper would have nothing to await.
+  const fetchFn = vi.fn((_input: string | URL | Request, _init?: RequestInit): Promise<Response> => {
     const next = queue.shift()
     if (!next) throw new Error('fake fetch: response queue exhausted')
-    return stubResponse(next)
+    return Promise.resolve(stubResponse(next))
   })
-  const config: TwitchApiConfig = { fetch: fetchFn as unknown as typeof fetch }
+  const config: TwitchApiConfig = { fetch: fetchFn }
   return { config, fetchFn }
 }
 
-function urlAt(fetchFn: ReturnType<typeof vi.fn>, index = 0): URL {
-  const call = fetchFn.mock.calls[index]
-  return new URL(String(call![0]))
+/** The recorded fetch mock, with its declared call tuple preserved. */
+type RecordedFetch = ReturnType<typeof configWithFetch>['fetchFn']
+
+/**
+ * The requested URL as text. The client always passes a `string` href; URL and
+ * Request are resolved by field instead of `String(input)`, which would turn a
+ * Request into `[object Object]`.
+ */
+function requestUrlOf(input: string | URL | Request): string {
+  if (typeof input === 'string') return input
+  if (input instanceof URL) return input.href
+  return input.url
 }
 
-function initAt(fetchFn: ReturnType<typeof vi.fn>, index = 0): RequestInit {
-  return fetchFn.mock.calls[index]![1] as RequestInit
+function urlAt(fetchFn: RecordedFetch, index = 0): URL {
+  return new URL(requestUrlOf(fetchFn.mock.calls[index]![0]))
 }
 
-function headersAt(fetchFn: ReturnType<typeof vi.fn>, index = 0): Record<string, string> {
+function urlTextAt(fetchFn: RecordedFetch, index = 0): string {
+  return requestUrlOf(fetchFn.mock.calls[index]![0])
+}
+
+function initAt(fetchFn: RecordedFetch, index = 0): RequestInit {
+  return fetchFn.mock.calls[index]![1] ?? {}
+}
+
+/**
+ * The client serializes every request body to a string
+ * (`URLSearchParams#toString()`), so the recorded body is narrowed to that
+ * instead of stringified through `String(BodyInit)`.
+ */
+function bodyAt(fetchFn: RecordedFetch, index = 0): string {
+  const body = initAt(fetchFn, index).body
+  if (typeof body !== 'string') {
+    throw new Error(`fake fetch: expected a string request body, got ${typeof body}`)
+  }
+  return body
+}
+
+function headersAt(fetchFn: RecordedFetch, index = 0): Record<string, string> {
   return initAt(fetchFn, index).headers as Record<string, string>
 }
 
@@ -238,10 +273,8 @@ describe('Helix error handling', () => {
   })
 
   it('wraps a transport-level fetch rejection in a TwitchApiError with status 0', async () => {
-    const fetchFn = vi.fn(async () => {
-      throw new Error('socket hang up')
-    })
-    const config: TwitchApiConfig = { fetch: fetchFn as unknown as typeof fetch }
+    const fetchFn = vi.fn((): Promise<Response> => Promise.reject(new Error('socket hang up')))
+    const config: TwitchApiConfig = { fetch: fetchFn }
 
     const err = await captureError(getFollowersTotal('1', 'token-abc', 'cid', config))
     expect(err.status).toBe(0)
@@ -270,11 +303,11 @@ describe('refreshTwitchAccessToken', () => {
     const result = await refreshTwitchAccessToken('refresh-me', 'my-client-id', 'my-client-secret', config)
 
     expect(fetchFn).toHaveBeenCalledTimes(1)
-    expect(String(fetchFn.mock.calls[0]![0])).toBe(TOKEN_URL)
+    expect(urlTextAt(fetchFn)).toBe(TOKEN_URL)
     const init = initAt(fetchFn)
     expect(init.method).toBe('POST')
     expect(headersAt(fetchFn)['Content-Type']).toBe('application/x-www-form-urlencoded')
-    const form = new URLSearchParams(String(init.body))
+    const form = new URLSearchParams(bodyAt(fetchFn))
     expect(form.get('grant_type')).toBe('refresh_token')
     expect(form.get('client_id')).toBe('my-client-id')
     expect(form.get('client_secret')).toBe('my-client-secret')
@@ -348,10 +381,8 @@ describe('refreshTwitchAccessToken', () => {
   })
 
   it('wraps a transport-level fetch rejection in a TwitchApiError with status 0', async () => {
-    const fetchFn = vi.fn(async () => {
-      throw new Error('connection reset')
-    })
-    const config: TwitchApiConfig = { fetch: fetchFn as unknown as typeof fetch }
+    const fetchFn = vi.fn((): Promise<Response> => Promise.reject(new Error('connection reset')))
+    const config: TwitchApiConfig = { fetch: fetchFn }
 
     const err = await captureError(refreshTwitchAccessToken('r', 'c', 's', config))
     expect(err.status).toBe(0)

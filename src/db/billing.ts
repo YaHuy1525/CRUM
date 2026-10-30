@@ -86,6 +86,40 @@ function toJsonItems(value: unknown): Record<string, unknown>[] {
   return []
 }
 
+/**
+ * The driver parses `date` columns into a JS Date at LOCAL midnight, so
+ * `.toISOString()` would move the calendar day on any non-UTC server
+ * (2026-10-01 becomes 2026-09-30T14:00:00.000Z at UTC+10). The row types declare
+ * plain 'YYYY-MM-DD' strings, so dates are rendered from their local parts.
+ */
+function dateText(value: Date | string | number | null | undefined): string {
+  if (value instanceof Date) {
+    const y = String(value.getFullYear()).padStart(4, '0')
+    const m = String(value.getMonth() + 1).padStart(2, '0')
+    const d = String(value.getDate()).padStart(2, '0')
+    return `${y}-${m}-${d}`
+  }
+  if (typeof value === 'string') return value.slice(0, 10)
+  return value === null || value === undefined ? '' : String(value)
+}
+
+function dateTextOrNull(value: Date | string | number | null | undefined): string | null {
+  if (value === null || value === undefined) return null
+  return dateText(value) || null
+}
+
+/** `timestamptz` columns arrive as Dates; UTC ISO is the correct, unambiguous form. */
+function isoText(value: Date | string | number | null | undefined): string {
+  if (value instanceof Date) return value.toISOString()
+  if (value === null || value === undefined) return ''
+  return String(value)
+}
+
+function isoTextOrNull(value: Date | string | number | null | undefined): string | null {
+  if (value === null || value === undefined) return null
+  return isoText(value) || null
+}
+
 /** Raw row shape from the driver before decimal->number coercion (profiles). */
 type ProfileRawRow = Omit<ClientBillingProfile, 'management_fee_pct' | 'flat_amount'> & {
   management_fee_pct: string | number | null
@@ -97,6 +131,10 @@ function mapProfileRow(raw: ProfileRawRow): ClientBillingProfile {
     ...raw,
     management_fee_pct: toNumberOrNull(raw.management_fee_pct),
     flat_amount: toNumberOrNull(raw.flat_amount),
+    valid_from: dateText(raw.valid_from),
+    valid_to: dateTextOrNull(raw.valid_to),
+    created_at: isoText(raw.created_at),
+    updated_at: isoText(raw.updated_at),
   }
 }
 
@@ -119,6 +157,8 @@ function mapInvoiceRow(raw: InvoiceRawRow): BillingInvoice {
   return {
     ...raw,
     channel_ids: Array.isArray(raw.channel_ids) ? raw.channel_ids : [],
+    period_start: dateText(raw.period_start),
+    period_end: dateText(raw.period_end),
     platform_revenue: toNumber(raw.platform_revenue),
     sponsorship_revenue: toNumber(raw.sponsorship_revenue),
     gross_revenue: toNumber(raw.gross_revenue),
@@ -126,6 +166,9 @@ function mapInvoiceRow(raw: InvoiceRawRow): BillingInvoice {
     fee_pct: toNumberOrNull(raw.fee_pct),
     fee_flat_amount: toNumberOrNull(raw.fee_flat_amount),
     line_items: toJsonItems(raw.line_items),
+    issued_at: isoTextOrNull(raw.issued_at),
+    created_at: isoText(raw.created_at),
+    updated_at: isoText(raw.updated_at),
   }
 }
 

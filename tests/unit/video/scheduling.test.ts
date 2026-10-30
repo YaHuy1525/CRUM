@@ -5,7 +5,7 @@
 // The scheduler now writes through the real DB query layer, so the whole
 // `src/db/video-queries` module is stubbed here (same pattern as
 // youtube-adapter.test.ts) — no pg pool or env plumbing loads at import time.
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const db = vi.hoisted(() => ({
   listVideoChannels: vi.fn(),
@@ -169,8 +169,11 @@ describe('runDailyEarningsSync', () => {
   class MockYouTubeAdapter extends BasePlatformAdapter {
     readonly platform = 'youtube'
 
-    override async fetchEarnings(channelId: string, dateRange: DateRange): Promise<EarningsData> {
-      return {
+    // Not `async`: a fixture with no I/O has nothing to await, and the base
+    // class it extends sets the precedent (src/video/platform-adapters/base.ts)
+    // of keeping the Promise contract with Promise.resolve/Promise.reject.
+    override fetchEarnings(channelId: string, dateRange: DateRange): Promise<EarningsData> {
+      return Promise.resolve({
         channelId,
         platform: 'youtube',
         dateRange,
@@ -184,7 +187,7 @@ describe('runDailyEarningsSync', () => {
           },
         ],
         fetchedAt: new Date().toISOString(),
-      }
+      })
     }
   }
 
@@ -215,9 +218,11 @@ describe('runDailyEarningsSync', () => {
         viewsCount: 5000,
       }),
     )
-    expect(db.updateVideoChannel).toHaveBeenCalledWith('tenant-1', 'vc-1', {
-      lastSyncAt: expect.any(String),
-    })
+    // `expect.any` is typed `any`, so the matcher is pinned to `unknown` before
+    // it goes into the object literal. The assertion is unchanged: the third
+    // argument must be exactly { lastSyncAt: <a string> }.
+    const lastSyncAt: unknown = expect.any(String)
+    expect(db.updateVideoChannel).toHaveBeenCalledWith('tenant-1', 'vc-1', { lastSyncAt })
     logSpy.mockRestore()
   })
 
@@ -250,8 +255,10 @@ describe('runDailyEarningsSync', () => {
   it('handles adapter errors gracefully', async () => {
     class FailingAdapter extends BasePlatformAdapter {
       readonly platform = 'twitch'
-      override async fetchEarnings(): Promise<EarningsData> {
-        throw new Error('API rate limit exceeded')
+      // Rejected promise, not an `async` throw: the scheduler awaits this inside
+      // its try/catch, so the awaited error path is identical.
+      override fetchEarnings(): Promise<EarningsData> {
+        return Promise.reject(new Error('API rate limit exceeded'))
       }
     }
 
@@ -290,11 +297,13 @@ describe('runWeeklyAudienceSync', () => {
   class MockYouTubeAdapter extends BasePlatformAdapter {
     readonly platform = 'youtube'
 
-    override async fetchAudienceMetrics(
+    // See the earnings fixture: Promise.resolve keeps the adapter contract
+    // without an `async` keyword that would have nothing to await.
+    override fetchAudienceMetrics(
       channelId: string,
       dateRange: DateRange,
     ): Promise<AudienceData> {
-      return {
+      return Promise.resolve({
         channelId,
         platform: 'youtube',
         dateRange,
@@ -311,7 +320,7 @@ describe('runWeeklyAudienceSync', () => {
           },
         ],
         fetchedAt: new Date().toISOString(),
-      }
+      })
     }
   }
 

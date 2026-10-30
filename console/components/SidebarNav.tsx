@@ -11,6 +11,7 @@ import {
   Mail,
   MessageSquarePlus,
   MessagesSquare,
+  Video,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -24,6 +25,7 @@ const PAGES: { href: string; label: string; icon: LucideIcon }[] = [
   { href: '/records', label: 'Records', icon: Database },
   { href: '/calendar', label: 'Calendar', icon: CalendarDays },
   { href: '/mail', label: 'Mailbox', icon: Mail },
+  { href: '/video', label: 'Revenue', icon: Video },
 ]
 
 const CHATS_INDEX = { href: '/chats', label: 'All conversations', icon: MessagesSquare }

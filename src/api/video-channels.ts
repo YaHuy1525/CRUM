@@ -13,7 +13,6 @@ import {
   type VideoChannelFilters,
   type VideoChannelUpdates,
 } from '../db/video-queries'
-import type { VideoPlatform, ChannelOwnership, ChannelStatus } from '../db/types'
 
 export interface VideoChannelsRouterDeps {
   env: CrumEnv
@@ -98,7 +97,7 @@ export function createVideoChannelsRouter(deps: VideoChannelsRouterDeps): Hono {
           ),
         }
       }
-      filters.platform = parsed.data as VideoPlatform
+      filters.platform = parsed.data
     }
 
     const status = c.req.query('status')
@@ -112,7 +111,7 @@ export function createVideoChannelsRouter(deps: VideoChannelsRouterDeps): Hono {
           ),
         }
       }
-      filters.status = parsed.data as ChannelStatus
+      filters.status = parsed.data
     }
 
     const ownership = c.req.query('ownership')
@@ -126,7 +125,7 @@ export function createVideoChannelsRouter(deps: VideoChannelsRouterDeps): Hono {
           ),
         }
       }
-      filters.ownership = parsed.data as ChannelOwnership
+      filters.ownership = parsed.data
     }
 
     const customerId = c.req.query('customerId')
@@ -195,8 +194,7 @@ export function createVideoChannelsRouter(deps: VideoChannelsRouterDeps): Hono {
     const gate = await auth(c)
     if ('error' in gate) return gate.error
 
-    const body = await c.req.json().catch(() => null)
-    const parsed = CreateChannelSchema.safeParse(body)
+    const parsed = CreateChannelSchema.safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) {
       return c.json({ error: 'invalid_body', detail: parsed.error.issues.map((i) => i.message) }, 400)
     }
@@ -229,8 +227,7 @@ export function createVideoChannelsRouter(deps: VideoChannelsRouterDeps): Hono {
       return c.json({ error: 'invalid_id', detail: 'id must be a uuid' }, 400)
     }
 
-    const body = await c.req.json().catch(() => null)
-    const parsed = UpdateChannelSchema.safeParse(body)
+    const parsed = UpdateChannelSchema.safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) {
       return c.json({ error: 'invalid_body', detail: parsed.error.issues.map((i) => i.message) }, 400)
     }

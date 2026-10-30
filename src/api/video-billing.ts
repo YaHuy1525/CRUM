@@ -180,8 +180,7 @@ export function createVideoBillingRouter(deps: VideoBillingRouterDeps): Hono {
     if ('error' in gate) return gate.error
     const { tenantId, userId } = gate.identity
 
-    const body = await c.req.json().catch(() => null)
-    const parsed = ProfileWriteSchema.safeParse(body)
+    const parsed = ProfileWriteSchema.safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) {
       return c.json(
         { error: 'invalid_body', detail: parsed.error.issues.map((i) => i.message) },
@@ -265,8 +264,7 @@ export function createVideoBillingRouter(deps: VideoBillingRouterDeps): Hono {
     const gate = await auth(c)
     if ('error' in gate) return gate.error
 
-    const body = await c.req.json().catch(() => null)
-    const parsed = GenerateInvoiceSchema.safeParse(body)
+    const parsed = GenerateInvoiceSchema.safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) {
       return c.json(
         { error: 'invalid_body', detail: parsed.error.issues.map((i) => i.message) },
@@ -380,7 +378,10 @@ export function createVideoAlertsRouter(deps: VideoAlertsRouterDeps): Hono {
     if ('error' in gate) return gate.error
     const { tenantId } = gate.identity
 
-    const body = await c.req.json().catch(() => null)
+    // `unknown` rather than Hono's inferred `any`: the body is optional here
+    // (a POST with no body scans with default thresholds), so it is checked for
+    // null and then handed to ScanSchema, which does the real narrowing.
+    const body: unknown = await c.req.json().catch(() => null)
     let thresholds: { dropPct: number; spikePct: number } | undefined
     if (body !== null) {
       const parsed = ScanSchema.safeParse(body)

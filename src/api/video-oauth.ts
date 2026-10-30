@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import type { Context } from 'hono'
 import { z } from 'zod'
-import { randomBytes } from 'node:crypto'
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import type { CrumEnv } from '../config/env'
 import { IdentityError, resolveIdentity } from '../mastra/identity'
 import type { TenantRequestContext } from '../mastra/tenant-context'
@@ -123,14 +123,12 @@ interface OAuthStatePayload {
 }
 
 function signOAuthState(payload: OAuthStatePayload, secret: string): string {
-  const { createHmac } = require('node:crypto') as typeof import('node:crypto')
   const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')
   const mac = createHmac('sha256', secret).update(body).digest('base64url')
   return `${body}.${mac}`
 }
 
 function verifyOAuthState(state: string, secret: string): OAuthStatePayload | null {
-  const { createHmac, timingSafeEqual } = require('node:crypto') as typeof import('node:crypto')
   const dot = state.lastIndexOf('.')
   if (dot <= 0) return null
   const body = state.slice(0, dot)
@@ -154,7 +152,7 @@ function verifyOAuthState(state: string, secret: string): OAuthStatePayload | nu
     return {
       tenantId: payload.tenantId,
       userId: payload.userId,
-      platform: payload.platform as VideoPlatform,
+      platform: payload.platform,
       exp: payload.exp,
       nonce: payload.nonce,
     }

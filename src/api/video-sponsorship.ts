@@ -88,8 +88,7 @@ export function createVideoSponsorshipRouter(deps: VideoSponsorshipRouterDeps): 
     if ('error' in gate) return gate.error
     const { tenantId, userId, userRole } = gate.identity
 
-    const body = await c.req.json().catch(() => null)
-    const parsed = ScanSchema.safeParse(body)
+    const parsed = ScanSchema.safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) {
       return c.json(
         { error: 'invalid_body', detail: parsed.error.issues.map((i) => i.message) },

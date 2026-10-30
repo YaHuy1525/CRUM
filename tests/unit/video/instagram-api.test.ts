@@ -30,7 +30,9 @@ function stubResponse(stub: StubResponse): Response {
   return {
     ok: stub.status >= 200 && stub.status < 300,
     status: stub.status,
-    text: async () => text,
+    // Non-async on purpose: `Response#text()` returns a Promise, but the body
+    // is already in memory, so there is nothing to await.
+    text: () => text,
   } as unknown as Response
 }
 
@@ -40,25 +42,45 @@ function stubResponse(stub: StubResponse): Response {
  */
 function configWithFetch(...responses: StubResponse[]) {
   const queue = [...responses]
-  const fetchFn = vi.fn(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+  // The parameters stay in the signature (as `_`-prefixed) because they define
+  // the recorded-call tuple the helpers below read back; the body is a plain
+  // `Promise.resolve`, so an `async` wrapper would have nothing to await.
+  const fetchFn = vi.fn((_input: string | URL | Request, _init?: RequestInit): Promise<Response> => {
     const next = queue.shift()
     if (!next) throw new Error('fake fetch: response queue exhausted')
-    return stubResponse(next)
+    return Promise.resolve(stubResponse(next))
   })
-  const config: InstagramApiConfig = { fetch: fetchFn as unknown as typeof fetch }
+  const config: InstagramApiConfig = { fetch: fetchFn }
   return { config, fetchFn }
 }
 
-function urlAt(fetchFn: ReturnType<typeof vi.fn>, index = 0): URL {
-  const call = fetchFn.mock.calls[index]
-  return new URL(String(call![0]))
+/** The recorded fetch mock, with its declared call tuple preserved. */
+type RecordedFetch = ReturnType<typeof configWithFetch>['fetchFn']
+
+/**
+ * The requested URL as text. The client always passes a `string` href; URL and
+ * Request are resolved by field instead of `String(input)`, which would turn a
+ * Request into `[object Object]`.
+ */
+function requestUrlOf(input: string | URL | Request): string {
+  if (typeof input === 'string') return input
+  if (input instanceof URL) return input.href
+  return input.url
 }
 
-function initAt(fetchFn: ReturnType<typeof vi.fn>, index = 0): RequestInit {
-  return fetchFn.mock.calls[index]![1] as RequestInit
+function urlAt(fetchFn: RecordedFetch, index = 0): URL {
+  return new URL(requestUrlOf(fetchFn.mock.calls[index]![0]))
 }
 
-function headersAt(fetchFn: ReturnType<typeof vi.fn>, index = 0): Record<string, string> {
+function urlTextAt(fetchFn: RecordedFetch, index = 0): string {
+  return requestUrlOf(fetchFn.mock.calls[index]![0])
+}
+
+function initAt(fetchFn: RecordedFetch, index = 0): RequestInit {
+  return fetchFn.mock.calls[index]![1] ?? {}
+}
+
+function headersAt(fetchFn: RecordedFetch, index = 0): Record<string, string> {
   return initAt(fetchFn, index).headers as Record<string, string>
 }
 
@@ -251,7 +273,7 @@ describe('getMediaWithInsights – pagination', () => {
     const media = await getMediaWithInsights('token-abc', baseParams, config)
 
     expect(fetchFn).toHaveBeenCalledTimes(2)
-    expect(String(fetchFn.mock.calls[1]![0])).toBe(nextPageUrl)
+    expect(urlTextAt(fetchFn, 1)).toBe(nextPageUrl)
     expect(headersAt(fetchFn, 1).Authorization).toBe('Bearer token-abc')
     expect(media.map((m) => m.id)).toEqual(['page-1', 'page-2'])
   })
@@ -269,8 +291,8 @@ describe('getMediaWithInsights – pagination', () => {
       status: 200,
       body: { data: [], paging: { next: `${MEDIA_URL}?after=LOOP` } },
     }
-    const fetchFn = vi.fn(async () => stubResponse(selfLoop))
-    const config: InstagramApiConfig = { fetch: fetchFn as unknown as typeof fetch }
+    const fetchFn = vi.fn((): Promise<Response> => Promise.resolve(stubResponse(selfLoop)))
+    const config: InstagramApiConfig = { fetch: fetchFn }
 
     const err = await captureError(getMediaWithInsights('token-abc', baseParams, config))
     expect(err.kind).toBe('http')
@@ -348,10 +370,8 @@ describe('getMediaWithInsights – error handling', () => {
   })
 
   it('wraps a transport-level fetch rejection in an InstagramApiError with status 0', async () => {
-    const fetchFn = vi.fn(async () => {
-      throw new Error('socket hang up')
-    })
-    const config: InstagramApiConfig = { fetch: fetchFn as unknown as typeof fetch }
+    const fetchFn = vi.fn((): Promise<Response> => Promise.reject(new Error('socket hang up')))
+    const config: InstagramApiConfig = { fetch: fetchFn }
 
     const err = await captureError(getMediaWithInsights('token-abc', baseParams, config))
     expect(err.status).toBe(0)
@@ -415,10 +435,8 @@ describe('refreshInstagramAccessToken', () => {
   })
 
   it('wraps a transport-level fetch rejection in a status-0 InstagramApiError', async () => {
-    const fetchFn = vi.fn(async () => {
-      throw new Error('ECONNRESET')
-    })
-    const config: InstagramApiConfig = { fetch: fetchFn as unknown as typeof fetch }
+    const fetchFn = vi.fn((): Promise<Response> => Promise.reject(new Error('ECONNRESET')))
+    const config: InstagramApiConfig = { fetch: fetchFn }
 
     const err = await captureError(refreshInstagramAccessToken('r', 'c', 's', config))
     expect(err.status).toBe(0)

@@ -91,7 +91,9 @@ function stubResponse(status: number, body: unknown): Response {
   return {
     ok: status >= 200 && status < 300,
     status,
-    text: async () => (typeof body === 'string' ? body : JSON.stringify(body)),
+    // Non-async on purpose: `Response#text()` returns a Promise, but the fixture
+    // body is already in memory, so there is nothing to await.
+    text: () => (typeof body === 'string' ? body : JSON.stringify(body)),
   } as unknown as Response
 }
 
@@ -105,14 +107,27 @@ interface Route {
   responses: Array<{ status: number; body: unknown }>
 }
 
+/**
+ * The requested URL as text. The adapter always passes a `string` href; URL and
+ * Request are resolved by field instead of `String(input)`, which would turn a
+ * Request into `[object Object]`.
+ */
+function requestUrlOf(input: string | URL | Request): string {
+  if (typeof input === 'string') return input
+  if (input instanceof URL) return input.href
+  return input.url
+}
+
 function makeFetch(routes: Route[]) {
-  const fetchFn = vi.fn(async (input: string | URL | Request): Promise<Response> => {
-    const url = String(input)
+  // The parameter describes the recorded call tuple; the body is a plain
+  // `Promise.resolve`, so an `async` wrapper would have nothing to await.
+  const fetchFn = vi.fn((input: string | URL | Request): Promise<Response> => {
+    const url = requestUrlOf(input)
     for (const route of routes) {
       if (route.match(url)) {
         const next = route.responses.shift()
         if (!next) throw new Error(`fake fetch: route exhausted for ${url}`)
-        return stubResponse(next.status, next.body)
+        return Promise.resolve(stubResponse(next.status, next.body))
       }
     }
     throw new Error(`fake fetch: unexpected URL ${url}`)
@@ -124,20 +139,32 @@ const isVideoQuery = (url: string) => url.startsWith(VIDEO_QUERY_URL)
 const isToken = (url: string) => url.startsWith(TOKEN_URL)
 
 function urlAt(fetchImpl: ReturnType<typeof makeFetch>, index = 0): string {
-  return String(vi.mocked(fetchImpl).mock.calls[index]![0])
+  return requestUrlOf(vi.mocked(fetchImpl).mock.calls[index]![0])
 }
 function initAt(fetchImpl: ReturnType<typeof makeFetch>, index = 0): RequestInit {
-  return vi.mocked(fetchImpl).mock.calls[index]![1] as RequestInit
+  return vi.mocked(fetchImpl).mock.calls[index]![1] ?? {}
 }
 function authHeaderAt(fetchImpl: ReturnType<typeof makeFetch>, index = 0): string {
   const headers = initAt(fetchImpl, index).headers as Record<string, string | undefined>
   return headers.Authorization ?? ''
 }
+/**
+ * The adapter sends every body as a string (`JSON.stringify(...)` for the
+ * video query, `URLSearchParams#toString()` for the token POST), so the recorded
+ * body is narrowed to that instead of stringified via `String(BodyInit)`.
+ */
+function bodyTextAt(fetchImpl: ReturnType<typeof makeFetch>, index = 0): string {
+  const body = initAt(fetchImpl, index).body
+  if (typeof body !== 'string') {
+    throw new Error(`fake fetch: expected a string request body, got ${typeof body}`)
+  }
+  return body
+}
 function jsonBodyAt(fetchImpl: ReturnType<typeof makeFetch>, index = 0): Record<string, unknown> {
-  return JSON.parse(String(initAt(fetchImpl, index).body)) as Record<string, unknown>
+  return JSON.parse(bodyTextAt(fetchImpl, index)) as Record<string, unknown>
 }
 function formAt(fetchImpl: ReturnType<typeof makeFetch>, index = 0): URLSearchParams {
-  return new URLSearchParams(String(initAt(fetchImpl, index).body))
+  return new URLSearchParams(bodyTextAt(fetchImpl, index))
 }
 
 // ---------------------------------------------------------------------------

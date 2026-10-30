@@ -23,7 +23,6 @@ vi.mock('../../../src/config/env', () => ({
 
 const TENANT = 'tenant-1'
 const OTHER_TENANT = 'tenant-2'
-const USER = 'user-1'
 
 // helper: extract the SQL string from the first (or nth) mock call
 function sqlAt(callIndex = 0): string {

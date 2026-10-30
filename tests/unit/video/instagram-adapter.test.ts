@@ -107,8 +107,21 @@ function stubResponse(status: number, body: unknown): Response {
   return {
     ok: status >= 200 && status < 300,
     status,
-    text: async () => JSON.stringify(body),
+    // Non-async on purpose: `Response#text()` returns a Promise, but the fixture
+    // body is already in memory, so there is nothing to await.
+    text: () => JSON.stringify(body),
   } as unknown as Response
+}
+
+/**
+ * The requested URL as text. The adapter always passes a `string` href; URL and
+ * Request are resolved by field instead of `String(input)`, which would turn a
+ * Request into `[object Object]`.
+ */
+function requestUrlOf(input: string | URL | Request): string {
+  if (typeof input === 'string') return input
+  if (input instanceof URL) return input.href
+  return input.url
 }
 
 /**
@@ -121,13 +134,15 @@ interface Route {
 }
 
 function makeFetch(routes: Route[]) {
-  const fetchFn = vi.fn(async (input: string | URL | Request): Promise<Response> => {
-    const url = String(input)
+  // The parameter describes the recorded call tuple; the body is a plain
+  // `Promise.resolve`, so an `async` wrapper would have nothing to await.
+  const fetchFn = vi.fn((input: string | URL | Request): Promise<Response> => {
+    const url = requestUrlOf(input)
     for (const route of routes) {
       if (route.match(url)) {
         const next = route.responses.shift()
         if (!next) throw new Error(`fake fetch: route exhausted for ${url}`)
-        return stubResponse(next.status, next.body)
+        return Promise.resolve(stubResponse(next.status, next.body))
       }
     }
     throw new Error(`fake fetch: unexpected URL ${url}`)
@@ -139,7 +154,7 @@ const isMedia = (url: string) => url.includes('/me/media')
 const isRefresh = (url: string) => url.includes('/refresh_access_token')
 
 function mediaQueryAt(fetchImpl: ReturnType<typeof makeFetch>, index = 0): URLSearchParams {
-  return new URL(String(vi.mocked(fetchImpl).mock.calls[index]![0])).searchParams
+  return new URL(requestUrlOf(vi.mocked(fetchImpl).mock.calls[index]![0])).searchParams
 }
 
 function authHeaderAt(fetchImpl: ReturnType<typeof makeFetch>, index = 0): string {
@@ -356,8 +371,8 @@ describe('InstagramAdapter.fetchAudienceMetrics', () => {
 
     const data = await adapter.fetchAudienceMetrics('ig-account-1', RANGE)
 
-    expect(vi.mocked(fetchImpl).mock.calls.map((c) => String(c[0]))).toHaveLength(2)
-    expect(String(vi.mocked(fetchImpl).mock.calls[1]![0])).toBe(nextPage)
+    expect(vi.mocked(fetchImpl).mock.calls.map((c) => requestUrlOf(c[0]))).toHaveLength(2)
+    expect(requestUrlOf(vi.mocked(fetchImpl).mock.calls[1]![0])).toBe(nextPage)
     expect(data.records).toHaveLength(1)
     expect(data.records[0]!.views).toBe(30)
     expect(data.records[0]!.likes).toBe(4)
@@ -416,7 +431,7 @@ describe('InstagramAdapter.refreshOAuthToken', () => {
 
     // Instagram Login has NO refresh_token: the credential rotated is the
     // stored ACCESS token itself, decrypted for real from the row.
-    const url = new URL(String(vi.mocked(fetchImpl).mock.calls[0]![0]))
+    const url = new URL(requestUrlOf(vi.mocked(fetchImpl).mock.calls[0]![0]))
     expect(url.origin + url.pathname).toBe('https://graph.instagram.com/refresh_access_token')
     expect(url.searchParams.get('grant_type')).toBe('ig_refresh_token')
     expect(url.searchParams.get('access_token')).toBe('stored-ig-access')
@@ -509,7 +524,7 @@ describe('InstagramAdapter 401 refresh-and-retry', () => {
     const data = await adapter.fetchAudienceMetrics('ig-account-1', RANGE)
 
     // Order: media(401) → token refresh → media(retry). One retry only.
-    const urls = vi.mocked(fetchImpl).mock.calls.map((c) => String(c[0]))
+    const urls = vi.mocked(fetchImpl).mock.calls.map((c) => requestUrlOf(c[0]))
     expect(urls).toHaveLength(3)
     expect(isMedia(urls[0]!)).toBe(true)
     expect(isRefresh(urls[1]!)).toBe(true)

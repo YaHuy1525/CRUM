@@ -25,21 +25,24 @@ export abstract class BasePlatformAdapter implements PlatformAdapter {
   readonly supportsRevenue: boolean = true
   readonly supportsAudienceMetrics: boolean = true
 
-  async fetchEarnings(_channelId: string, _dateRange: DateRange): Promise<EarningsData> {
-    throw new Error(
-      `[${this.platform}] fetchEarnings is not implemented`,
+  /**
+   * The defaults reject rather than declare `async`: the interface returns a
+   * Promise, and there is nothing to await in a method whose only statement is
+   * a throw, so eslint's `require-await` flags the `async` keyword. `Promise
+   * .reject(...)` gives callers the identical behaviour (awaiting it throws the
+   * same Error) without the empty microtask.
+   */
+  fetchEarnings(_channelId: string, _dateRange: DateRange): Promise<EarningsData> {
+    return Promise.reject(new Error(`[${this.platform}] fetchEarnings is not implemented`))
+  }
+
+  fetchAudienceMetrics(_channelId: string, _dateRange: DateRange): Promise<AudienceData> {
+    return Promise.reject(
+      new Error(`[${this.platform}] fetchAudienceMetrics is not implemented`),
     )
   }
 
-  async fetchAudienceMetrics(_channelId: string, _dateRange: DateRange): Promise<AudienceData> {
-    throw new Error(
-      `[${this.platform}] fetchAudienceMetrics is not implemented`,
-    )
-  }
-
-  async refreshOAuthToken(_tokenId: string): Promise<void> {
-    throw new Error(
-      `[${this.platform}] refreshOAuthToken is not implemented`,
-    )
+  refreshOAuthToken(_tokenId: string): Promise<void> {
+    return Promise.reject(new Error(`[${this.platform}] refreshOAuthToken is not implemented`))
   }
 }

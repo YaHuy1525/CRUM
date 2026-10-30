@@ -96,8 +96,34 @@ function stubResponse(status: number, body: unknown): Response {
   return {
     ok: status >= 200 && status < 300,
     status,
-    text: async () => JSON.stringify(body),
+    // Non-async on purpose: `Response#text()` returns a Promise, but the fixture
+    // body is already in memory, so there is nothing to await.
+    text: () => JSON.stringify(body),
   } as unknown as Response
+}
+
+/**
+ * The requested URL as text. The adapter always passes a `string` href; URL and
+ * Request are resolved by field instead of `String(input)`, which would turn a
+ * Request into `[object Object]`.
+ */
+function requestUrlOf(input: string | URL | Request): string {
+  if (typeof input === 'string') return input
+  if (input instanceof URL) return input.href
+  return input.url
+}
+
+/**
+ * The adapter posts token refreshes as a url-encoded `string` body, so the
+ * recorded body is narrowed to that instead of stringified via
+ * `String(BodyInit)`.
+ */
+function bodyTextAt(fetchImpl: typeof fetch, index = 0): string {
+  const body = vi.mocked(fetchImpl).mock.calls[index]![1]?.body
+  if (typeof body !== 'string') {
+    throw new Error(`fake fetch: expected a string request body, got ${typeof body}`)
+  }
+  return body
 }
 
 /**
@@ -110,13 +136,15 @@ interface Route {
 }
 
 function makeFetch(routes: Route[]) {
-  const fetchFn = vi.fn(async (input: string | URL | Request): Promise<Response> => {
-    const url = String(input)
+  // The parameters describe the recorded call tuple; the body is a plain
+  // `Promise.resolve`, so an `async` wrapper would have nothing to await.
+  const fetchFn = vi.fn((input: string | URL | Request): Promise<Response> => {
+    const url = requestUrlOf(input)
     for (const route of routes) {
       if (route.match(url)) {
         const next = route.responses.shift()
         if (!next) throw new Error(`fake fetch: route exhausted for ${url}`)
-        return stubResponse(next.status, next.body)
+        return Promise.resolve(stubResponse(next.status, next.body))
       }
     }
     throw new Error(`fake fetch: unexpected URL ${url}`)
@@ -128,7 +156,7 @@ const isAnalytics = (url: string) => url.startsWith('https://youtubeanalytics.go
 const isToken = (url: string) => url.startsWith(TOKEN_URL)
 
 function analyticsQueryAt(fetchImpl: ReturnType<typeof makeFetch>, index = 0): URLSearchParams {
-  return new URL(String(vi.mocked(fetchImpl).mock.calls[index]![0])).searchParams
+  return new URL(requestUrlOf(vi.mocked(fetchImpl).mock.calls[index]![0])).searchParams
 }
 
 function authHeaderAt(fetchImpl: ReturnType<typeof makeFetch>, index = 0): string {
@@ -487,9 +515,9 @@ describe('YoutubeAdapter.refreshOAuthToken', () => {
     await adapter.refreshOAuthToken('tok-1')
 
     // Real decrypt happened: the form body carries the plaintext refresh token.
-    const init = vi.mocked(fetchImpl).mock.calls[0]![1]!
-    expect(String(init.body)).toBeTruthy()
-    const form = new URLSearchParams(String(init.body))
+    const formBody = bodyTextAt(fetchImpl)
+    expect(formBody).toBeTruthy()
+    const form = new URLSearchParams(formBody)
     expect(form.get('grant_type')).toBe('refresh_token')
     expect(form.get('client_id')).toBe('client-id')
     expect(form.get('client_secret')).toBe('client-secret')
@@ -583,7 +611,7 @@ describe('YoutubeAdapter 401 refresh-and-retry', () => {
     const data = await adapter.fetchEarnings('UC-abc', RANGE)
 
     // Order: analytics(401) → token refresh → analytics(retry). One retry only.
-    const urls = vi.mocked(fetchImpl).mock.calls.map((c) => String(c[0]))
+    const urls = vi.mocked(fetchImpl).mock.calls.map((c) => requestUrlOf(c[0]))
     expect(urls).toHaveLength(3)
     expect(isAnalytics(urls[0]!)).toBe(true)
     expect(urls[1]!.startsWith(TOKEN_URL)).toBe(true)

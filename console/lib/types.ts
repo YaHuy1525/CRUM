@@ -327,3 +327,159 @@ export interface MailDraftResponse {
   draftId: string
   url: string
 }
+
+// ── Video revenue (Phase 6) ─────────────────────────────────────────────────
+//
+// Row types mirroring the snake_case rows the /api/video/* routers return.
+// Money from the revenue overview is decimal-as-TEXT (render as-is, never
+// parseFloat); billing money fields are numbers (format them).
+
+export type VideoPlatform = 'youtube' | 'tiktok' | 'instagram' | 'twitch'
+export type ChannelOwnership = 'self' | 'client'
+export type ChannelStatus = 'active' | 'disconnected' | 'suspended'
+
+export interface VideoChannel {
+  id: string
+  tenant_id: string
+  platform: VideoPlatform
+  platform_channel_id: string
+  channel_name: string | null
+  channel_url: string | null
+  customer_id: string | null
+  contact_id: string | null
+  ownership: ChannelOwnership
+  status: ChannelStatus
+  oauth_token_id: string | null
+  last_sync_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface RevenueTotals {
+  currency: string | null
+  /** SUM over video_earnings for the range, decimal-as-text. */
+  platform_revenue: string
+  /** SUM over confirmed sponsorship deals in the range, decimal-as-text. */
+  sponsorship_revenue: string
+  /** platform + sponsorship, decimal-as-text. */
+  grand_total: string
+  channels_with_earnings: number
+}
+
+export interface ChannelRevenueRow {
+  channel_id: string
+  channel_name: string | null
+  platform: VideoPlatform
+  ownership: ChannelOwnership
+  status: ChannelStatus
+  currency: string | null
+  /** SUM(estimated_earnings) over the range, decimal-as-text. */
+  total_revenue: string
+  total_views: number
+  last_sync_at: string | null
+}
+
+export interface RevenueOverviewResponse {
+  range: { from: string | null; to: string | null }
+  totals: RevenueTotals
+  channels: ChannelRevenueRow[]
+  openAlerts: number
+}
+
+export type RevenueAlertKind = 'revenue_drop' | 'revenue_spike' | 'new_sponsorship' | 'sync_failure'
+export type RevenueAlertSeverity = 'info' | 'warning' | 'critical'
+export type RevenueAlertStatus = 'open' | 'acknowledged' | 'dismissed'
+
+export interface RevenueAlert {
+  id: string
+  tenant_id: string
+  channel_id: string | null
+  customer_id: string | null
+  owner_id: string | null
+  kind: RevenueAlertKind
+  severity: RevenueAlertSeverity
+  message: string
+  metrics: Record<string, unknown>
+  dedup_key: string
+  status: RevenueAlertStatus
+  acknowledged_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface VideoAlertsResponse {
+  alerts: RevenueAlert[]
+  total: number
+}
+
+export interface AlertActionResponse {
+  alert: RevenueAlert
+}
+
+export interface AlertScanResponse {
+  created: number
+  skipped: number
+}
+
+export type BillingFeeModel = 'pct_of_revenue' | 'flat_retainer' | 'hybrid'
+export type BillingPeriod = 'monthly' | 'quarterly'
+export type InvoiceStatus = 'draft' | 'approved' | 'issued' | 'void'
+
+export interface ClientBillingProfile {
+  id: string
+  tenant_id: string
+  customer_id: string
+  owner_id: string | null
+  fee_model: BillingFeeModel
+  management_fee_pct: number | null
+  flat_amount: number | null
+  currency: string
+  billing_period: BillingPeriod
+  bill_on_sponsorship: boolean
+  active: boolean
+  valid_from: string
+  valid_to: string | null
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface BillingInvoice {
+  id: string
+  tenant_id: string
+  customer_id: string
+  billing_profile_id: string | null
+  owner_id: string | null
+  period_start: string
+  period_end: string
+  channel_ids: string[]
+  platform_revenue: number
+  sponsorship_revenue: number
+  gross_revenue: number
+  currency: string
+  fee_model: BillingFeeModel
+  fee_pct: number | null
+  fee_flat_amount: number | null
+  computed_amount: number
+  line_items: Record<string, unknown>[]
+  status: InvoiceStatus
+  invoice_number: string | null
+  issued_at: string | null
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface BillingProfilesResponse {
+  profiles: ClientBillingProfile[]
+  total: number
+}
+
+export interface BillingInvoicesResponse {
+  invoices: BillingInvoice[]
+  total: number
+}
+
+export interface InvoiceActionResponse {
+  invoice: BillingInvoice
+}
