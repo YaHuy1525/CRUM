@@ -67,7 +67,16 @@ function stubQueries(handlers: Record<string, Row[]>): void {
       const staged = params?.[6]
       const rows = handlers['INSERT INTO pending_writes'].map((row) => ({
         ...row,
-        payload: typeof staged === 'string' ? (JSON.parse(staged) as Row) : row.payload,
+        // A fixture that sets its own payload is simulating the ON CONFLICT no-op:
+        // an open draft is handed back with the numbers it was created with, which
+        // is the one thing this tool cannot reproduce from its own input. Every
+        // existing fixture leaves payload as {} and still gets the echo.
+        payload:
+          row.payload && Object.keys(row.payload).length > 0
+            ? row.payload
+            : typeof staged === 'string'
+              ? (JSON.parse(staged) as Row)
+              : row.payload,
       }))
       return Promise.resolve({ rows })
     }
@@ -393,6 +402,8 @@ describe('marketing.stage_bundle', () => {
     ])
     expect(stagedInsert().requestedCeilingMinor).toBe(2500)
     expect(stagedInsert().actionCount).toBe(0)
+    expect(stagedInsert().objective).toBe('outreach_support')
+    expect(stagedInsert().artifactCount).toBe(3)
   })
 
   it('keys the draft on the bundle id and the hash recomputed from the stored row', async () => {
@@ -405,6 +416,12 @@ describe('marketing.stage_bundle', () => {
     expect(String(call('INSERT INTO pending_writes')?.params[9])).toBe(
       `stage:${BUNDLE_ID}:${String(staged.draftHash)}`,
     )
+    // The fixture row's stored draft_hash is the decoy 'saved-hash', so these two
+    // are what make the assertion above about provenance rather than about
+    // self-consistency: an echo of the column, an empty hash, and a constant all
+    // fail here and pass without them.
+    expect(String(staged.draftHash)).not.toBe('saved-hash')
+    expect(String(staged.draftHash)).toMatch(/^[0-9a-f]{64}$/)
   })
 
   it('refuses a bundle whose plan asks for something nothing can execute, and stages nothing', async () => {
@@ -416,6 +433,12 @@ describe('marketing.stage_bundle', () => {
     const result = await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
     expect(result).toMatchObject({ proceed: false })
     expect(String(result.reason)).toContain('publish_page')
+    const refusalTask = call('INSERT INTO human_tasks')
+    expect(refusalTask).toBeDefined()
+    expect(String(refusalTask?.params[3])).toBe('refusal')
+    expect(String(refusalTask?.params[4])).toContain('Refused stage_bundle')
+    expect(String(refusalTask?.params[6])).toBe('marketing.stage_bundle')
+    expect(String(refusalTask?.params[4])).toContain('publish_page')
     expect(call('INSERT INTO pending_writes')).toBeUndefined()
     expect(call('UPDATE marketing_bundles')).toBeUndefined()
   })
@@ -434,7 +457,35 @@ describe('marketing.stage_bundle', () => {
     const result = await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
     expect(result).toMatchObject({ proceed: false })
     expect(String(result.reason)).toContain('unreadable funnel_plan')
+    const refusalTask = call('INSERT INTO human_tasks')
+    expect(refusalTask).toBeDefined()
+    expect(String(refusalTask?.params[3])).toBe('refusal')
+    expect(String(refusalTask?.params[4])).toContain('Refused stage_bundle')
+    expect(String(refusalTask?.params[6])).toBe('marketing.stage_bundle')
+    expect(String(refusalTask?.params[4])).toContain('unreadable funnel_plan')
     expect(call('INSERT INTO pending_writes')).toBeUndefined()
+  })
+
+  /**
+   * The other half of the derivation: a readable media plan that asks for a
+   * campaign must be refused by the tool, not only by outbox's own unit tests,
+   * because "an action nothing can execute never reaches a reviewer" is a claim
+   * about this tool's behaviour.
+   */
+  it('refuses a readable media plan that asks for a campaign', async () => {
+    stubQueries({
+      'FROM marketing_bundles': [
+        bundleRow({ media_plan: { campaigns: [{ name: 'melbourne-physio-awareness' }] }, objective: 'brand_awareness' }),
+      ],
+      'SELECT count(*) AS count FROM marketing_artifacts': [{ count: 2 }],
+      'INSERT INTO human_tasks': [{ id: '66666666-6666-4666-8666-666666666666' }],
+    })
+    const result = await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
+    expect(result).toMatchObject({ proceed: false })
+    expect(String(result.reason)).toContain('create_campaign')
+    expect(String(call('INSERT INTO human_tasks')?.params[4])).toContain('create_campaign')
+    expect(call('INSERT INTO pending_writes')).toBeUndefined()
+    expect(call('UPDATE marketing_bundles')).toBeUndefined()
   })
 
   it('refuses a bundle that is already approved, rather than double-approving it', async () => {
@@ -494,5 +545,42 @@ describe('marketing.stage_bundle', () => {
     expect(String(insert?.params[3])).toBe('marketing_stage')
     expect(String(insert?.params[4])).toBe('update')
     expect(String(insert?.params[5])).toBe(BUNDLE_ID)
+  })
+
+  /**
+   * getOrCreateDraft resolves a key match with DO UPDATE SET run_id = run_id
+   * (src/db/pending-writes.ts:93-95), so a re-stage at a different ceiling gets back
+   * the draft that already exists, holding the ceiling it was created with. The
+   * message must describe that row. Before the fix it described the request.
+   */
+  it('reports the ceiling the open draft holds when the key already exists', async () => {
+    stubQueries({
+      'FROM marketing_bundles': [bundleRow()],
+      'SELECT count(*) AS count FROM marketing_artifacts': [{ count: 3 }],
+      'INSERT INTO pending_writes': [
+        pendingWriteRow({
+          object_type: 'marketing_stage',
+          gate: 'approval',
+          payload: { requestedCeilingMinor: 999999, artifactCount: 1, actionCount: 0 },
+        }),
+      ],
+      'UPDATE marketing_bundles': [{ id: BUNDLE_ID }],
+    })
+    const result = await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
+    expect(result.pendingWriteId).toBe(DRAFT_ID)
+    expect(result.gate).toBe('approval')
+    expect(result.message).toContain('ceiling 999999 minor units')
+    expect(result.message).not.toContain('ceiling 2500')
+    expect(result.message).toContain('1 asset(s)')
+  })
+
+  it('refuses to claim success when the bundle row did not move to staged', async () => {
+    stubQueries({
+      ...stageHandlers(bundleRow()),
+      'UPDATE marketing_bundles': [],
+    })
+    await expect(stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })).rejects.toThrow(
+      /stage_failed/,
+    )
   })
 })

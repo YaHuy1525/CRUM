@@ -389,13 +389,35 @@ export const stageBundleTool = createTool({
       })
 
       // After the draft, so a failure above never leaves a bundle marked staged.
-      await markBundleStaged({ tenantId: rc.tenantId, bundleId: bundle.id })
+      const moved = await markBundleStaged({ tenantId: rc.tenantId, bundleId: bundle.id })
+      if (!moved) {
+        throw new Error(
+          `stage_failed: bundle ${bundle.id} no longer reads as draft or staged, so approval ` +
+            `${draft.id} describes a bundle this build cannot honour`,
+        )
+      }
+
+      /**
+       * The row is the truth. getOrCreateDraft's ON CONFLICT is a no-op
+       * (src/db/pending-writes.ts:93-95), so when the key already matches an open
+       * draft, the stored payload keeps the numbers it was created with and the ones
+       * in `payload` above were never written anywhere. Reporting those instead would
+       * tell the owner their new ceiling is awaiting approval while the row they are
+       * about to click still says the old one, and the ceiling is the one number the
+       * approver is being asked to trust.
+       */
+      const stored = draft.payload as Record<string, unknown>
+      const numOf = (key: string, asked: number): number =>
+        typeof stored[key] === 'number' ? stored[key] : asked
 
       return {
         pendingWriteId: draft.id,
-        riskScore: assessment.score,
-        gate: gate === 'refuse' ? ('approval' as const) : gate,
-        message: `Bundle ${bundle.id} staged for approval (${draft.id}). ${artifactCount} asset(s), ${actions.length} action(s), ceiling ${input.requestedCeilingMinor} minor units.`,
+        riskScore: draft.riskScore,
+        gate: draft.gate === 'auto' ? ('auto' as const) : ('approval' as const),
+        message:
+          `Bundle ${bundle.id} staged for approval (${draft.id}). ` +
+          `${numOf('artifactCount', artifactCount)} asset(s), ${numOf('actionCount', actions.length)} action(s), ` +
+          `ceiling ${numOf('requestedCeilingMinor', input.requestedCeilingMinor)} minor units.`,
       }
     })
   },
