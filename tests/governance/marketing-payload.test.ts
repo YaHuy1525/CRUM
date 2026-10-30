@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { loadPolicy } from '@/governance/policy'
 import { domainOf, scoreRisk } from '@/governance/risk'
 import { stagePayload, saveRiskView } from '@/marketing/payload'
+import { MARKETING_OBJECTIVES } from '@/db/marketing'
 
 const policy = loadPolicy(join(process.cwd(), 'policy'))
 const risk = policy.risk
@@ -13,18 +14,26 @@ const HASH = 'a'.repeat(64)
 // dots are separators, so publish_page contributes the token `publish`.
 const TOKEN_PATTERN = /[a-z0-9]+(?:-[a-z0-9]+)*/g
 
-function tokensOf(value: unknown): Set<string> {
-  return new Set(JSON.stringify(value).toLowerCase().match(TOKEN_PATTERN) ?? [])
-}
-
-const TERM_LISTS = [
+// Mirrors termMatches in src/governance/risk.ts:47-51 rather than paraphrasing it:
+// a single word is a whole-token hit, a multi-word marker is a substring hit on
+// the lowercased JSON. Copying only the token half is how 'bank account' slips
+// through a sweep that reads as exhaustive.
+const TERMS: readonly string[] = [
   ...risk.preflight.irreversible_terms,
   ...risk.preflight.high_blast_terms,
   ...Object.values(risk.preflight.domains).flatMap(
     (domain) => domain.require_approval_terms ?? [],
   ),
-  ...risk.sensitive.markers.filter((marker) => !marker.includes(' ')),
+  ...risk.sensitive.markers,
 ]
+
+function forbiddenTermsIn(value: unknown): string[] {
+  const haystack = JSON.stringify(value).toLowerCase()
+  const tokens = new Set(haystack.match(TOKEN_PATTERN) ?? [])
+  return TERMS.map((term) => term.toLowerCase()).filter((term) =>
+    term.includes(' ') ? haystack.includes(term) : tokens.has(term),
+  )
+}
 
 describe('the marketing payload rule', () => {
   it('scores a stage payload of identifiers, a hash and numbers at benign', () => {
@@ -41,18 +50,40 @@ describe('the marketing payload rule', () => {
     expect(policy.gateFor('marketing.stage_bundle', assessment)).toBe('approval')
   })
 
-  it('names no forbidden term in any staged field, key or value', () => {
-    const payload = stagePayload({
-      bundleId: BUNDLE,
-      draftHash: HASH,
-      objective: 'proof_asset',
-      artifactCount: 6,
-      requestedCeilingMinor: 99_000,
-      actionCount: 2,
-    })
-    const tokens = tokensOf(payload)
-    const hits = TERM_LISTS.map((term) => term.toLowerCase()).filter((term) => tokens.has(term))
-    expect(hits).toEqual([])
+  it('names no forbidden term in a staged payload or a save view, key or value', () => {
+    const payloads: unknown[] = [
+      stagePayload({
+        bundleId: BUNDLE,
+        draftHash: HASH,
+        objective: 'proof_asset',
+        artifactCount: 6,
+        requestedCeilingMinor: 99_000,
+        actionCount: 2,
+      }),
+      stagePayload({
+        bundleId: BUNDLE,
+        draftHash: HASH,
+        objective: 'inbound_leads',
+        artifactCount: 0,
+        requestedCeilingMinor: 0,
+        actionCount: 0,
+      }),
+      // The save-side view is the one scored beside real copy, so it is swept for
+      // every objective the bundle table will accept, read from the source of
+      // truth so a fourth objective cannot join the enum unswept.
+      ...MARKETING_OBJECTIVES.map((objective) =>
+        saveRiskView({ objective, artifactCount: 3, bundleDraftHash: HASH }),
+      ),
+    ]
+
+    for (const [index, payload] of payloads.entries()) {
+      expect(forbiddenTermsIn(payload), `payload ${index}`).toEqual([])
+    }
+  })
+
+  it('sweeps a non-empty term list, so an emptied yaml cannot make the rule vacuous', () => {
+    expect(TERMS.length).toBeGreaterThan(0)
+    expect(TERMS.filter((term) => term.includes(' ')).length).toBeGreaterThan(0)
   })
 
   it('proves the trap is real, so this file cannot be satisfied by an empty payload', () => {
@@ -92,14 +123,25 @@ describe('the marketing payload rule', () => {
     expect(policy.toolByName.get('marketing.stage_bundle')?.class).toBe('approval')
   })
 
-  it('is callable by an admin and not by a plain user for the approval half', () => {
-    // active-tools.ts gates on declared class, so this is the role rule restated
-    // in one line rather than a second copy of the resolver.
+  it('keeps the stage gate at approval for a zero-count payload', () => {
+    // The point is that an empty bundle is not a cheap one: nothing in the score
+    // drops it below the declared class, so there is no way to stage a
+    // zero-asset, zero-action, zero-ceiling bundle past a reviewer. Role
+    // reachability is asserted by tests/mastra/active-tools.test.ts, not here —
+    // this file is about payload contents.
     const assessment = scoreRisk(
-      stagePayload({ bundleId: BUNDLE, draftHash: HASH, objective: 'proof_asset', artifactCount: 0, requestedCeilingMinor: 0, actionCount: 0 }),
+      stagePayload({
+        bundleId: BUNDLE,
+        draftHash: HASH,
+        objective: 'proof_asset',
+        artifactCount: 0,
+        requestedCeilingMinor: 0,
+        actionCount: 0,
+      }),
       risk,
       'marketing.stage_bundle',
     )
+    expect(assessment.score).toBe(risk.preflight.scores.benign)
     expect(policy.gateFor('marketing.stage_bundle', assessment)).toBe('approval')
   })
 })

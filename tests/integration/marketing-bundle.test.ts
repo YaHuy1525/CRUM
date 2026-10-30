@@ -1,14 +1,18 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { getDbClient, closeDbClient } from '../../src/db/client'
-import { commitWithReceipt, getPendingWrite } from '../../src/db/pending-writes'
+import { commitWithReceipt, getPendingWrite, getReceipt } from '../../src/db/pending-writes'
+import { computeActionHash, verifyReceipt } from '../../src/governance/receipt'
 import { getMarketingBundle, listMarketingArtifacts } from '../../src/db/marketing'
 import { saveBundleTool, stageBundleTool } from '../../src/mastra/tools/marketing-writes'
 
 /**
  * The same lazy-read contract as every other file here: no URL, no run, and the
  * skip is reported rather than faked. This is the only test in slice 1 that
- * touches a real Postgres, so it is the one that proves 0018, the auto-commit
- * path, the stage, the approval and the receipt fit together.
+ * touches a real Postgres, so it is the one that proves 0018's tables exist and
+ * accept a valid row, that save → stage → approve → receipt runs as one chain
+ * against real constraints, and that the receipt signature verifies over the
+ * bytes actually stored. It does not prove the model picks the right tool: that
+ * is the golden gate, and the gate is skipped without a model key.
  */
 const url = process.env.CRUM_INTEGRATION_DATABASE_URL ?? ''
 if (url) process.env.DATABASE_URL = url
@@ -110,13 +114,18 @@ describe.skipIf(!url)('marketing bundle end to end', () => {
     const bundleId = saved.bundleId
     expect(bundleId).toMatch(/^[0-9a-f-]{36}$/)
 
-    const stored = await getMarketingBundle(TENANT, bundleId!)
-    expect(stored?.status).toBe('draft')
+    // Named `savedBundle`, not `stored`: the A3 receipt block below declares
+    // `stored` for the stored receipt row, and two block-scoped `const`s of the
+    // same name in one `it` body is TS2451.
+    const savedBundle = await getMarketingBundle(TENANT, bundleId!)
+    expect(savedBundle?.status).toBe('draft')
     expect((await listMarketingArtifacts(TENANT, bundleId!))).toHaveLength(1)
 
     const staged = await stage(bundleId!)
     expect(staged.gate).toBe('approval')
-    expect(staged.proceed).not.toBe(false)
+    // `proceed` only exists on the refusal path, so a successful stage must not
+    // carry it. `not.toBe(false)` would also have passed on `true`.
+    expect(staged.proceed).toBeUndefined()
 
     const draft = await getPendingWrite(staged.pendingWriteId, TENANT)
     expect(draft?.objectType).toBe('marketing_stage')
@@ -141,14 +150,66 @@ describe.skipIf(!url)('marketing bundle end to end', () => {
     const final = await getMarketingBundle(TENANT, bundleId!)
     expect(final?.status).toBe('approved')
 
-    const receipt = await db.query<{ id: string; scope: string }>(
-      `SELECT id, scope FROM audit_receipts WHERE tenant_id = $1 AND pending_write_id = $2`,
-      [TENANT, staged.pendingWriteId],
-    )
-    expect(receipt.rows).toHaveLength(1)
-    expect(receipt.rows[0]?.scope).toBe('crm:write')
+    /**
+     * The case name promises "a signed receipt", so the signature has to be
+     * verified, not merely observed to be non-null. Rebuilt exactly the way
+     * GET /api/approvals/receipts/:id rebuilds it (src/api/approvals.ts:312-328),
+     * from the stored row alone: if a build signed one set of fields and stored
+     * another, the route would report `invalid` and this test would fail.
+     */
+    const receipt = await getReceipt(approved.receiptId, TENANT)
+    expect(receipt).not.toBeNull()
+    const stored = receipt!
+    expect(stored.scope).toBe('crm:write')
+    expect(stored.decision).toBe('approved')
+    expect(stored.committedRecordId).toBe(bundleId)
+    expect(
+      verifyReceipt(
+        {
+          pendingWriteId: stored.pendingWriteId,
+          runId: stored.runId,
+          scope: stored.scope,
+          actionHash: computeActionHash(stored.payload),
+          approvedBy: stored.approvedBy,
+        },
+        stored.signature,
+      ),
+    ).toBe(true)
 
-    // Nothing is executable in slice 1, so approving must have queued no work.
+    /**
+     * Control: prove the assertion above can fail. Same five fields, with one
+     * number of the signed payload changed, must not verify — otherwise the line
+     * above would be decoration.
+     */
+    expect(
+      verifyReceipt(
+        {
+          pendingWriteId: stored.pendingWriteId,
+          runId: stored.runId,
+          scope: stored.scope,
+          actionHash: computeActionHash({
+            ...(stored.payload as Record<string, unknown>),
+            requestedCeilingMinor: 1,
+          }),
+          approvedBy: stored.approvedBy,
+        },
+        stored.signature,
+      ),
+    ).toBe(false)
+
+    // The draft points at the receipt it earned. commitWithReceipt back-fills
+    // inside the same transaction (src/db/pending-writes.ts:533-536), so a
+    // receipt that exists with no pointer is a rollback this file would miss.
+    const draftAfter = await getPendingWrite(staged.pendingWriteId, TENANT)
+    expect(draftAfter?.receiptId).toBe(stored.id)
+    expect(draftAfter?.committedAt).not.toBeNull()
+    expect(draftAfter?.committedRecordId).toBe(bundleId)
+
+    // Documentation of the invariant, not proof of the guard: this fixture's
+    // plans are null, so nothing would have been queued regardless. The guard
+    // itself is proven by the refusal case below, which loads a real funnelPlan
+    // and shows no draft and no staged status. An approved bundle in slice 1
+    // queues no work, because slice 1 registers no adapters.
     const actions = await db.query<{ n: string }>(
       `SELECT count(*)::text AS n FROM marketing_actions WHERE tenant_id = $1 AND bundle_id = $2`,
       [TENANT, bundleId],
@@ -197,11 +258,14 @@ describe.skipIf(!url)('marketing bundle end to end', () => {
     const bundle = await getMarketingBundle(TENANT, saved.bundleId!)
     expect(bundle?.status).toBe('draft')
 
-    const tasks = await db.query<{ title: string }>(
-      `SELECT title FROM human_tasks WHERE tenant_id = $1 AND tool_name = 'marketing.stage_bundle'`,
+    const tasks = await db.query<{ kind: string; title: string }>(
+      `SELECT kind, title FROM human_tasks
+        WHERE tenant_id = $1 AND tool_name = 'marketing.stage_bundle'
+        ORDER BY created_at`,
       [TENANT],
     )
     expect(tasks.rows.length).toBeGreaterThan(0)
+    expect(tasks.rows[0]?.kind).toBe('refusal')
     expect(tasks.rows[0]?.title).toContain('publish_page')
   })
 
