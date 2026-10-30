@@ -20,6 +20,22 @@ const ApprovalOutputSchema = z.object({
   reason: z.string().optional(),
 })
 
+// Platforms a send can actually leave through. `website` and `youtube` are
+// discovery surfaces, not inboxes: treating them as DMs would spend a DM
+// budget on a channel that cannot be messaged at all.
+const SENDABLE_PLATFORMS = new Set([
+  'instagram',
+  'linkedin',
+  'facebook',
+  'tiktok',
+  'shopee',
+  'email',
+])
+
+function isSendable(platform: string): boolean {
+  return SENDABLE_PLATFORMS.has(platform)
+}
+
 // The send kind is a property of the channel row, never of caller input: a
 // caller could otherwise claim `linkedin` (manual, 30/day) while pointing at an
 // Instagram channel and spend the wrong budget.
@@ -27,6 +43,15 @@ function sendKindFor(platform: string): SendKind {
   if (platform === 'email') return 'email'
   if (platform === 'linkedin') return 'manual'
   return 'dm'
+}
+
+// Quiet hours are local to the prospect, so the market decides the zone. The
+// env var stays as an explicit override for operators and tests.
+function timeZoneFor(country: string | null): string {
+  const override = process.env.PROSPECT_TIMEZONE
+  if (override) return override
+  if (country === 'VN') return 'Asia/Ho_Chi_Minh'
+  return 'Australia/Sydney'
 }
 
 // Drafts only know two media: email bodies and everything-else DMs. The
@@ -75,7 +100,7 @@ export const draftOutreachTool = createTool({
     if (gate === 'refuse') {
       const tenantId = requestContext?.['tenantId'] as string
       const userId = requestContext?.['userId'] as string
-      await createHumanTask({
+      const humanTaskId = await createHumanTask({
         tenantId,
         runId: toolCallId,
         toolName: 'crm.draft_outreach',
@@ -86,7 +111,9 @@ export const draftOutreachTool = createTool({
       return {
         proceed: false as const,
         output: {
-          pendingWriteId: toolCallId,
+          // The human task id, not the draft id: a refusal stages nothing, so
+          // nothing downstream may take this for a pending write.
+          pendingWriteId: humanTaskId,
           riskScore: assessment.score,
           gate: 'approval' as const,
           message: 'Policy refuses this draft. A human task was created; nothing is staged.',
@@ -106,7 +133,9 @@ export const draftOutreachTool = createTool({
 
       // Every id in the payload is checked against this tenant before anything
       // is staged. A FK alone would accept a prospect, channel or snapshot that
-      // belongs to somebody else.
+      // belongs to somebody else. The channel and snapshot are also required to
+      // belong to *this* prospect: consent is per prospect, so a draft that
+      // cites prospect A's consent must not be addressed to prospect B's handle.
       const prospect = await db.query<{ id: string }>(
         `SELECT id FROM prospects WHERE id = $1 AND tenant_id = $2`,
         [input.prospectId, rc.tenantId],
@@ -114,16 +143,18 @@ export const draftOutreachTool = createTool({
       if (!prospect.rows[0]) throw new Error('not_found')
 
       const channel = await db.query<{ platform: string }>(
-        `SELECT platform FROM prospect_channels WHERE id = $1 AND tenant_id = $2`,
-        [input.channelId, rc.tenantId],
+        `SELECT platform FROM prospect_channels
+          WHERE id = $1 AND tenant_id = $2 AND prospect_id = $3`,
+        [input.channelId, rc.tenantId, input.prospectId],
       )
       const channelRow = channel.rows[0]
       if (!channelRow) throw new Error('not_found')
 
       if (input.evidenceSnapshotId !== null) {
         const snapshot = await db.query<{ id: string }>(
-          `SELECT id FROM prospect_snapshots WHERE id = $1 AND tenant_id = $2`,
-          [input.evidenceSnapshotId, rc.tenantId],
+          `SELECT id FROM prospect_snapshots
+            WHERE id = $1 AND tenant_id = $2 AND prospect_id = $3`,
+          [input.evidenceSnapshotId, rc.tenantId, input.prospectId],
         )
         if (!snapshot.rows[0]) throw new Error('not_found')
       }
@@ -179,7 +210,9 @@ export const draftOutreachTool = createTool({
         riskScore: assessment.score,
         gate,
         requestedBy: rc.userId,
-        idempotencyKey: input.draftHash,
+        // Namespaced so a caller cannot pick a draftHash that collides with the
+        // server-derived `send:<draftId>` key and hijack an in-flight send.
+        idempotencyKey: `draft:${input.draftHash}`,
       })
 
       return {
@@ -212,7 +245,7 @@ export const sendOutreachTool = createTool({
     const policy = loadPolicy()
     const assessment = scoreRisk(input, policy.risk, 'crm.send_outreach')
     if (policy.gateFor('crm.send_outreach', assessment) === 'refuse') {
-      await createHumanTask({
+      const humanTaskId = await createHumanTask({
         tenantId: requestContext?.['tenantId'] as string,
         runId: toolCallId,
         toolName: 'crm.send_outreach',
@@ -223,7 +256,7 @@ export const sendOutreachTool = createTool({
       return {
         proceed: false as const,
         output: {
-          pendingWriteId: toolCallId,
+          pendingWriteId: humanTaskId,
           riskScore: assessment.score,
           gate: 'approval' as const,
           message: 'Policy refuses this send. A human task was created.',
@@ -243,25 +276,35 @@ export const sendOutreachTool = createTool({
 
       // A send is authorised against the stored draft, not the payload. The
       // replay guard reads `status` from the same row the commit will update.
+      // `country` comes along because quiet hours are local to the prospect.
       const loaded = await db.query<{
         id: string
         prospect_id: string
         channel_id: string
         status: string
+        country: string | null
       }>(
-        `SELECT id, prospect_id, channel_id, status FROM outreach_drafts WHERE id = $1 AND tenant_id = $2`,
+        `SELECT d.id, d.prospect_id, d.channel_id, d.status, p.country
+           FROM outreach_drafts d
+           JOIN prospects p ON p.id = d.prospect_id AND p.tenant_id = d.tenant_id
+          WHERE d.id = $1 AND d.tenant_id = $2`,
         [input.draftId, rc.tenantId],
       )
       const draftRow = loaded.rows[0]
       if (!draftRow) throw new Error('draft_not_found')
       if (draftRow.status === 'sent') throw new Error('already_sent')
 
+      // The channel must belong to the draft's own prospect: a channel that is
+      // merely in the same tenant would send one prospect's message to another
+      // prospect's handle while spending the first one's consent and caps.
       const channel = await db.query<{ platform: string }>(
-        `SELECT platform FROM prospect_channels WHERE id = $1 AND tenant_id = $2`,
-        [draftRow.channel_id, rc.tenantId],
+        `SELECT platform FROM prospect_channels
+          WHERE id = $1 AND tenant_id = $2 AND prospect_id = $3`,
+        [draftRow.channel_id, rc.tenantId, draftRow.prospect_id],
       )
       const channelRow = channel.rows[0]
       if (!channelRow) throw new Error('channel_not_found')
+      if (!isSendable(channelRow.platform)) throw new Error('unsupported_channel')
 
       // Consent is recorded per prospect, so its absence is what blocks an
       // email. The cap engine decides whether that absence matters.
@@ -293,7 +336,7 @@ export const sendOutreachTool = createTool({
         channel: channelRow.platform as SendChannel,
         kind: sendKindFor(channelRow.platform),
         now: new Date(),
-        timeZone: process.env.PROSPECT_TIMEZONE ?? 'Australia/Sydney',
+        timeZone: timeZoneFor(draftRow.country),
         consented: consent.rows.length > 0,
         ledger,
       })
@@ -302,7 +345,7 @@ export const sendOutreachTool = createTool({
       const assessment = scoreRisk(input, policy.risk, 'crm.send_outreach')
 
       if (!decision.allowed) {
-        await createHumanTask({
+        const humanTaskId = await createHumanTask({
           tenantId: rc.tenantId,
           runId: `send:${input.draftId}`,
           toolName: 'crm.send_outreach',
@@ -314,7 +357,9 @@ export const sendOutreachTool = createTool({
         return {
           proceed: false as const,
           reason: decision.reason,
-          pendingWriteId: input.draftId,
+          // The human task id, not the draft id: nothing is staged, so a caller
+          // must not mistake the draft for a pending write awaiting approval.
+          pendingWriteId: humanTaskId,
           riskScore: assessment.score,
           gate: 'approval' as const,
           message: `Send refused (${decision.reason}). A human task was created; nothing is staged.`,

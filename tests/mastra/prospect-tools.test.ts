@@ -88,7 +88,13 @@ function draftInput(overrides: Record<string, unknown> = {}): Record<string, unk
 }
 
 function sentDraftRow(status: string): Row {
-  return { id: DRAFT_ID, prospect_id: PROSPECT_ID, channel_id: CHANNEL_ID, status }
+  return {
+    id: DRAFT_ID,
+    prospect_id: PROSPECT_ID,
+    channel_id: CHANNEL_ID,
+    status,
+    country: 'AU',
+  }
 }
 
 // The cap engine reads the wall clock, so pin it to a weekday daytime hour in a
@@ -110,7 +116,7 @@ afterEach(() => {
 describe('crm.send_outreach safety checks', () => {
   it('throws already_sent when replaying a draft that is already sent', async () => {
     stubQueries({
-      'SELECT id, prospect_id, channel_id, status': [sentDraftRow('sent')],
+      'p.country': [sentDraftRow('sent')],
     })
 
     await expect(runSend(sendInput())).rejects.toThrow('already_sent')
@@ -119,7 +125,7 @@ describe('crm.send_outreach safety checks', () => {
 
   it('refuses an email send with no consent row', async () => {
     stubQueries({
-      'SELECT id, prospect_id, channel_id, status': [sentDraftRow('drafted')],
+      'p.country': [sentDraftRow('drafted')],
       'SELECT platform FROM prospect_channels': [{ platform: 'email' }],
       'FROM prospect_consents': [],
       'JOIN prospect_channels c': [],
@@ -141,7 +147,7 @@ describe('crm.send_outreach safety checks', () => {
       sent_at: `2026-11-03T11:${String(i).padStart(2, '0')}:00Z`,
     }))
     stubQueries({
-      'SELECT id, prospect_id, channel_id, status': [sentDraftRow('drafted')],
+      'p.country': [sentDraftRow('drafted')],
       'SELECT platform FROM prospect_channels': [{ platform: 'instagram' }],
       'FROM prospect_consents': [{ '?column?': 1 }],
       'JOIN prospect_channels c': ledger,
@@ -157,7 +163,7 @@ describe('crm.send_outreach safety checks', () => {
 
   it('keys the staged send on the draft id, not the caller actionHash', async () => {
     stubQueries({
-      'SELECT id, prospect_id, channel_id, status': [sentDraftRow('drafted')],
+      'p.country': [sentDraftRow('drafted')],
       'SELECT platform FROM prospect_channels': [{ platform: 'linkedin' }],
       'FROM prospect_consents': [],
       'JOIN prospect_channels c': [],
@@ -168,6 +174,46 @@ describe('crm.send_outreach safety checks', () => {
 
     expect(result.pendingWriteId).toBe(PENDING_ID)
     expect(queryCall('INSERT INTO pending_writes')?.params[9]).toBe(`send:${DRAFT_ID}`)
+  })
+
+  it('scopes the channel lookup to the draft prospect, not just the tenant', async () => {
+    stubQueries({
+      'p.country': [sentDraftRow('drafted')],
+      // The channel id exists in the tenant but belongs to another prospect, so
+      // the prospect-scoped query matches nothing.
+      'SELECT platform FROM prospect_channels': [],
+    })
+
+    await expect(runSend(sendInput())).rejects.toThrow('channel_not_found')
+    const lookup = queryCall('SELECT platform FROM prospect_channels')
+    expect(lookup?.sql).toContain('prospect_id = $3')
+    expect(lookup?.params).toEqual([CHANNEL_ID, rc.tenantId, PROSPECT_ID])
+  })
+
+  it('throws unsupported_channel for a website channel that cannot be messaged', async () => {
+    stubQueries({
+      'p.country': [sentDraftRow('drafted')],
+      'SELECT platform FROM prospect_channels': [{ platform: 'website' }],
+    })
+
+    await expect(runSend(sendInput())).rejects.toThrow('unsupported_channel')
+    expect(queryCall('FROM prospect_consents')).toBeUndefined()
+    expect(queryCall('INSERT INTO pending_writes')).toBeUndefined()
+  })
+
+  it('returns the human task id, not the draft id, when caps refuse a send', async () => {
+    stubQueries({
+      'p.country': [sentDraftRow('drafted')],
+      'SELECT platform FROM prospect_channels': [{ platform: 'email' }],
+      'FROM prospect_consents': [],
+      'JOIN prospect_channels c': [],
+      'INSERT INTO human_tasks': [{ id: HUMAN_TASK_ID }],
+    })
+
+    const result = await runSend({ ...sendInput(), channel: 'email' })
+
+    expect(result.pendingWriteId).toBe(HUMAN_TASK_ID)
+    expect(result.pendingWriteId).not.toBe(DRAFT_ID)
   })
 })
 
@@ -188,6 +234,54 @@ describe('crm.draft_outreach safety checks', () => {
     })
 
     await expect(runDraft(draftInput())).rejects.toThrow('not_found')
+  })
+
+  it('throws not_found when the channel belongs to another prospect in the tenant', async () => {
+    stubQueries({
+      'FROM prospects WHERE id': [{ id: PROSPECT_ID }],
+      // Same tenant, other prospect: the prospect-scoped query matches nothing.
+      'SELECT platform FROM prospect_channels': [],
+    })
+
+    await expect(
+      runDraft(draftInput({ prospectId: PROSPECT_ID, channelId: CHANNEL_ID })),
+    ).rejects.toThrow('not_found')
+    const lookup = queryCall('SELECT platform FROM prospect_channels')
+    expect(lookup?.sql).toContain('prospect_id = $3')
+    expect(lookup?.params).toEqual([CHANNEL_ID, rc.tenantId, PROSPECT_ID])
+  })
+
+  it('throws not_found when the evidence snapshot belongs to another prospect', async () => {
+    stubQueries({
+      'FROM prospects WHERE id': [{ id: PROSPECT_ID }],
+      'SELECT platform FROM prospect_channels': [{ platform: 'instagram' }],
+      'FROM prospect_snapshots': [],
+    })
+
+    await expect(
+      runDraft(draftInput({ evidenceSnapshotId: SNAPSHOT_ID })),
+    ).rejects.toThrow('not_found')
+    const lookup = queryCall('FROM prospect_snapshots')
+    expect(lookup?.sql).toContain('prospect_id = $3')
+    expect(lookup?.params).toEqual([SNAPSHOT_ID, rc.tenantId, PROSPECT_ID])
+  })
+
+  it('namespaces the idempotency key so a caller cannot collide with a send key', async () => {
+    stubQueries({
+      'FROM prospects WHERE id': [{ id: PROSPECT_ID }],
+      'SELECT platform FROM prospect_channels': [{ platform: 'instagram' }],
+      'FROM prospect_snapshots': [{ id: SNAPSHOT_ID }],
+      'INSERT INTO pending_writes': [{ id: PENDING_ID }],
+    })
+
+    const result = await runDraft(
+      draftInput({ evidenceSnapshotId: SNAPSHOT_ID, draftHash: 'send:00000000-0000-4000-8000-000000000000' }),
+    )
+
+    expect(result.pendingWriteId).toBe(PENDING_ID)
+    expect(queryCall('INSERT INTO pending_writes')?.params[9]).toBe(
+      'draft:send:00000000-0000-4000-8000-000000000000',
+    )
   })
 
   it('throws stage_order when a follow-up has no sent draft behind it', async () => {
