@@ -6,14 +6,35 @@ import { loadPolicy } from '../../governance/policy'
 import { scoreRisk } from '../../governance/risk'
 import { getOrCreateDraft, createHumanTask } from '../../db/pending-writes'
 import { getDbClient } from '../../db/client'
-import { checkDraft } from '../../prospects/draft-rules'
+import { checkDraft, type DraftChannel } from '../../prospects/draft-rules'
+import { checkSendCaps, type SendChannel, type SendKind, type SendLedgerEntry } from '../../prospects/caps'
 
 const ApprovalOutputSchema = z.object({
   pendingWriteId: z.string().uuid(),
   riskScore: z.number().int().min(0).max(100),
   gate: z.enum(['auto', 'approval']),
   message: z.string(),
+  // A caps refusal stages nothing, so it reports the refusal on the output
+  // rather than pretending a write was queued.
+  proceed: z.boolean().optional(),
+  reason: z.string().optional(),
 })
+
+// The send kind is a property of the channel row, never of caller input: a
+// caller could otherwise claim `linkedin` (manual, 30/day) while pointing at an
+// Instagram channel and spend the wrong budget.
+function sendKindFor(platform: string): SendKind {
+  if (platform === 'email') return 'email'
+  if (platform === 'linkedin') return 'manual'
+  return 'dm'
+}
+
+// Drafts only know two media: email bodies and everything-else DMs. The
+// platform row decides which rules apply, so a caller cannot claim `email` while
+// pointing at an Instagram channel to dodge the first-touch link ban.
+function draftChannelFor(platform: string): DraftChannel {
+  return platform === 'email' ? 'email' : 'dm'
+}
 
 const SnapshotOutputSchema = z.object({
   snapshotId: z.string().uuid(),
@@ -76,9 +97,55 @@ export const draftOutreachTool = createTool({
 
   execute: async (input, context) => {
     return context.observe.span('crm.draft_outreach', async () => {
+      const rc = context.requestContext.all as {
+        tenantId: string
+        userId: string
+        userRole: string
+      }
+      const db = getDbClient()
+
+      // Every id in the payload is checked against this tenant before anything
+      // is staged. A FK alone would accept a prospect, channel or snapshot that
+      // belongs to somebody else.
+      const prospect = await db.query<{ id: string }>(
+        `SELECT id FROM prospects WHERE id = $1 AND tenant_id = $2`,
+        [input.prospectId, rc.tenantId],
+      )
+      if (!prospect.rows[0]) throw new Error('not_found')
+
+      const channel = await db.query<{ platform: string }>(
+        `SELECT platform FROM prospect_channels WHERE id = $1 AND tenant_id = $2`,
+        [input.channelId, rc.tenantId],
+      )
+      const channelRow = channel.rows[0]
+      if (!channelRow) throw new Error('not_found')
+
+      if (input.evidenceSnapshotId !== null) {
+        const snapshot = await db.query<{ id: string }>(
+          `SELECT id FROM prospect_snapshots WHERE id = $1 AND tenant_id = $2`,
+          [input.evidenceSnapshotId, rc.tenantId],
+        )
+        if (!snapshot.rows[0]) throw new Error('not_found')
+      }
+
+      const effectiveChannel = draftChannelFor(channelRow.platform)
+      if (input.channel !== effectiveChannel) throw new Error('channel_mismatch')
+
+      // Stages are ordered: a follow-up may only follow a send that actually
+      // happened for this prospect.
+      if (input.stage !== 'first_touch') {
+        const sent = await db.query<{ id: string }>(
+          `SELECT d.id FROM outreach_drafts d
+            WHERE d.prospect_id = $1 AND d.tenant_id = $2 AND d.status = 'sent'
+            LIMIT 1`,
+          [input.prospectId, rc.tenantId],
+        )
+        if (!sent.rows[0]) throw new Error('stage_order')
+      }
+
       const violations = checkDraft({
         body: input.body,
-        channel: input.channel,
+        channel: effectiveChannel,
         stage: input.stage,
         evidenceSnapshotId: input.evidenceSnapshotId,
       })
@@ -86,11 +153,6 @@ export const draftOutreachTool = createTool({
         throw new Error(`draft rejected: ${violations.join(', ')}`)
       }
 
-      const rc = context.requestContext.all as {
-        tenantId: string
-        userId: string
-        userRole: string
-      }
       const policy = loadPolicy()
       const assessment = scoreRisk(input, policy.risk, 'crm.draft_outreach')
       const gate = policy.gateFor('crm.draft_outreach', assessment, {
@@ -177,8 +239,88 @@ export const sendOutreachTool = createTool({
         userId: string
         userRole: string
       }
+      const db = getDbClient()
+
+      // A send is authorised against the stored draft, not the payload. The
+      // replay guard reads `status` from the same row the commit will update.
+      const loaded = await db.query<{
+        id: string
+        prospect_id: string
+        channel_id: string
+        status: string
+      }>(
+        `SELECT id, prospect_id, channel_id, status FROM outreach_drafts WHERE id = $1 AND tenant_id = $2`,
+        [input.draftId, rc.tenantId],
+      )
+      const draftRow = loaded.rows[0]
+      if (!draftRow) throw new Error('draft_not_found')
+      if (draftRow.status === 'sent') throw new Error('already_sent')
+
+      const channel = await db.query<{ platform: string }>(
+        `SELECT platform FROM prospect_channels WHERE id = $1 AND tenant_id = $2`,
+        [draftRow.channel_id, rc.tenantId],
+      )
+      const channelRow = channel.rows[0]
+      if (!channelRow) throw new Error('channel_not_found')
+
+      // Consent is recorded per prospect, so its absence is what blocks an
+      // email. The cap engine decides whether that absence matters.
+      const consent = await db.query<{ present: number }>(
+        `SELECT 1 FROM prospect_consents WHERE prospect_id = $1 AND tenant_id = $2`,
+        [draftRow.prospect_id, rc.tenantId],
+      )
+
+      const ledgerResult = await db.query<{
+        prospect_id: string
+        platform: string
+        sent_at: string | Date
+      }>(
+        `SELECT d.prospect_id, c.platform, d.sent_at
+           FROM outreach_drafts d
+           JOIN prospect_channels c ON c.id = d.channel_id
+          WHERE d.tenant_id = $1 AND d.status = 'sent'`,
+        [rc.tenantId],
+      )
+      const ledger: SendLedgerEntry[] = ledgerResult.rows.map((row) => ({
+        prospectId: row.prospect_id,
+        channel: row.platform as SendChannel,
+        kind: sendKindFor(row.platform),
+        sentAt: new Date(row.sent_at),
+      }))
+
+      const decision = checkSendCaps({
+        prospectId: draftRow.prospect_id,
+        channel: channelRow.platform as SendChannel,
+        kind: sendKindFor(channelRow.platform),
+        now: new Date(),
+        timeZone: process.env.PROSPECT_TIMEZONE ?? 'Australia/Sydney',
+        consented: consent.rows.length > 0,
+        ledger,
+      })
+
       const policy = loadPolicy()
       const assessment = scoreRisk(input, policy.risk, 'crm.send_outreach')
+
+      if (!decision.allowed) {
+        await createHumanTask({
+          tenantId: rc.tenantId,
+          runId: `send:${input.draftId}`,
+          toolName: 'crm.send_outreach',
+          riskScore: assessment.score,
+          title: `Refused send_outreach: ${decision.reason}`,
+          body: `Draft ${input.draftId} refused by send caps (${decision.reason}); nothing was staged.`,
+          requestedBy: rc.userId,
+        }, 'refusal')
+        return {
+          proceed: false as const,
+          reason: decision.reason,
+          pendingWriteId: input.draftId,
+          riskScore: assessment.score,
+          gate: 'approval' as const,
+          message: `Send refused (${decision.reason}). A human task was created; nothing is staged.`,
+        }
+      }
+
       const gate = policy.gateFor('crm.send_outreach', assessment, {
         requestContext: { tenantId: rc.tenantId, userId: rc.userId, userRole: rc.userRole },
       })
@@ -193,7 +335,9 @@ export const sendOutreachTool = createTool({
         riskScore: assessment.score,
         gate,
         requestedBy: rc.userId,
-        idempotencyKey: input.actionHash,
+        // Caller-supplied `actionHash` cannot key this: after the first send
+        // commits, a replay would stage a second receipt and sent_at.
+        idempotencyKey: `send:${input.draftId}`,
       })
 
       return {
