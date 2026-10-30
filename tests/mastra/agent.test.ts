@@ -47,10 +47,10 @@ describe('crmAssistant', () => {
     expect(crmAssistant.__getMaxProcessorRetries()).toBe(2)
   })
 
-  it('has 37 tools configured (22 read + 6 auto + 9 approval)', async () => {
+  it('has 38 tools configured (22 read + 6 auto + 10 approval)', async () => {
     const tools = await crmAssistant.listTools()
     expect(tools).toBeDefined()
-    expect(Object.keys(tools).length).toBe(37)
+    expect(Object.keys(tools).length).toBe(38)
   })
 
   it('has WriteClaimGuardProcessor in outputProcessors', async () => {

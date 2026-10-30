@@ -55,6 +55,7 @@ const APPROVAL_TOOLS = [
   'mail.send',
   'crm.send_outreach',
   'crm.resolve_merge_candidate',
+  'marketing.stage_bundle',
 ]
 
 // Never callable, regardless of role:
@@ -64,7 +65,7 @@ const APPROVAL_TOOLS = [
 const NEVER_CALLABLE = ['run.side-effect', 'crm.bulk_import']
 
 const USER_EXPECTED = [...READ_ONLY_TOOLS, ...AUTO_TOOLS] // 28
-const ADMIN_EXPECTED = [...READ_ONLY_TOOLS, ...AUTO_TOOLS, ...APPROVAL_TOOLS] // 37
+const ADMIN_EXPECTED = [...READ_ONLY_TOOLS, ...AUTO_TOOLS, ...APPROVAL_TOOLS] // 38
 
 describe('resolveActiveTools', () => {
   it('gives a non-admin the read-only + auto tools (28)', () => {
@@ -73,9 +74,9 @@ describe('resolveActiveTools', () => {
     expect(active.slice().sort()).toEqual(USER_EXPECTED.slice().sort())
   })
 
-  it('gives an admin the approval-class writes too (37)', () => {
+  it('gives an admin the approval-class writes too (38)', () => {
     const active = resolveActiveTools({ ...baseContext, userRole: 'admin' })
-    expect(active).toHaveLength(37)
+    expect(active).toHaveLength(38)
     expect(active.slice().sort()).toEqual(ADMIN_EXPECTED.slice().sort())
   })
 
@@ -135,7 +136,7 @@ describe('providerToolName', () => {
 
   it('leaves no dotted id in the list the agent hands the model', () => {
     const providerNames = resolveActiveTools({ ...baseContext, userRole: 'admin' }).map(providerToolName)
-    expect(providerNames).toHaveLength(37)
+    expect(providerNames).toHaveLength(38)
     for (const name of providerNames) {
       expect(name).not.toContain('.')
       expect(name).toMatch(/^[a-zA-Z][a-zA-Z0-9_-]{0,62}$/)

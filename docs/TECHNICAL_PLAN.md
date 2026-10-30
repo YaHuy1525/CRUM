@@ -1120,6 +1120,7 @@ Two more `ToolAction` fields that are governance features rather than convenienc
 | `mail.draft` | auto | `draftHash` | Draft only |
 | `mail.send` | approval | `draftHash` | Behind receipt |
 | `marketing.save_bundle` | auto | `draftHash` | Stores a bundle draft; scores a redacted view |
+| `marketing.stage_bundle` | approval | `draftHash` | Identifier payload only; refuses unexecutable actions at staging |
 
 #### 4.6.3 Resolving the active set
 

@@ -3,17 +3,23 @@ import { z } from 'zod'
 import { TenantRequestContextSchema } from '../tenant-context'
 import { loadPolicy } from '../../governance/policy'
 import { scoreRisk } from '../../governance/risk'
-import { commitAutoWrite, getOrCreateDraft } from '../../db/pending-writes'
+import { commitAutoWrite, createHumanTask, getOrCreateDraft } from '../../db/pending-writes'
 import { getDbClient } from '../../db/client'
 import {
   ARTIFACT_KINDS,
   MARKETING_OBJECTIVES,
   MARKETING_ROLES,
+  countMarketingArtifacts,
+  getMarketingBundle,
   insertMarketingArtifacts,
+  markBundleStaged,
+  roleColumnsOf,
   type ArtifactInput,
+  type MarketingBundleRow,
 } from '../../db/marketing'
 import { computeBundleHash } from '../../marketing/hash'
-import { saveRiskView } from '../../marketing/payload'
+import { blockedActions, deriveActions, unreadPlanColumns } from '../../marketing/outbox'
+import { saveRiskView, stagePayload } from '../../marketing/payload'
 
 // One role output is a JSON document, not a fixed shape: each producer owns its
 // own contract and the columns exist so an audit can say which version of which
@@ -200,6 +206,196 @@ export const saveBundleTool = createTool({
         gate: 'auto' as const,
         artifactCount: inserted,
         message: `Bundle saved (${bundleId}) with ${inserted} asset(s). Approve it with marketing.stage_bundle.`,
+      }
+    })
+  },
+})
+
+const StageOutputSchema = z.object({
+  pendingWriteId: z.string().uuid(),
+  riskScore: z.number().int().min(0).max(100),
+  gate: z.enum(['auto', 'approval']),
+  proceed: z.boolean().optional(),
+  reason: z.string().optional(),
+  message: z.string(),
+})
+
+function hashOf(bundle: MarketingBundleRow): string {
+  return computeBundleHash(roleColumnsOf(bundle))
+}
+
+export const stageBundleTool = createTool({
+  id: 'marketing.stage_bundle',
+  title: 'Stage Marketing Bundle',
+  description:
+    'Put one saved bundle in front of a human for approval. Always requires approval. Publishes nothing, spends nothing, and refuses a bundle whose plan asks for an action this build cannot execute.',
+  requestContextSchema: TenantRequestContextSchema,
+  inputSchema: z.object({
+    bundleId: z.string().uuid(),
+    // Minor units. A ceiling is the one number the approver is being asked to
+    // trust, so it is stated explicitly rather than buried in the media plan.
+    requestedCeilingMinor: z.number().int().min(0).max(10_000_000),
+  }),
+  outputSchema: StageOutputSchema,
+  outputValidation: 'warn',
+
+  /**
+   * This scores a placeholder view, not the payload that is finally staged: the
+   * real draft hash, objective and counts are not knowable without a database
+   * read, and a hook that must stay synchronous and side-effect free cannot do
+   * one. It is therefore a pure declared-class check — for an `approval` class
+   * tool whose payload is identifiers, hashes and numbers the result is the same
+   * whatever the placeholders hold — and `execute` below recomputes the score on
+   * the real payload. This is not the authoritative decision.
+   */
+  requireApproval: (input, { requestContext } = {}) => {
+    const policy = loadPolicy()
+    const assessment = scoreRisk(
+      stagePayload({
+        bundleId: input.bundleId,
+        draftHash: '',
+        objective: 'outreach_support',
+        artifactCount: 0,
+        requestedCeilingMinor: input.requestedCeilingMinor,
+        actionCount: 0,
+      }),
+      policy.risk,
+      'marketing.stage_bundle',
+    )
+    return policy.gateFor('marketing.stage_bundle', assessment, { requestContext }) === 'approval'
+  },
+
+  beforeApproval: async (input, { toolCallId, requestContext }) => {
+    const policy = loadPolicy()
+    const assessment = scoreRisk(
+      stagePayload({
+        bundleId: input.bundleId,
+        draftHash: '',
+        objective: 'outreach_support',
+        artifactCount: 0,
+        requestedCeilingMinor: input.requestedCeilingMinor,
+        actionCount: 0,
+      }),
+      policy.risk,
+      'marketing.stage_bundle',
+    )
+    if (policy.gateFor('marketing.stage_bundle', assessment, { requestContext }) === 'refuse') {
+      const humanTaskId = await createHumanTask(
+        {
+          tenantId: requestContext?.['tenantId'] as string,
+          runId: toolCallId,
+          toolName: 'marketing.stage_bundle',
+          riskScore: assessment.score,
+          title: `Policy refused stage_bundle: ${input.bundleId}`,
+          requestedBy: requestContext?.['userId'] as string,
+        },
+        'refusal',
+      )
+      return {
+        proceed: false as const,
+        output: {
+          // The human task id, not the bundle id: nothing was staged, so a
+          // caller must not read this as a pending write awaiting a decision.
+          pendingWriteId: humanTaskId,
+          riskScore: assessment.score,
+          gate: 'approval' as const,
+          message: 'Policy refuses this bundle. A human task was created; nothing is staged.',
+        },
+      }
+    }
+  },
+
+  execute: async (input, context) => {
+    return context.observe.span('marketing.stage_bundle', async () => {
+      const rc = context.requestContext.all as {
+        tenantId: string
+        userId: string
+        userRole: string
+      }
+
+      const bundle = await getMarketingBundle(rc.tenantId, input.bundleId)
+      if (!bundle) throw new Error(`not_found: no bundle ${input.bundleId} for this tenant`)
+      if (bundle.status !== 'draft' && bundle.status !== 'staged') {
+        throw new Error(`bundle_not_stageable: ${bundle.id} is ${bundle.status}`)
+      }
+
+      // Both refusals answer the same question — can this build say at all what
+      // approving this bundle would cause — so they are one branch, not two copies
+      // of the human-task call. An unread plan is checked first because a plan you
+      // cannot read is also a plan whose actions you cannot count (Task 5, Ruling T5-D3).
+      const unread = unreadPlanColumns(bundle)
+      const actions = deriveActions(bundle)
+      const blocked = blockedActions(actions)
+      const refusal =
+        unread.length > 0
+          ? `unreadable ${unread.join(' and ')}`
+          : blocked.length > 0
+            ? `no adapter for ${blocked.join(', ')}`
+            : null
+      if (refusal !== null) {
+        // Refusing here rather than at commit time is the difference between one
+        // wasted review and a queue full of decisions that cannot be made.
+        const humanTaskId = await createHumanTask(
+          {
+            tenantId: rc.tenantId,
+            runId: `stage:${bundle.id}`,
+            toolName: 'marketing.stage_bundle',
+            riskScore: 0,
+            title: `Refused stage_bundle: ${refusal}`,
+            body: `Bundle ${bundle.id} was not staged: ${refusal}. Nothing is queued and nothing is live.`,
+            requestedBy: rc.userId,
+          },
+          'refusal',
+        )
+        return {
+          proceed: false as const,
+          reason: refusal,
+          pendingWriteId: humanTaskId,
+          riskScore: 0,
+          gate: 'approval' as const,
+          message: `Staging refused (${refusal}). A human task was created; nothing is staged.`,
+        }
+      }
+
+      const artifactCount = await countMarketingArtifacts(rc.tenantId, bundle.id)
+      const payload = stagePayload({
+        bundleId: bundle.id,
+        // Recomputed from the stored row, never handed back by the caller: jsonb
+        // normalisation means the row is the only version that stays stable.
+        draftHash: hashOf(bundle),
+        objective: bundle.objective,
+        artifactCount,
+        requestedCeilingMinor: input.requestedCeilingMinor,
+        actionCount: actions.length,
+      })
+
+      const policy = loadPolicy()
+      const assessment = scoreRisk(payload, policy.risk, 'marketing.stage_bundle')
+      const gate = policy.gateFor('marketing.stage_bundle', assessment, {
+        requestContext: { tenantId: rc.tenantId, userId: rc.userId, userRole: rc.userRole },
+      })
+
+      const draft = await getOrCreateDraft({
+        tenantId: rc.tenantId,
+        runId: 'pending',
+        objectType: 'marketing_stage',
+        operation: 'update',
+        targetId: bundle.id,
+        payload,
+        riskScore: assessment.score,
+        gate,
+        requestedBy: rc.userId,
+        idempotencyKey: `stage:${bundle.id}:${payload.draftHash}`,
+      })
+
+      // After the draft, so a failure above never leaves a bundle marked staged.
+      await markBundleStaged({ tenantId: rc.tenantId, bundleId: bundle.id })
+
+      return {
+        pendingWriteId: draft.id,
+        riskScore: assessment.score,
+        gate: gate === 'refuse' ? ('approval' as const) : gate,
+        message: `Bundle ${bundle.id} staged for approval (${draft.id}). ${artifactCount} asset(s), ${actions.length} action(s), ceiling ${input.requestedCeilingMinor} minor units.`,
       }
     })
   },

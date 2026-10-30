@@ -181,7 +181,7 @@ tools:
     idempotent: true
     idempotency_key: draftHash
 
-  # ── approval (9) ───────────────────────────────────────────
+  # ── approval (10) ──────────────────────────────────────────
   - name: crm.create_customer
     description: Stage a new customer record.
     scope: crm:write
@@ -244,6 +244,15 @@ tools:
     class: approval
     idempotent: true
     idempotency_key: correlationId
+
+  - name: marketing.stage_bundle
+    description: Stage one saved bundle for human approval. The only approval a campaign needs.
+    # Not marketing:bundle, which marketing.save_bundle (class auto) already carries:
+    # conformance.test.ts forbids one concrete scope holding two classes.
+    scope: marketing:stage
+    class: approval
+    idempotent: true
+    idempotency_key: draftHash
 
   # ── workflow side effects (1) ──────────────────────────────
   - name: run.side-effect

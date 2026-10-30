@@ -126,6 +126,50 @@ async function save(input: Record<string, unknown>): Promise<SaveResult> {
   return execute(input, toolContext())
 }
 
+function bundleRow(over: Row = {}): Row {
+  return {
+    id: BUNDLE_ID,
+    tenant_id: TENANT,
+    brief: 'Book more assessment calls with Melbourne physio clinics',
+    objective: 'outreach_support',
+    audience_note: 'owner-led clinics',
+    status: 'draft',
+    strategy: { position: 'the clinic that answers within the hour' },
+    copy: { hooks: ['Your next patient is already searching'] },
+    media_plan: null,
+    funnel_plan: null,
+    analysis: null,
+    prompt_version: 'marketing-v1',
+    draft_hash: 'saved-hash',
+    created_at: '2026-10-30T00:00:00.000Z',
+    updated_at: '2026-10-30T00:00:00.000Z',
+    ...over,
+  }
+}
+
+function stagedInsert(): Record<string, unknown> {
+  const insert = call('INSERT INTO pending_writes')
+  if (!insert) throw new Error('no pending_writes insert was issued')
+  return JSON.parse(insert.params[6] as string) as Record<string, unknown>
+}
+
+interface StageResult {
+  pendingWriteId: string
+  riskScore: number
+  gate: string
+  proceed?: boolean
+  reason?: string
+  message: string
+}
+
+type StageExecuteFn = (input: Record<string, unknown>, context: unknown) => Promise<StageResult>
+
+async function stage(input: Record<string, unknown>) {
+  const { stageBundleTool } = await import('../../src/mastra/tools/marketing-writes')
+  const execute = stageBundleTool.execute as unknown as StageExecuteFn
+  return execute(input, toolContext())
+}
+
 beforeEach(() => {
   mockQuery.mockReset()
 })
@@ -325,5 +369,130 @@ describe('marketing.save_bundle', () => {
       ),
     ).rejects.toBe(dbFault)
     expect(call('INSERT INTO pending_writes')).toBeUndefined()
+  })
+})
+
+describe('marketing.stage_bundle', () => {
+  const stageHandlers = (row: Row): Record<string, Row[]> => ({
+    'FROM marketing_bundles': [row],
+    'SELECT count(*) AS count FROM marketing_artifacts': [{ count: 3 }],
+    'INSERT INTO pending_writes': [pendingWriteRow({ object_type: 'marketing_stage', gate: 'approval' })],
+    'UPDATE marketing_bundles': [{ id: BUNDLE_ID }],
+  })
+
+  it('stages exactly the identifier payload and nothing else', async () => {
+    stubQueries(stageHandlers(bundleRow()))
+    await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
+    expect(Object.keys(stagedInsert()).sort()).toEqual([
+      'actionCount',
+      'artifactCount',
+      'bundleId',
+      'draftHash',
+      'objective',
+      'requestedCeilingMinor',
+    ])
+    expect(stagedInsert().requestedCeilingMinor).toBe(2500)
+    expect(stagedInsert().actionCount).toBe(0)
+  })
+
+  it('keys the draft on the bundle id and the hash recomputed from the stored row', async () => {
+    stubQueries(stageHandlers(bundleRow()))
+    await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
+    // Both sides go through String() because the staged payload is parsed jsonb,
+    // so its values are `unknown` by construction: the assertion compares the
+    // hash the tool recomputed from the stored row, not the row's own draft_hash.
+    const staged = stagedInsert()
+    expect(String(call('INSERT INTO pending_writes')?.params[9])).toBe(
+      `stage:${BUNDLE_ID}:${String(staged.draftHash)}`,
+    )
+  })
+
+  it('refuses a bundle whose plan asks for something nothing can execute, and stages nothing', async () => {
+    stubQueries({
+      'FROM marketing_bundles': [bundleRow({ funnel_plan: { page: { slug: '/free-scan' } }, objective: 'inbound_leads' })],
+      'SELECT count(*) AS count FROM marketing_artifacts': [{ count: 1 }],
+      'INSERT INTO human_tasks': [{ id: '66666666-6666-4666-8666-666666666666' }],
+    })
+    const result = await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
+    expect(result).toMatchObject({ proceed: false })
+    expect(String(result.reason)).toContain('publish_page')
+    expect(call('INSERT INTO pending_writes')).toBeUndefined()
+    expect(call('UPDATE marketing_bundles')).toBeUndefined()
+  })
+
+  /**
+   * The same refusal, from the other half of the guard: a plan that is present but
+   * unreadable derives zero actions, so without this check a page object that lost
+   * its slug would stage as "nothing to do" and read back as a clean approval.
+   */
+  it('refuses a plan it cannot read, before it reports an action count of zero', async () => {
+    stubQueries({
+      'FROM marketing_bundles': [bundleRow({ funnel_plan: { page: { title: 'Free scan' } }, objective: 'inbound_leads' })],
+      'SELECT count(*) AS count FROM marketing_artifacts': [{ count: 1 }],
+      'INSERT INTO human_tasks': [{ id: '66666666-6666-4666-8666-666666666666' }],
+    })
+    const result = await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
+    expect(result).toMatchObject({ proceed: false })
+    expect(String(result.reason)).toContain('unreadable funnel_plan')
+    expect(call('INSERT INTO pending_writes')).toBeUndefined()
+  })
+
+  it('refuses a bundle that is already approved, rather than double-approving it', async () => {
+    stubQueries(stageHandlers(bundleRow({ status: 'approved' })))
+    await expect(stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })).rejects.toThrow(
+      /bundle_not_stageable/,
+    )
+    expect(call('INSERT INTO pending_writes')).toBeUndefined()
+  })
+
+  it('is a not_found for a bundle the tenant cannot see', async () => {
+    stubQueries({ 'FROM marketing_bundles': [] })
+    await expect(stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })).rejects.toThrow(/not_found/)
+  })
+
+  it('marks the bundle staged only after the draft exists', async () => {
+    stubQueries(stageHandlers(bundleRow()))
+    await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
+    const order = mockQuery.mock.calls
+      .map((raw) => (raw as unknown[])[0] as string)
+      .findIndex((sql) => sql.includes('INSERT INTO pending_writes'))
+    const stagedAt = mockQuery.mock.calls
+      .map((raw) => (raw as unknown[])[0] as string)
+      .findIndex((sql) => sql.includes('UPDATE marketing_bundles'))
+    expect(stagedAt).toBeGreaterThan(order)
+    /**
+     * Load-bearing since Task 5: commitBundleApproval now refuses anything that is
+     * not exactly 'staged', so a stage tool that wrote some other status — or a
+     * hand-rolled UPDATE that skipped markBundleStaged's tenant predicate — would
+     * make every approval refuse, and only the end-to-end run would say so.
+     */
+    const staged = call('UPDATE marketing_bundles')
+    expect(staged?.sql).toMatch(/SET status = 'staged'/)
+    expect(staged?.sql).toContain('tenant_id = $2')
+    expect(staged?.params).toEqual([BUNDLE_ID, TENANT])
+  })
+
+  it('reports the gate that was actually computed', async () => {
+    stubQueries(stageHandlers(bundleRow()))
+    const result = await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
+    expect(result).toMatchObject({ gate: 'approval', riskScore: 10 })
+    /**
+     * The same values as they reach the row, because the fixture row above also
+     * carries gate 'approval' and risk_score 10: asserting only the returned
+     * object cannot tell a computed value from one echoed back out of the stub.
+     */
+    const insert = call('INSERT INTO pending_writes')
+    expect(String(insert?.params[8])).toBe('approval')
+    expect(Number(insert?.params[7])).toBe(10)
+    /**
+     * And the dispatch key the commit reads. applyDraft branches on object_type
+     * (pending-writes.ts:447), so a bundle-shaped object type here would insert a
+     * second marketing_bundles row at approval instead of approving this one, and
+     * 'create' instead of 'update' throws UnsupportedCommitError on the way in.
+     * Nothing else in this lane reads what this tool writes, so it is pinned here.
+     */
+    expect(String(insert?.params[3])).toBe('marketing_stage')
+    expect(String(insert?.params[4])).toBe('update')
+    expect(String(insert?.params[5])).toBe(BUNDLE_ID)
   })
 })
