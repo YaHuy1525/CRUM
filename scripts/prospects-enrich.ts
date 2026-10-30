@@ -6,6 +6,8 @@
 // so funnel-gap scoring stays at zero and the console has nothing to cite.
 //
 // Usage: npm run prospects:enrich  (needs DATABASE_URL and PROSPECT_TENANT_ID)
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { getDbClient } from '../src/db/client'
 import { analysePage } from '../src/prospects/enrich'
 
@@ -14,6 +16,39 @@ const STALE_DAYS = 30
 const TIMEOUT_MS = 8000
 const REQUEST_DELAY_MS = 1000
 const LIMIT = Number(process.env.PROSPECT_ENRICH_LIMIT ?? '25')
+
+// A prospect with several channels (say Instagram and LinkedIn) would be
+// selected once per channel and receive duplicate snapshots in one run, so
+// DISTINCT ON keeps exactly one row per prospect. The website channel sorts
+// first and the largest audience breaks the remaining tie: fetching the
+// site is more informative than fetching a social profile, and a page read
+// from Instagram must not be mistaken for the prospect having no site.
+// `has_website_channel` is a fact from the channel table, not a guess about
+// the fetched page, and it is what the analyser reports as hasWebsite.
+// DISTINCT ON requires p.id first in the ORDER BY, and the LIMIT then counts
+// prospects, not joined channel rows.
+// A prospect is stale when none of its enrichment snapshots is recent, so
+// re-running the command an hour later refetches nothing.
+// The import CLI writes a baseline snapshot for every prospect with the
+// 'import-v1' extractor. That baseline is not a reading of the page, so it
+// must not count as freshness: without the extractor_version guard the import
+// hides every prospect from enrichment for STALE_DAYS.
+export const ENRICH_TARGETS_SQL = `SELECT DISTINCT ON (p.id) p.id, p.country, c.platform, c.profile_url,
+            EXISTS (
+              SELECT 1 FROM prospect_channels w
+               WHERE w.prospect_id = p.id AND w.platform = 'website'
+            ) AS has_website_channel
+       FROM prospects p
+       JOIN prospect_channels c ON c.prospect_id = p.id
+      WHERE p.tenant_id = $1
+        AND NOT EXISTS (
+          SELECT 1 FROM prospect_snapshots s
+           WHERE s.prospect_id = p.id
+             AND s.extractor_version LIKE 'enrich-%'
+             AND s.fetched_at > now() - ($2 || ' days')::interval
+        )
+      ORDER BY p.id, (c.platform = 'website') DESC, c.audience_count DESC NULLS LAST
+      LIMIT $3`
 
 type EnrichmentTarget = {
   id: string
@@ -34,35 +69,11 @@ async function main(): Promise<void> {
   if (!tenantId) throw new Error('PROSPECT_TENANT_ID is required')
 
   const db = getDbClient()
-  const targets = await db.query<EnrichmentTarget>(
-    // A prospect with several channels (say Instagram and LinkedIn) would be
-    // selected once per channel and receive duplicate snapshots in one run, so
-    // DISTINCT ON keeps exactly one row per prospect. The website channel sorts
-    // first and the largest audience breaks the remaining tie: fetching the
-    // site is more informative than fetching a social profile, and a page read
-    // from Instagram must not be mistaken for the prospect having no site.
-    // `has_website_channel` is a fact from the channel table, not a guess about
-    // the fetched page, and it is what the analyser reports as hasWebsite.
-    // DISTINCT ON requires p.id first in the ORDER BY, and the LIMIT then counts
-    // prospects, not joined channel rows.
-    // A prospect is stale when none of its snapshots is recent, so re-running
-    // the command an hour later refetches nothing.
-    `SELECT DISTINCT ON (p.id) p.id, p.country, c.platform, c.profile_url,
-            EXISTS (
-              SELECT 1 FROM prospect_channels w
-               WHERE w.prospect_id = p.id AND w.platform = 'website'
-            ) AS has_website_channel
-       FROM prospects p
-       JOIN prospect_channels c ON c.prospect_id = p.id
-      WHERE p.tenant_id = $1
-        AND NOT EXISTS (
-          SELECT 1 FROM prospect_snapshots s
-           WHERE s.prospect_id = p.id AND s.fetched_at > now() - ($2 || ' days')::interval
-        )
-      ORDER BY p.id, (c.platform = 'website') DESC, c.audience_count DESC NULLS LAST
-      LIMIT $3`,
-    [tenantId, String(STALE_DAYS), LIMIT],
-  )
+  const targets = await db.query<EnrichmentTarget>(ENRICH_TARGETS_SQL, [
+    tenantId,
+    String(STALE_DAYS),
+    LIMIT,
+  ])
 
   let enriched = 0
   let failed = 0
@@ -106,7 +117,12 @@ async function main(): Promise<void> {
   console.log(`enriched ${enriched}, failed ${failed}, of ${targets.rows.length}`)
 }
 
-main().catch((error: unknown) => {
-  console.error(error)
-  process.exit(1)
-})
+// Only run when invoked directly. The test suite imports ENRICH_TARGETS_SQL,
+// and an unguarded main() would call getDbClient() at import time. This is the
+// same guard scripts/db-migrate.ts and scripts/db-export-schema.ts use.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((error: unknown) => {
+    console.error(error)
+    process.exit(1)
+  })
+}
