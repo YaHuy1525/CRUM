@@ -104,6 +104,15 @@ export const saveBundleTool = createTool({
       checkArtifactShape(artifacts)
       await assertDocumentsVisible(rc.tenantId, artifacts)
 
+      // `columns` (hashed just below) and the `payload` handed to getOrCreateDraft
+      // are two hand-written views of one bundle: the first keys the idempotency
+      // hash, the second becomes the marketing_bundles row the commit writes.
+      // Nothing in the type system ties them, so a lane added to one but not the
+      // other would silently desync the draft hash from the stored bundle. The
+      // coupling is pinned by a test, not a compile error: the marketing-write-
+      // tools test recomputes computeBundleHash from the staged payload and
+      // asserts it equals the staged idempotency key, which fails if either
+      // object drops a lane.
       const columns = {
         brief: input.brief,
         objective: input.objective,
@@ -155,6 +164,15 @@ export const saveBundleTool = createTool({
         idempotencyKey: `bundle:${draftHash}`,
       })
 
+      // Policy-drift guard, not a prediction of a runtime refusal. While
+      // `marketing.save_bundle`'s declared class stays `auto` — pinned by its
+      // row in the conformance test's SPEC_TOOL_SURFACE (tests/governance/
+      // conformance.test.ts:51) — gateFor returns `auto` for this tool in this
+      // lane, so the branch below is unreachable today. It exists so that raising
+      // the declared class in policy/tools.yaml cannot silently turn this tool
+      // into one that auto-commits what governance now calls an approval-class
+      // write: a promotion to `approval` stages the draft and reports it here
+      // rather than committing content a human was meant to click.
       if (gate !== 'auto') {
         return {
           pendingWriteId: draft.id,

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { computeBundleHash } from '../../src/marketing/hash'
 
 const mockQuery = vi.fn()
 const mockClient = { query: mockQuery, release: vi.fn() }
@@ -161,6 +162,46 @@ describe('marketing.save_bundle', () => {
   })
 
   /**
+   * The `columns` object the tool feeds to computeBundleHash and the `payload`
+   * object it hands to getOrCreateDraft are hand-written twins: the first keys
+   * the draft, the second is committed as the marketing_bundles row. The type
+   * system does not tie them, so a lane dropped from either would quietly desync
+   * the hash from the stored bundle. Recomputing the hash from the staged payload
+   * and requiring it to equal the staged idempotency key turns that desync into a
+   * failing test: remove `mediaPlan` (or any lane) from one object and the two
+   * hashes differ here.
+   */
+  it('keeps the hashed columns and the committed payload describing one bundle', async () => {
+    stubQueries({
+      'INSERT INTO pending_writes': [pendingWriteRow()],
+      'SELECT * FROM pending_writes': [],
+      'INSERT INTO marketing_bundles': [{ id: BUNDLE_ID }],
+      'UPDATE pending_writes SET committed_at': [{ id: DRAFT_ID }],
+    })
+    await save(bundleInput())
+
+    const staged = call('INSERT INTO pending_writes')!
+    // getOrCreateDraft JSON.stringifies the payload object into param 6 and the
+    // `bundle:<hash>` key into param 9; both come straight from the tool.
+    const payload = JSON.parse(String(staged.params[6])) as Record<string, unknown>
+    // The commit path stores each jsonb lane as JSON text (or null), so read a
+    // string lane back to the shape the hash path saw before recomputing.
+    const lane = (value: unknown): unknown => (typeof value === 'string' ? JSON.parse(value) : value)
+    const recomputed = computeBundleHash({
+      brief: payload.brief as string,
+      objective: payload.objective as string,
+      audienceNote: (payload.audienceNote ?? null) as string | null,
+      strategy: lane(payload.strategy),
+      copy: lane(payload.copy),
+      mediaPlan: lane(payload.mediaPlan),
+      funnelPlan: lane(payload.funnelPlan),
+      analysis: lane(payload.analysis),
+      promptVersion: payload.promptVersion as string,
+    })
+    expect(String(staged.params[9])).toBe(`bundle:${recomputed}`)
+  })
+
+  /**
    * The regression the spec's section 7 exists for. Marketing prose says
    * ordinary sales things: 'send' is irreversible and 'every' is high blast, so
    * scoring the payload itself would put this tool at 90 and refuse a good
@@ -192,6 +233,30 @@ describe('marketing.save_bundle', () => {
     await save(bundleInput())
     const key = String(call('INSERT INTO pending_writes')?.params[9])
     expect(key).toMatch(/^bundle:[0-9a-f]{64}$/)
+  })
+
+  /**
+   * Task 11's end-to-end proof leans on replaying a save producing one bundle.
+   * When the `INSERT ... RETURNING *` row already carries committed_at and
+   * committed_record_id, commitAutoWrite takes its early return before it ever
+   * opens a transaction, so the apply never runs: the tool re-derives the same
+   * bundleId and issues no second INSERT INTO marketing_bundles. Only that
+   * insert is stubbed away here — if the guard were gone, the harness's
+   * unexpected-query error would fire instead. The sibling test above proves the
+   * insert DOES happen on an uncommitted draft.
+   */
+  it('reuses the committed bundle on replay without inserting it again', async () => {
+    stubQueries({
+      'INSERT INTO pending_writes': [
+        pendingWriteRow({
+          committed_at: '2026-10-30T00:30:00.000Z',
+          committed_record_id: BUNDLE_ID,
+        }),
+      ],
+    })
+    const result = await save(bundleInput())
+    expect(result).toMatchObject({ bundleId: BUNDLE_ID, gate: 'auto' })
+    expect(call('INSERT INTO marketing_bundles')).toBeUndefined()
   })
 
   it('stores artifacts against the committed bundle id', async () => {
@@ -234,6 +299,31 @@ describe('marketing.save_bundle', () => {
     await expect(
       save(bundleInput({ artifacts: [{ role: 'creative-designer', kind: 'image', documentId: DOCUMENT_ID, textContent: null }] })),
     ).rejects.toThrow(/document_not_found/)
+    expect(call('INSERT INTO pending_writes')).toBeUndefined()
+  })
+
+  /**
+   * The counterpart to the two 'stages nothing' guard assertions: when the
+   * documents probe itself faults, assertDocumentsVisible runs before
+   * getOrCreateDraft, so the original error surfaces unwrapped and no pending
+   * write is staged. toBe on the captured error is the point — a wrapped copy
+   * would be a different object and fail this identity assertion.
+   */
+  it('propagates a documents probe failure and stages nothing', async () => {
+    const dbFault = new Error('db_unreachable')
+    mockQuery.mockImplementation((sql: string) => {
+      if (sql.includes('SELECT id FROM documents')) return Promise.reject(dbFault)
+      throw new Error(`unexpected query: ${sql}`)
+    })
+    await expect(
+      save(
+        bundleInput({
+          artifacts: [
+            { role: 'creative-designer', kind: 'image', documentId: DOCUMENT_ID, textContent: null },
+          ],
+        }),
+      ),
+    ).rejects.toBe(dbFault)
     expect(call('INSERT INTO pending_writes')).toBeUndefined()
   })
 })
