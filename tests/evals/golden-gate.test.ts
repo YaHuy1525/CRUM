@@ -15,7 +15,7 @@
  *    `mastra__threadId` is set — and the agent DOES have own-memory since
  *    7546b07 (agent.ts resolves coreMemory from the registry).
  * 2. `runEvals` ignores `toolMocks`. Only the experiment executor builds the
- *    `beforeToolCall` mock hooks (ToolMockMatcher), so the 40 items run
+ *    `beforeToolCall` mock hooks (ToolMockMatcher), so the 42 items run
  *    hermetically: every declared tool call is intercepted before `execute`
  *    and no Postgres connection is opened. `unmockedToolPolicy: 'deny'`
  *    fails the item if the agent calls a tool the item did not declare.
@@ -163,7 +163,7 @@ describe.skipIf(!modelAvailable)(
         scorers: scorerInstances as never,
         unmockedToolPolicy: 'deny',
         persistence: { experiments: 'none', scores: 'none' },
-        // The free model 429s under load (§3): serialise the 40 items.
+        // The free model 429s under load (§3): serialise the 42 items.
         maxConcurrency: 1,
         itemTimeout: 90_000,
       })
@@ -181,8 +181,8 @@ describe.skipIf(!modelAvailable)(
       )
     }, 900_000)
 
-    it('executes all 40 golden items without item-level failures', () => {
-      expect(summary.totalItems).toBe(40)
+    it('executes all 42 golden items without item-level failures', () => {
+      expect(summary.totalItems).toBe(42)
       expect(summary.skippedCount).toBe(0)
       const failed = summary.results.filter((r) => r.error)
       // Tool-mock discipline failures (TOOL_MOCK_NOT_DECLARED etc.) surface as

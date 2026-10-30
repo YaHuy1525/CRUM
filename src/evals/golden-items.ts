@@ -46,6 +46,9 @@ const WRITE_TASK = '4c5d6e7f-8091-4cae-9d2e-3d6e7f80912a'
 const WRITE_MAIL = '5d6e7f80-912a-4dbf-8e3f-4e7f80912a3b'
 const WRITE_UPDATE = '6e7f8091-2a3b-4ec0-9f4a-5f80912a3b4c'
 const WRITE_DELETE = '7f80912a-3b4c-4fd1-8a5b-6a912a3b4c5d'
+const WRITE_BUNDLE_DRAFT = '8a5b6a91-2b4c-4d5e-9f0a-1b2c3d4e5f60'
+const WRITE_BUNDLE_STAGE = '9b6c7ba2-3c5d-4e6f-8a1b-2c3d4e5f6071'
+const BUNDLE_PHYSIO = '0a5b6a91-2b4c-4d5e-9f0a-1b2c3d4e5f60'
 
 const SLOT_COUNT = 3
 
@@ -174,6 +177,23 @@ function knowledgeResult(chunks: ChunkSeed[]) {
 
 function writeReceipt(pendingWriteId: string, gate: 'auto' | 'approval', riskScore: number, message: string) {
   return { pendingWriteId, riskScore, gate, message }
+}
+
+/**
+ * `marketing.save_bundle` answers with more than the generic receipt, and the
+ * follow-up call in the second marketing item needs the bundle id out of the
+ * first one's output. A fixture that omits it teaches the model to invent a
+ * uuid, which is exactly the behaviour `deny` exists to catch.
+ */
+function bundleReceipt(
+  pendingWriteId: string,
+  bundleId: string,
+  gate: 'auto' | 'approval',
+  riskScore: number,
+  artifactCount: number,
+  message: string,
+) {
+  return { pendingWriteId, bundleId, riskScore, gate, artifactCount, message }
 }
 
 
@@ -455,6 +475,56 @@ export function getGoldenItems(): GoldenItem[] {
         ...slots(
           'crm.delete_customer',
           writeReceipt(WRITE_DELETE, 'approval', 85, 'Staged a delete of Widget Co for approval.'),
+        ),
+      ],
+      category: 'write',
+    },
+    {
+      input: 'Put together a campaign bundle to book more physio assessments for Acme Corp',
+      groundTruth: { answerable: true, expectedToolCalls: ['marketing.save_bundle'] },
+      toolMocks: [
+        ...readMocks(WORLD_FULL),
+        ...slots(
+          'marketing.save_bundle',
+          bundleReceipt(
+            WRITE_BUNDLE_DRAFT,
+            BUNDLE_PHYSIO,
+            'auto',
+            10,
+            2,
+            'Saved a campaign bundle with 2 assets. Nothing is staged, published or sent.',
+          ),
+        ),
+      ],
+      category: 'write',
+    },
+    {
+      input: 'Build the physio campaign bundle for Acme Corp and then stage it for my approval with a 40000 cent ceiling',
+      groundTruth: {
+        answerable: true,
+        expectedToolCalls: ['marketing.save_bundle', 'marketing.stage_bundle'],
+      },
+      toolMocks: [
+        ...readMocks(WORLD_FULL),
+        ...slots(
+          'marketing.save_bundle',
+          bundleReceipt(
+            WRITE_BUNDLE_DRAFT,
+            BUNDLE_PHYSIO,
+            'auto',
+            10,
+            2,
+            'Saved a campaign bundle with 2 assets. Nothing is staged, published or sent.',
+          ),
+        ),
+        ...slots(
+          'marketing.stage_bundle',
+          writeReceipt(
+            WRITE_BUNDLE_STAGE,
+            'approval',
+            10,
+            'Staged the bundle for approval. Nothing is live.',
+          ),
         ),
       ],
       category: 'write',
