@@ -27,7 +27,7 @@ version: 1
 # It is the only such collision in this file. Do not normalise one spelling
 # to the other: doing so silently moves tools across a gate boundary.
 tools:
-  # ── read-only (14) ─────────────────────────────────────────
+  # ── read-only (21) ─────────────────────────────────────────
   - name: crm.list_customers
     description: List customers visible to the caller.
     scope: crm-read
@@ -98,7 +98,42 @@ tools:
     scope: doc-read
     class: read-only
 
-  # ── auto (3) ───────────────────────────────────────────────
+  - name: revenue.list_channels
+    description: List tracked video channels (YouTube/TikTok/Instagram/Twitch) with ownership and sync status.
+    scope: revenue-read
+    class: read-only
+
+  - name: revenue.sum_earnings
+    description: Per-channel platform earnings rolled up over a date range; money as decimal text.
+    scope: revenue-read
+    class: read-only
+
+  - name: revenue.revenue_totals
+    description: Tenant-wide platform plus confirmed-sponsorship revenue totals over a date range.
+    scope: revenue-read
+    class: read-only
+
+  - name: revenue.list_invoices
+    description: List generated client billing invoices with their fee snapshot.
+    scope: revenue-read
+    class: read-only
+
+  - name: revenue.list_alerts
+    description: List revenue alerts (drops, spikes, new sponsorships, sync failures) for human review.
+    scope: revenue-read
+    class: read-only
+
+  - name: crm.list_prospects
+    description: List prospects visible to the caller.
+    scope: crm-read
+    class: read-only
+
+  - name: crm.get_prospect
+    description: Read one prospect with channels, latest evidence snapshot and drafts.
+    scope: crm-read
+    class: read-only
+
+  # ── auto (5) ───────────────────────────────────────────────
   - name: crm.log_followup
     description: Record a completed contact attempt.
     scope: crm-write
@@ -120,7 +155,21 @@ tools:
     idempotent: true
     idempotency_key: draftHash
 
-  # ── approval (7) ───────────────────────────────────────────
+  - name: crm.draft_outreach
+    description: Write a first or follow-up message for one prospect. Produces a draft, sends nothing.
+    scope: crm-write
+    class: auto
+    idempotent: true
+    idempotency_key: draftHash
+
+  - name: crm.save_prospect_snapshot
+    description: Record enrichment evidence for one prospect.
+    scope: crm-write
+    class: auto
+    idempotent: true
+    idempotency_key: correlationId
+
+  # ── approval (8) ───────────────────────────────────────────
   - name: crm.create_customer
     description: Stage a new customer record.
     scope: crm:write
@@ -169,6 +218,13 @@ tools:
     class: approval
     idempotent: true
     idempotency_key: draftHash
+
+  - name: crm.send_outreach
+    description: Send an approved draft on a manual channel or by consented email.
+    scope: crm:write
+    class: approval
+    idempotent: true
+    idempotency_key: actionHash
 
   # ── workflow side effects (1) ──────────────────────────────
   - name: run.side-effect

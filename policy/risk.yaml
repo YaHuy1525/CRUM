@@ -34,6 +34,8 @@ preflight:
       require_approval_terms: [send, cancel, reschedule]   # notifies attendees
     mail:
       require_approval_terms: [send, reply, forward]
+    prospect:
+      require_approval_terms: [merge, import, export, delete]
     knowledge:
       require_approval_terms: [delete, reindex]
 

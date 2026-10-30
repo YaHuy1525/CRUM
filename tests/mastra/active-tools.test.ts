@@ -24,10 +24,23 @@ const READ_ONLY_TOOLS = [
   'doc.get_invoice',
   'doc.get_contract',
   'doc.sum_invoices',
+  'revenue.list_channels',
+  'revenue.sum_earnings',
+  'revenue.revenue_totals',
+  'revenue.list_invoices',
+  'revenue.list_alerts',
+  'crm.list_prospects',
+  'crm.get_prospect',
 ]
 
 // Auto-class low-blast-radius writes: active for every role.
-const AUTO_TOOLS = ['crm.log_followup', 'crm.create_task', 'mail.draft']
+const AUTO_TOOLS = [
+  'crm.log_followup',
+  'crm.create_task',
+  'mail.draft',
+  'crm.draft_outreach',
+  'crm.save_prospect_snapshot',
+]
 
 // Approval-class writes: admin-only, tenant-wide.
 const APPROVAL_TOOLS = [
@@ -38,6 +51,7 @@ const APPROVAL_TOOLS = [
   'crm.create_schedule',
   'crm.transfer_owner',
   'mail.send',
+  'crm.send_outreach',
 ]
 
 // Never callable, regardless of role:
@@ -46,19 +60,19 @@ const APPROVAL_TOOLS = [
 //  - crm.bulk_import: refuse class → routed to a human task (§4.6.1).
 const NEVER_CALLABLE = ['run.side-effect', 'crm.bulk_import']
 
-const USER_EXPECTED = [...READ_ONLY_TOOLS, ...AUTO_TOOLS] // 17
-const ADMIN_EXPECTED = [...READ_ONLY_TOOLS, ...AUTO_TOOLS, ...APPROVAL_TOOLS] // 24
+const USER_EXPECTED = [...READ_ONLY_TOOLS, ...AUTO_TOOLS] // 26
+const ADMIN_EXPECTED = [...READ_ONLY_TOOLS, ...AUTO_TOOLS, ...APPROVAL_TOOLS] // 34
 
 describe('resolveActiveTools', () => {
-  it('gives a non-admin the read-only + auto tools (17)', () => {
+  it('gives a non-admin the read-only + auto tools (26)', () => {
     const active = resolveActiveTools(baseContext)
-    expect(active).toHaveLength(17)
+    expect(active).toHaveLength(26)
     expect(active.slice().sort()).toEqual(USER_EXPECTED.slice().sort())
   })
 
-  it('gives an admin the approval-class writes too (24)', () => {
+  it('gives an admin the approval-class writes too (34)', () => {
     const active = resolveActiveTools({ ...baseContext, userRole: 'admin' })
-    expect(active).toHaveLength(24)
+    expect(active).toHaveLength(34)
     expect(active.slice().sort()).toEqual(ADMIN_EXPECTED.slice().sort())
   })
 
@@ -83,7 +97,7 @@ describe('resolveActiveTools', () => {
 
   it('tool names all come from the policy registry', () => {
     const active = resolveActiveTools({ ...baseContext, userRole: 'admin' })
-    for (const name of active) expect(name).toMatch(/^(crm|knowledge|mail|doc)\./)
+    for (const name of active) expect(name).toMatch(/^(crm|knowledge|mail|doc|revenue)\./)
   })
 })
 
@@ -118,7 +132,7 @@ describe('providerToolName', () => {
 
   it('leaves no dotted id in the list the agent hands the model', () => {
     const providerNames = resolveActiveTools({ ...baseContext, userRole: 'admin' }).map(providerToolName)
-    expect(providerNames).toHaveLength(24)
+    expect(providerNames).toHaveLength(34)
     for (const name of providerNames) {
       expect(name).not.toContain('.')
       expect(name).toMatch(/^[a-zA-Z][a-zA-Z0-9_-]{0,62}$/)

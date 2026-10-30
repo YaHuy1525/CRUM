@@ -25,17 +25,27 @@ const SPEC_TOOL_SURFACE: ReadonlyArray<readonly [name: string, klass: string, id
   ['doc.get_invoice', 'read-only', null],
   ['doc.get_contract', 'read-only', null],
   ['doc.sum_invoices', 'read-only', null],
+  ['revenue.list_channels', 'read-only', null],
+  ['revenue.sum_earnings', 'read-only', null],
+  ['revenue.revenue_totals', 'read-only', null],
+  ['revenue.list_invoices', 'read-only', null],
+  ['revenue.list_alerts', 'read-only', null],
+  ['crm.list_prospects', 'read-only', null],
+  ['crm.get_prospect', 'read-only', null],
   ['crm.create_customer', 'approval', 'draftHash'],
   ['crm.update_customer', 'approval', 'draftHash'],
   ['crm.delete_customer', 'approval', 'draftHash'],
   ['crm.create_contact', 'approval', 'draftHash'],
   ['crm.log_followup', 'auto', 'correlationId'],
   ['crm.create_task', 'auto', 'correlationId'],
+  ['crm.draft_outreach', 'auto', 'draftHash'],
+  ['crm.save_prospect_snapshot', 'auto', 'correlationId'],
   ['crm.create_schedule', 'approval', 'draftHash'],
   ['crm.transfer_owner', 'approval', 'draftHash'],
   ['crm.bulk_import', 'refuse', null],
   ['mail.draft', 'auto', 'draftHash'],
   ['mail.send', 'approval', 'draftHash'],
+  ['crm.send_outreach', 'approval', 'actionHash'],
 ]
 
 /**
@@ -74,7 +84,7 @@ describe('tools.yaml conforms to §4.6.2', () => {
     expect(extra).toEqual([])
   })
 
-  it('has exactly the twenty-five spec tools plus run.side-effect', () => {
+  it('has exactly the thirty-five spec tools plus run.side-effect', () => {
     expect(policy.tools.tools).toHaveLength(SPEC_TOOL_SURFACE.length + TEMPLATE_TOOLS.size)
   })
 })
@@ -132,8 +142,8 @@ describe('class invariants', () => {
     expect(offenders).toEqual([])
   })
 
-  it('has exactly fourteen read-only tools', () => {
-    expect(policy.toolsByClass('read-only')).toHaveLength(14)
+  it('has exactly twenty-one read-only tools', () => {
+    expect(policy.toolsByClass('read-only')).toHaveLength(21)
   })
 
   it('has exactly one refuse-class tool', () => {

@@ -22,6 +22,8 @@ import {
 } from './tools/documents'
 import { logFollowupTool, createTaskTool, draftMailTool } from './tools/auto-writes'
 import { createCustomerTool, updateCustomerTool, deleteCustomerTool } from './tools/customer-writes'
+import { listProspectsTool, getProspectTool } from './tools/prospects'
+import { draftOutreachTool, sendOutreachTool, saveProspectSnapshotTool } from './tools/prospect-writes'
 import { createContactTool, createScheduleTool, transferOwnerTool, sendMailTool } from './tools/approval-writes'
 import { approvalFlow } from './workflows/approval-flow'
 import { resolveActiveTools, providerToolName } from './active-tools'
@@ -53,6 +55,11 @@ const crumToolRegistry = {
   'crm.create_schedule': createScheduleTool,
   'crm.transfer_owner': transferOwnerTool,
   'mail.send': sendMailTool,
+  'crm.list_prospects': listProspectsTool,
+  'crm.get_prospect': getProspectTool,
+  'crm.draft_outreach': draftOutreachTool,
+  'crm.send_outreach': sendOutreachTool,
+  'crm.save_prospect_snapshot': saveProspectSnapshotTool,
 }
 
 export const crmAssistant = new Agent({
