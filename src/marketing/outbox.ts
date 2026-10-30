@@ -86,10 +86,53 @@ export function deriveActions(
   return actions
 }
 
+/** The action names `deriveActions` can produce from a stored plan. Slice 2 extends this list at
+ * the same moment it extends the derivation, and the test below fails if either moves alone. */
+export const DERIVED_ACTION_NAMES: readonly MarketingActionName[] = ['publish_page', 'create_campaign']
+
+/** Declared in the database and in this build's vocabulary, but no plan shape that our roles emit
+ * can express them yet. Computed rather than hand-copied so widening MARKETING_ACTION_NAMES lands
+ * here instead of disappearing into a derivation that will never fire. */
+export const UNMAPPED_ACTION_NAMES: MarketingActionName[] = MARKETING_ACTION_NAMES.filter(
+  (name) => !DERIVED_ACTION_NAMES.includes(name),
+)
+
+/**
+ * A plan column that is not null must be readable, because an approval that derives no action from
+ * a plan that plainly asks for one signs a receipt over a bundle that will silently do nothing.
+ * Only the two contract containers are inspected — the funnel builder answers with
+ * `{page, form, thankYou, tracking}` and the media buyer with `{objective, audience, placements,
+ * campaigns}` — so decoration the derivation has no use for is never mistaken for an intent.
+ * An explicit null page, and an empty campaigns list, are understood plans, not unread ones: a
+ * media plan that spends nothing is exactly what it says.
+ */
+export function unreadPlanColumns(
+  bundle: Pick<MarketingBundleRow, 'funnelPlan' | 'mediaPlan'>,
+): string[] {
+  const unread: string[] = []
+  const funnel = asRecord(bundle.funnelPlan)
+  if (bundle.funnelPlan !== null && !funnel) unread.push('funnel_plan')
+  else if (funnel && 'page' in funnel) {
+    if (funnel['page'] !== null) {
+      const page = asRecord(funnel['page'])
+      const slug = page?.['slug']
+      if (!page || typeof slug !== 'string' || slug.length === 0) unread.push('funnel_plan')
+    }
+  } else if (funnel) unread.push('funnel_plan')
+
+  const media = asRecord(bundle.mediaPlan)
+  if (bundle.mediaPlan !== null && !media) unread.push('media_plan')
+  else if (media && 'campaigns' in media) {
+    const campaigns = media['campaigns']
+    if (campaigns !== null && !Array.isArray(campaigns)) unread.push('media_plan')
+  } else if (media) unread.push('media_plan')
+
+  return unread
+}
+
 interface BundleLockRow {
   id: string
   status: string
-  objective: string
   funnel_plan: unknown
   media_plan: unknown
 }
@@ -99,7 +142,7 @@ export async function commitBundleApproval(
   params: { tenantId: string; bundleId: string; receiptId: string | null },
 ): Promise<string> {
   const locked = await client.query<BundleLockRow>(
-    `SELECT id, status, objective, funnel_plan, media_plan
+    `SELECT id, status, funnel_plan, media_plan
        FROM marketing_bundles
       WHERE id = $1 AND tenant_id = $2
         FOR UPDATE`,
@@ -111,9 +154,21 @@ export async function commitBundleApproval(
       `marketing bundle ${params.bundleId} is not visible to this tenant, so it cannot be approved`,
     )
   }
-  if (row.status !== 'draft' && row.status !== 'staged') {
+  if (row.status !== 'staged') {
     throw new BundleNotApprovableError(
-      `marketing bundle ${params.bundleId} is already ${row.status}; only a staged bundle can be approved`,
+      `marketing bundle ${params.bundleId} is ${row.status}; only a staged bundle can be approved`,
+    )
+  }
+
+  // Before the adapter question, not after it: a plan this build cannot read is
+  // also a plan whose actions it cannot know, so `blockedActions` has nothing
+  // honest to answer with, and an unread plan that derives nothing would let the
+  // approval sign a receipt over a bundle that silently does nothing.
+  const unread = unreadPlanColumns({ funnelPlan: row.funnel_plan, mediaPlan: row.media_plan })
+  if (unread.length > 0) {
+    throw new BundleNotApprovableError(
+      `marketing bundle ${row.id} has a ${unread.join(' and ')} this build cannot read, so it cannot say ` +
+        'what approving it would cause. Re-save the bundle with that plan as null, or in the shape its role produces.',
     )
   }
 

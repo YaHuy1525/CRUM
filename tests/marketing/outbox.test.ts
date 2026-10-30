@@ -3,9 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   BundleNotApprovableError,
   commitBundleApproval,
+  DERIVED_ACTION_NAMES,
   deriveActions,
   isExecutable,
   registerActionAdapter,
+  UNMAPPED_ACTION_NAMES,
+  unreadPlanColumns,
 } from '@/marketing/outbox'
 
 const TENANT = '11111111-1111-4111-8111-111111111111'
@@ -86,6 +89,48 @@ describe('deriveActions', () => {
   })
 })
 
+describe('the mapped action sets', () => {
+  it('names the actions no slice 1 plan can ask for', () => {
+    expect(UNMAPPED_ACTION_NAMES).toEqual(['unpublish_page', 'set_campaign_status'])
+  })
+
+  it('derives only actions it declared it can derive', () => {
+    const actions = deriveActions({
+      id: BUNDLE,
+      funnelPlan: { page: { slug: '/x' }, form: { fields: [] }, tracking: { pixel: 'none' } },
+      mediaPlan: { objective: 'leads', audience: 'clinics', placements: ['feed'], campaigns: [{ name: 'x' }] },
+    })
+    expect(actions.every((a) => DERIVED_ACTION_NAMES.includes(a.action))).toBe(true)
+    expect(actions.map((a) => a.action)).toEqual(['publish_page', 'create_campaign'])
+  })
+})
+
+describe('unreadPlanColumns', () => {
+  it('reads a bundle with no plans, which is the slice 1 outreach support case', () => {
+    expect(unreadPlanColumns({ funnelPlan: null, mediaPlan: null })).toEqual([])
+  })
+
+  it('reads an explicit null page and an empty campaign list, because both say do nothing', () => {
+    expect(unreadPlanColumns({ funnelPlan: { page: null }, mediaPlan: { campaigns: [] } })).toEqual([])
+  })
+
+  it('refuses a funnel plan that carries no page container at all', () => {
+    expect(unreadPlanColumns({ funnelPlan: { form: { fields: [] } }, mediaPlan: null })).toEqual(['funnel_plan'])
+  })
+
+  it('refuses a page with no slug, because there is nothing for an adapter to publish', () => {
+    expect(unreadPlanColumns({ funnelPlan: { page: { title: 'Free scan' } }, mediaPlan: null })).toEqual(['funnel_plan'])
+  })
+
+  it('refuses a plan stored as prose instead of an object', () => {
+    expect(unreadPlanColumns({ funnelPlan: 'we will decide later', mediaPlan: null })).toEqual(['funnel_plan'])
+  })
+
+  it('refuses a media plan whose campaigns key is not a list', () => {
+    expect(unreadPlanColumns({ funnelPlan: null, mediaPlan: { campaigns: 'one good campaign' } })).toEqual(['media_plan'])
+  })
+})
+
 describe('the slice 1 executable set', () => {
   it('has no adapter registered, so nothing an agent asks for can run', () => {
     expect(isExecutable('publish_page')).toBe(false)
@@ -131,10 +176,21 @@ describe('commitBundleApproval', () => {
     await expect(approve(client)).rejects.toThrow(/publish_page.*create_campaign|create_campaign.*publish_page/)
   })
 
+  it('refuses a bundle whose plan it cannot read, before it asks which adapters exist', async () => {
+    const client = clientReturning([bundleRow({ funnel_plan: { page: { title: 'Free scan' } } })])
+    await expect(approve(client)).rejects.toThrow(/funnel_plan/)
+    expect(client.sqls().some((sql) => sql.includes("SET status = 'approved'"))).toBe(false)
+  })
+
   it('refuses a bundle that is not still awaiting approval', async () => {
     const client = clientReturning([bundleRow({ status: 'live' })])
     await expect(approve(client)).rejects.toThrow(BundleNotApprovableError)
     expect(client.sqls().some((sql) => sql.includes('marketing_bundles'))).toBe(true)
+  })
+
+  it('refuses a draft bundle, because the owner was never shown it staged', async () => {
+    const client = clientReturning([bundleRow({ status: 'draft' })])
+    await expect(approve(client)).rejects.toThrow(BundleNotApprovableError)
   })
 
   it('refuses a bundle the tenant cannot see', async () => {
@@ -154,10 +210,16 @@ describe('commitBundleApproval', () => {
       name: 'publish_page',
       execute: () => Promise.resolve({ externalId: 'x' }),
     })
-    const client = clientReturning([bundleRow({ funnel_plan: { page: { slug: '/free-scan' } } })])
-    await expect(approve(client)).resolves.toBe(BUNDLE)
-    const insert = client.query.mock.calls.find((c) => c[0].includes('INSERT INTO marketing_actions'))
-    expect(insert?.[1]).toEqual([TENANT, BUNDLE, 'publish_page', JSON.stringify({ slug: '/free-scan' }), RECEIPT])
-    unregister()
+    // try/finally: an assertion failure below must not leave publish_page
+    // registered for the rest of the file, where every other case expects the
+    // slice 1 registry to be empty.
+    try {
+      const client = clientReturning([bundleRow({ funnel_plan: { page: { slug: '/free-scan' } } })])
+      await expect(approve(client)).resolves.toBe(BUNDLE)
+      const insert = client.query.mock.calls.find((c) => c[0].includes('INSERT INTO marketing_actions'))
+      expect(insert?.[1]).toEqual([TENANT, BUNDLE, 'publish_page', JSON.stringify({ slug: '/free-scan' }), RECEIPT])
+    } finally {
+      unregister()
+    }
   })
 })

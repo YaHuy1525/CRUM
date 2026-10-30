@@ -92,6 +92,10 @@ describe('approving a marketing stage draft', () => {
     ).rejects.toThrow(UnsupportedCommitError)
     expect(mockQuery.mock.calls.some((c) => (c[0] as string).includes('INSERT INTO audit_receipts'))).toBe(false)
     expect(mockQuery.mock.calls.some((c) => (c[0] as string).includes('ROLLBACK'))).toBe(true)
+    // The guard's promise is stronger than "no receipt was signed": the bundle was
+    // never even marked approved. Naming the write states that, and it holds even if
+    // a later version of this case stubs the UPDATE the way the approval case does.
+    expect(calls("UPDATE marketing_bundles SET status = 'approved'")).toEqual([])
   })
 
   it('approves a content-only bundle and writes the receipt against the bundle id', async () => {
