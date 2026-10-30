@@ -8,6 +8,7 @@ import { createSignalsRouter } from './signals'
 import { createHealthRouter } from './health'
 import { createPrefillRouter } from './prefill'
 import { createCrmRouter } from './crm'
+import { createProspectsRouter } from './prospects'
 import { createApprovalRouter, type SuspendedRunAgent } from './approvals'
 import { createKnowledgeRouter, type IngestWorkflowLike } from './knowledge'
 import { createDocumentsRouter, type DocumentIntakeWorkflowLike } from './documents'
@@ -18,6 +19,7 @@ import { createVideoChannelsRouter } from './video-channels'
 import { createVideoOAuthRouter } from './video-oauth'
 import { createVideoSponsorshipRouter, type SponsorshipIntakeWorkflowLike } from './video-sponsorship'
 import { createVideoBillingRouter, createVideoAlertsRouter } from './video-billing'
+import { createVideoRevenueRouter } from './video-revenue'
 
 export interface ApiRouterDeps {
   env: CrumEnv
@@ -94,6 +96,7 @@ export function createApiRouter(deps: ApiRouterDeps): Hono {
   app.route('/', createDigestRouter())
   app.route('/', createPrefillRouter())
   app.route('/', createCrmRouter({ env }))
+  app.route('/', createProspectsRouter({ env }))
   app.route('/', createSignalsRouter({ env, getMastra: deps.getMastra }))
   app.route('/', createAgentRouter({ env, getMastra: deps.getMastra }))
   app.route('/', createThreadsRouter({ env, getMastra: deps.getMastra }))
@@ -106,6 +109,7 @@ export function createApiRouter(deps: ApiRouterDeps): Hono {
   app.route('/', createVideoSponsorshipRouter({ env, getSponsorshipWorkflow: sponsorshipIntakeGetter(deps.getMastra) }))
   app.route('/', createVideoBillingRouter({ env }))
   app.route('/', createVideoAlertsRouter({ env }))
+  app.route('/', createVideoRevenueRouter({ env }))
 
   return app
 }
