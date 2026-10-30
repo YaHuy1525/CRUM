@@ -475,7 +475,7 @@ describe('marketing.stage_bundle', () => {
   it('refuses a readable media plan that asks for a campaign', async () => {
     stubQueries({
       'FROM marketing_bundles': [
-        bundleRow({ media_plan: { campaigns: [{ name: 'melbourne-physio-awareness' }] }, objective: 'brand_awareness' }),
+        bundleRow({ media_plan: { campaigns: [{ name: 'melbourne-physio-awareness' }] }, objective: 'inbound_leads' }),
       ],
       'SELECT count(*) AS count FROM marketing_artifacts': [{ count: 2 }],
       'INSERT INTO human_tasks': [{ id: '66666666-6666-4666-8666-666666666666' }],
