@@ -26,6 +26,7 @@
     "db:migrate": "tsx scripts/db-migrate.ts",
     "prospects:import": "tsx --env-file-if-exists=.env scripts/prospects-import.ts",
     "prospects:score": "tsx --env-file-if-exists=.env scripts/prospects-score.ts",
+    "prospects:enrich": "tsx --env-file-if-exists=.env scripts/prospects-enrich.ts",
     "mail:watch": "tsx scripts/mail-watch.ts",
     "cal:seed": "tsx --env-file-if-exists=.env scripts/calendar-seed.ts",
     "eval:seed": "tsx scripts/eval-seed.ts",
