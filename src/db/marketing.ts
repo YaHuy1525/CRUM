@@ -181,12 +181,20 @@ export async function insertMarketingArtifacts(params: {
   for (const artifact of params.artifacts) {
     // Content-addressed id plus ON CONFLICT: the artifact set is a property of
     // the bundle content, so replaying a save is silent rather than duplicative.
+    //
+    // Both content lanes go into the seed. The 0018 payload-shape CHECK requires
+    // an image to carry document_id but does not forbid text_content, so two
+    // image variants in one bundle/role/kind can share a caption while pointing
+    // at different bytes. Hashing one lane only would derive one id for them and
+    // let ON CONFLICT DO NOTHING drop the second in silence. The NUL between the
+    // lanes keeps them unambiguous: it cannot occur in a UUID, and role and kind
+    // are CHECK-restricted literals that never contain it either.
     const id = artifactIdFor({
       tenantId: params.tenantId,
       bundleId: params.bundleId,
       role: artifact.role,
       kind: artifact.kind,
-      content: artifact.textContent ?? artifact.documentId ?? '',
+      content: `${artifact.documentId ?? ''}\u0000${artifact.textContent ?? ''}`,
     })
     const result = await db.query<{ id: string }>(
       `INSERT INTO marketing_artifacts

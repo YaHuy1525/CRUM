@@ -11,6 +11,8 @@ vi.mock('../../src/config/env', () => ({
 const TENANT = '11111111-1111-4111-8111-111111111111'
 const OTHER_TENANT = '22222222-2222-4222-8222-222222222222'
 const BUNDLE = '33333333-3333-4333-8333-333333333333'
+const DOCUMENT_A = '55555555-5555-4555-8555-555555555555'
+const DOCUMENT_B = '66666666-6666-4666-8666-666666666666'
 
 function calls(fragment: string): Array<{ sql: string; params: unknown[] }> {
   return (mockQuery.mock.calls as unknown[][])
@@ -89,6 +91,12 @@ describe('insertMarketingArtifacts', () => {
     expect(count).toBe(2)
     expect(inserts).toHaveLength(2)
     expect(inserts[0]?.sql).toContain('ON CONFLICT (id) DO NOTHING')
+    // The stub pool never validates arity, so the params alone cannot catch a
+    // dropped column: tenant_id has to be pinned in the SQL column list too.
+    expect(inserts[0]?.sql).toContain('tenant_id')
+    expect(inserts[0]?.sql).toContain(
+      '(id, tenant_id, bundle_id, role, kind, document_id, text_content)',
+    )
     expect(inserts[0]?.params).toEqual([
       inserts[0]?.params[0],
       TENANT,
@@ -127,6 +135,40 @@ describe('insertMarketingArtifacts', () => {
     const firstIds = calls('INSERT INTO marketing_artifacts').map((call) => call.params[0])
     expect(firstIds[0]).toBe(firstIds[1])
   })
+
+  it('separates the two content lanes, so captioned image variants keep their own ids', async () => {
+    // 0018:73-75 requires document_id for kind = 'image' but does not forbid
+    // text_content, so an A/B pair can share a caption while pointing at
+    // different bytes. Hashing one lane only gives them one id and ON CONFLICT
+    // silently drops the second; Task 11 then counts one artifact where two
+    // were saved.
+    mockQuery.mockResolvedValue({ rows: [{ id: 'x' }] })
+    const { insertMarketingArtifacts } = await load()
+    const caption = 'Two clinics, one answer within the hour'
+    const count = await insertMarketingArtifacts({
+      tenantId: TENANT,
+      bundleId: BUNDLE,
+      artifacts: [
+        { role: 'creative-designer', kind: 'image', documentId: DOCUMENT_A, textContent: caption },
+        { role: 'creative-designer', kind: 'image', documentId: DOCUMENT_B, textContent: caption },
+      ],
+    })
+    const inserts = calls('INSERT INTO marketing_artifacts')
+    const ids = inserts.map((call) => call.params[0])
+    expect(count).toBe(2)
+    expect(ids).toHaveLength(2)
+    expect(ids[0]).not.toBe(ids[1])
+    expect(inserts[0]?.params).toEqual([
+      inserts[0]?.params[0],
+      TENANT,
+      BUNDLE,
+      'creative-designer',
+      'image',
+      DOCUMENT_A,
+      caption,
+    ])
+    expect(inserts[1]?.params.slice(3)).toEqual(['creative-designer', 'image', DOCUMENT_B, caption])
+  })
 })
 
 describe('markBundleStaged', () => {
@@ -155,7 +197,10 @@ describe('countMarketingArtifacts', () => {
     mockQuery.mockResolvedValue({ rows: [{ count: 4 }] })
     const { countMarketingArtifacts } = await load()
     expect(await countMarketingArtifacts(TENANT, BUNDLE)).toBe(4)
-    expect(calls('FROM marketing_artifacts')[0]?.sql).toContain('count(*)')
+    const [call] = calls('FROM marketing_artifacts')
+    expect(call?.sql).toContain('count(*)')
+    expect(call?.sql).toContain('tenant_id = $1 AND bundle_id = $2')
+    expect(call?.params).toEqual([TENANT, BUNDLE])
   })
 })
 
