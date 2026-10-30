@@ -55,7 +55,12 @@ export function normalizeHandle(input: string): string {
   let path = trimmed
   if (/^https?:\/\//i.test(trimmed)) {
     try {
-      path = new URL(trimmed).pathname
+      const url = new URL(trimmed)
+      const segments = url.pathname.split('/').filter(Boolean)
+      // A root URL has no profile segment. Falling back to the pathname would
+      // give every site the handle "/" and make the import planner treat
+      // distinct businesses as duplicates, so the bare hostname identifies it.
+      path = segments.at(-1) ?? url.hostname.replace(/^www\./i, '')
     } catch {
       path = trimmed
     }

@@ -19,6 +19,28 @@ describe('normalizeHandle', () => {
     expect(normalizeHandle('https://au.linkedin.com/in/jo-green-coach')).toBe('jo-green-coach')
     expect(normalizeHandle('@LadyLolas')).toBe('ladylolas')
   })
+
+  it('uses the bare domain for a root url with www', () => {
+    expect(normalizeHandle('https://www.moneyschool.net.au/')).toBe('moneyschool.net.au')
+  })
+
+  it('uses the domain for a root url without www', () => {
+    expect(normalizeHandle('https://thelovepage.com.au/')).toBe('thelovepage.com.au')
+  })
+
+  it('still takes the last segment for a deep path', () => {
+    expect(normalizeHandle('https://thelovepage.com.au/contact')).toBe('contact')
+  })
+
+  it('keeps a bare handle unchanged', () => {
+    expect(normalizeHandle('@LadyLolas')).toBe('ladylolas')
+  })
+
+  it('gives different root domains different handles', () => {
+    expect(normalizeHandle('https://www.moneyschool.net.au/')).not.toBe(
+      normalizeHandle('https://thelovepage.com.au/'),
+    )
+  })
 })
 
 describe('parsePriceRange', () => {

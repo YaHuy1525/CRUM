@@ -75,20 +75,19 @@ describe('prospect pipeline acceptance', () => {
   it('plans an import that accounts for every row and reports repeat channels', () => {
     const plan = planImport(rows, [])
     expect(plan.counts.rowsIn).toBe(312)
-    expect(plan.counts.rowsNew).toBe(267)
-    expect(plan.counts.rowsDuplicate).toBe(45)
+    expect(plan.counts.rowsNew).toBe(310)
+    expect(plan.counts.rowsDuplicate).toBe(2)
     expect(plan.counts.rowsNew + plan.counts.rowsDuplicate).toBe(plan.counts.rowsIn)
 
-    // The 45 are mostly not operator duplicates: 43 are rows whose profile URL
-    // is a bare domain root (https://www.facebook.com/, https://example.com/),
-    // which normalizeHandle reads as "/", so the first root URL on each platform
-    // claims the channel and the rest are reported duplicate. Asserting the
-    // count here keeps the loss visible instead of letting a smaller "success"
-    // pass.
+    // The 2 remaining duplicates are genuine non-profile placeholder cells
+    // ("https://shopee.vn (via partner links)"): normalizeHandle reads them as
+    // the same handle. Root urls no longer collapse onto "/" — they use their
+    // bare hostname — so the 43 distinct businesses that were previously lost as
+    // duplicates of each other are inserted instead.
     const droppedWithRootHandle = rows.filter(
       (row) => plan.duplicates.includes(row.name) && row.handleNormalized === '/',
     )
-    expect(droppedWithRootHandle.length).toBe(43)
+    expect(droppedWithRootHandle.length).toBe(0)
   })
 
   it('is idempotent when the same file is imported twice', () => {
@@ -96,9 +95,9 @@ describe('prospect pipeline acceptance', () => {
     const existing = first.inserts.map(toExisting)
     const second = planImport(rows, existing)
     expect(second.counts.rowsNew).toBe(0)
-    // The first pass reported 45 channels as duplicates inside the file, so a
+    // The first pass reported 2 channels as duplicates inside the file, so a
     // second pass over all 312 rows sees every row as already known or already
-    // repeated. Replaying exactly the 267 rows that were inserted is the clean
+    // repeated. Replaying exactly the 310 rows that were inserted is the clean
     // invariant: zero new, and duplicates equal to the first import's new count.
     expect(second.counts.rowsDuplicate).toBe(first.counts.rowsNew + first.counts.rowsDuplicate)
     expect(second.counts.rowsDuplicate).toBe(rows.length)
