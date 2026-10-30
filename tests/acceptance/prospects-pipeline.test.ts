@@ -9,9 +9,11 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { parseCsv, parseProspectRows, type ParsedRow } from '../../src/prospects/csv'
 import { importRefusals, inspectImportRows, planImport } from '../../src/prospects/import'
-import { scoreProspect, WEIGHTS_VERSION, type Reachability } from '../../src/prospects/score'
+import { scoreProspect, WEIGHTS_VERSION } from '../../src/prospects/score'
+import { reachabilityFor } from '../../src/prospects/reachability'
 import { checkSendCaps, type SendLedgerEntry } from '../../src/prospects/caps'
 import { checkDraft } from '../../src/prospects/draft-rules'
+import { formatMinor } from '../../console/lib/money'
 
 const csv = readFileSync('tests/fixtures/prospects-acceptance.csv', 'utf8')
 const raw = parseCsv(csv)
@@ -26,17 +28,8 @@ function toExisting(row: ParsedRow) {
   }
 }
 
-// Outreach channel, not the raw platform label: a website gets a contact form,
-// LinkedIn gets a LinkedIn message, a social profile gets a DM.
-const REACHABILITY: Record<string, Reachability> = {
-  email: 'email',
-  linkedin: 'linkedin',
-  website: 'form',
-  instagram: 'dm',
-  facebook: 'dm',
-  tiktok: 'dm',
-  shopee: 'dm',
-}
+// Outreach channel, not the raw platform label: the mapping lives in
+// src/prospects/reachability.ts so the score script and this file cannot drift.
 
 describe('prospect pipeline acceptance', () => {
   it('reads every row in the file without rejecting any', () => {
@@ -133,7 +126,7 @@ describe('prospect pipeline acceptance', () => {
         audience: { count: row.audience.count, basis: row.audience.basis },
         offers: { priceVisible: row.price.minMinor !== null, sellsSomething: row.whatTheySell !== null },
         weaknessSignals: [],
-        reachability: REACHABILITY[row.platform] ?? 'none',
+        reachability: reachabilityFor(row.platform),
       })
       expect(Number.isFinite(score.total)).toBe(true)
       expect(score.total).toBeGreaterThanOrEqual(0)
@@ -141,6 +134,35 @@ describe('prospect pipeline acceptance', () => {
       expect(['micro', 'small', 'mid', 'big']).toContain(score.band)
       expect(score.weightsVersion).toBe(WEIGHTS_VERSION)
     }
+  })
+
+  // The score script used to map facebook, tiktok, shopee and youtube to 'none',
+  // which scores 0.1 instead of 0.8 on this weight.
+  it('maps a tiktok channel to a DM and scores the DM weight', () => {
+    expect(reachabilityFor('tiktok')).toBe('dm')
+    expect(reachabilityFor('facebook')).toBe('dm')
+    expect(reachabilityFor('shopee')).toBe('dm')
+    expect(reachabilityFor('youtube')).toBe('form')
+    expect(reachabilityFor('website')).toBe('form')
+    expect(reachabilityFor('email')).toBe('email')
+    expect(reachabilityFor('linkedin')).toBe('linkedin')
+    expect(reachabilityFor(null)).toBe('none')
+
+    const score = scoreProspect({
+      audience: { count: 10000, basis: 'followers' },
+      offers: { priceVisible: true, sellsSomething: true },
+      weaknessSignals: [],
+      reachability: reachabilityFor('tiktok'),
+    })
+    expect(score.reachability).toBe(0.8)
+  })
+
+  // VND has no minor unit, so the console must not divide by 100: a 2,900,000
+  // VND course showed as "29000.00".
+  it('formats VND with exponent 0 and always names the currency', () => {
+    expect(formatMinor(2900000, 'VND')).toBe('2900000 VND')
+    expect(formatMinor(290000, 'AUD')).toBe('2900.00 AUD')
+    expect(formatMinor(null, 'VND')).toBeNull()
   })
 
   it('applies send caps to a real prospect during Vietnam business hours', () => {

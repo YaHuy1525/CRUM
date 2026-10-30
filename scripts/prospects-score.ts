@@ -9,14 +9,7 @@
 import { getDbClient } from '../src/db/client'
 import { toScoreRow } from '../src/prospects/persist-score'
 import type { AudienceBasis } from '../src/prospects/normalize'
-import type { Reachability } from '../src/prospects/score'
-
-const REACHABILITY_BY_PLATFORM: Record<string, Reachability> = {
-  email: 'email',
-  instagram: 'dm',
-  linkedin: 'linkedin',
-  website: 'form',
-}
+import { reachabilityFor } from '../src/prospects/reachability'
 
 type ProspectScoreSource = {
   id: string
@@ -66,7 +59,7 @@ async function main(): Promise<void> {
         sellsSomething: row.what_they_sell !== null,
       },
       weaknessSignals: row.weakness_signals ?? [],
-      reachability: REACHABILITY_BY_PLATFORM[row.platform ?? ''] ?? 'none',
+      reachability: reachabilityFor(row.platform),
     })
 
     await getDbClient().query(

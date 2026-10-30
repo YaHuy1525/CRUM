@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useParams } from 'next/navigation'
 
 import { ApiError, describeError, get } from '@/lib/api'
+import { formatMinor } from '@/lib/money'
 import { PageHeader } from '@/components/PageHeader'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -66,14 +67,9 @@ function formatCount(value: number | null): string {
   return value === null ? 'no count' : new Intl.NumberFormat('en-AU').format(value)
 }
 
-function formatPrice(value: number | null, currency: string | null): string | null {
-  if (value === null) return null
-  return `${(value / 100).toFixed(2)}${currency ? ` ${currency}` : ''}`
-}
-
 function priceLabel(snapshot: ProspectSnapshot): string | null {
-  const min = formatPrice(snapshot.priceMinMinor, snapshot.currency)
-  const max = formatPrice(snapshot.priceMaxMinor, snapshot.currency)
+  const min = formatMinor(snapshot.priceMinMinor, snapshot.currency)
+  const max = formatMinor(snapshot.priceMaxMinor, snapshot.currency)
   if (!min && !max) return null
   if (!min) return max
   if (!max || min === max) return min

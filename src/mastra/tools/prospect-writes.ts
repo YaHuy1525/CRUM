@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { TenantRequestContextSchema } from '../tenant-context'
 import { loadPolicy } from '../../governance/policy'
 import { scoreRisk } from '../../governance/risk'
-import { getOrCreateDraft, createHumanTask } from '../../db/pending-writes'
+import { getOrCreateDraft, commitAutoWrite, createHumanTask } from '../../db/pending-writes'
 import { getDbClient } from '../../db/client'
 import { checkDraft, type DraftChannel } from '../../prospects/draft-rules'
 import { checkSendCaps, type SendChannel, type SendKind, type SendLedgerEntry } from '../../prospects/caps'
@@ -202,7 +202,10 @@ export const draftOutreachTool = createTool({
           body: input.body,
           language: input.language,
           angle: input.angle,
-          status: 'drafted',
+          // Committing this row IS the content approval: send_outreach refuses
+          // anything that is not already approved, so the message a human reads
+          // in the approval queue is the message that later leaves.
+          status: 'approved',
           evidenceSnapshotId: input.evidenceSnapshotId,
           promptVersion: input.promptVersion,
           draftHash: input.draftHash,
@@ -214,6 +217,20 @@ export const draftOutreachTool = createTool({
         // server-derived `send:<draftId>` key and hijack an in-flight send.
         idempotencyKey: `draft:${input.draftHash}`,
       })
+
+      // Drafting is an `auto` class tool, so a staged-only write would leave
+      // outreach_drafts empty and give send_outreach no draft id to act on. The
+      // committed row id is the draft id the next tool takes.
+      if (gate === 'auto') {
+        const applied = await commitAutoWrite(draft)
+        const committedId = applied.committedRecordId ?? draft.id
+        return {
+          pendingWriteId: committedId,
+          riskScore: assessment.score,
+          gate: 'auto' as const,
+          message: `Draft committed (draft ${committedId}).`,
+        }
+      }
 
       return {
         pendingWriteId: draft.id,
@@ -276,15 +293,18 @@ export const sendOutreachTool = createTool({
 
       // A send is authorised against the stored draft, not the payload. The
       // replay guard reads `status` from the same row the commit will update.
-      // `country` comes along because quiet hours are local to the prospect.
+      // `country` comes along because quiet hours are local to the prospect, and
+      // `body`/`language` because the approver has to see the message itself.
       const loaded = await db.query<{
         id: string
         prospect_id: string
         channel_id: string
         status: string
+        body: string
+        language: string
         country: string | null
       }>(
-        `SELECT d.id, d.prospect_id, d.channel_id, d.status, p.country
+        `SELECT d.id, d.prospect_id, d.channel_id, d.status, d.body, d.language, p.country
            FROM outreach_drafts d
            JOIN prospects p ON p.id = d.prospect_id AND p.tenant_id = d.tenant_id
           WHERE d.id = $1 AND d.tenant_id = $2`,
@@ -293,12 +313,15 @@ export const sendOutreachTool = createTool({
       const draftRow = loaded.rows[0]
       if (!draftRow) throw new Error('draft_not_found')
       if (draftRow.status === 'sent') throw new Error('already_sent')
+      // Only a committed draft (status 'approved') may be sent: a `drafted` row
+      // never had its content approved, so sending it would bypass the review.
+      if (draftRow.status !== 'approved') throw new Error('not_approved')
 
       // The channel must belong to the draft's own prospect: a channel that is
       // merely in the same tenant would send one prospect's message to another
       // prospect's handle while spending the first one's consent and caps.
-      const channel = await db.query<{ platform: string }>(
-        `SELECT platform FROM prospect_channels
+      const channel = await db.query<{ platform: string; handle: string }>(
+        `SELECT platform, handle FROM prospect_channels
           WHERE id = $1 AND tenant_id = $2 AND prospect_id = $3`,
         [draftRow.channel_id, rc.tenantId, draftRow.prospect_id],
       )
@@ -376,7 +399,18 @@ export const sendOutreachTool = createTool({
         objectType: 'outreach_send',
         operation: 'update',
         targetId: input.draftId,
-        payload: { status: 'sent', sentAt: new Date().toISOString() },
+        // Everything here is read from the stored rows, never from the caller:
+        // the approver must see the prospect, the channel it leaves through and
+        // the exact body that was approved, not a resubmitted copy of them.
+        payload: {
+          status: 'sent',
+          sentAt: new Date().toISOString(),
+          prospectId: draftRow.prospect_id,
+          platform: channelRow.platform,
+          handle: channelRow.handle,
+          body: draftRow.body,
+          language: draftRow.language,
+        },
         riskScore: assessment.score,
         gate,
         requestedBy: rc.userId,
