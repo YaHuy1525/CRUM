@@ -1119,6 +1119,7 @@ Two more `ToolAction` fields that are governance features rather than convenienc
 | `crm.bulk_import` | refuse | — | Always a human task |
 | `mail.draft` | auto | `draftHash` | Draft only |
 | `mail.send` | approval | `draftHash` | Behind receipt |
+| `marketing.save_bundle` | auto | `draftHash` | Stores a bundle draft; scores a redacted view |
 
 #### 4.6.3 Resolving the active set
 

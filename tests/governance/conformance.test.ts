@@ -48,6 +48,7 @@ const SPEC_TOOL_SURFACE: ReadonlyArray<readonly [name: string, klass: string, id
   ['mail.send', 'approval', 'draftHash'],
   ['crm.send_outreach', 'approval', 'actionHash'],
   ['crm.resolve_merge_candidate', 'approval', 'correlationId'],
+  ['marketing.save_bundle', 'auto', 'draftHash'],
 ]
 
 /**
@@ -86,7 +87,7 @@ describe('tools.yaml conforms to §4.6.2', () => {
     expect(extra).toEqual([])
   })
 
-  it('has exactly the thirty-seven spec tools plus run.side-effect', () => {
+  it('has exactly the thirty-eight spec tools plus run.side-effect', () => {
     expect(policy.tools.tools).toHaveLength(SPEC_TOOL_SURFACE.length + TEMPLATE_TOOLS.size)
   })
 })

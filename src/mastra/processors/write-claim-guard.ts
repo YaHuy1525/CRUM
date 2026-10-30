@@ -16,6 +16,7 @@ export const MUTATING_TOOL_IDS = [
   'crm.create_schedule',
   'crm.transfer_owner',
   'mail.send',
+  'marketing.save_bundle',
 ]
 
 export const MUTATING_TOOLS = new Set(MUTATING_TOOL_IDS.map(providerToolName))

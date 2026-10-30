@@ -252,6 +252,26 @@ const COMMIT_TARGETS: Record<
       sentAt: 'sent_at',
     },
   },
+  // A bundle is content, not a state change on the world: it has no owner_id
+  // column, because the person who approves it is the requested_by on the
+  // pending write and the receipt, not a column on the row.
+  marketing_bundle: {
+    table: 'marketing_bundles',
+    ownerColumn: false,
+    columns: {
+      brief: 'brief',
+      objective: 'objective',
+      audienceNote: 'audience_note',
+      status: 'status',
+      strategy: 'strategy',
+      copy: 'copy',
+      mediaPlan: 'media_plan',
+      funnelPlan: 'funnel_plan',
+      analysis: 'analysis',
+      promptVersion: 'prompt_version',
+      draftHash: 'draft_hash',
+    },
+  },
 }
 
 function requireTarget(objectType: string): (typeof COMMIT_TARGETS)[string] {

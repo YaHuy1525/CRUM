@@ -138,7 +138,7 @@ tools:
     scope: crm-read
     class: read-only
 
-  # ── auto (5) ───────────────────────────────────────────────
+  # ── auto (6) ───────────────────────────────────────────────
   - name: crm.log_followup
     description: Record a completed contact attempt.
     scope: crm-write
@@ -173,6 +173,13 @@ tools:
     class: auto
     idempotent: true
     idempotency_key: correlationId
+
+  - name: marketing.save_bundle
+    description: Store one campaign bundle and its assets. Saves a draft; stages nothing and publishes nothing.
+    scope: marketing:bundle
+    class: auto
+    idempotent: true
+    idempotency_key: draftHash
 
   # ── approval (9) ───────────────────────────────────────────
   - name: crm.create_customer

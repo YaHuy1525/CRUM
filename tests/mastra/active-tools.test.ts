@@ -41,6 +41,7 @@ const AUTO_TOOLS = [
   'mail.draft',
   'crm.draft_outreach',
   'crm.save_prospect_snapshot',
+  'marketing.save_bundle',
 ]
 
 // Approval-class writes: admin-only, tenant-wide.
@@ -62,19 +63,19 @@ const APPROVAL_TOOLS = [
 //  - crm.bulk_import: refuse class → routed to a human task (§4.6.1).
 const NEVER_CALLABLE = ['run.side-effect', 'crm.bulk_import']
 
-const USER_EXPECTED = [...READ_ONLY_TOOLS, ...AUTO_TOOLS] // 27
-const ADMIN_EXPECTED = [...READ_ONLY_TOOLS, ...AUTO_TOOLS, ...APPROVAL_TOOLS] // 36
+const USER_EXPECTED = [...READ_ONLY_TOOLS, ...AUTO_TOOLS] // 28
+const ADMIN_EXPECTED = [...READ_ONLY_TOOLS, ...AUTO_TOOLS, ...APPROVAL_TOOLS] // 37
 
 describe('resolveActiveTools', () => {
-  it('gives a non-admin the read-only + auto tools (27)', () => {
+  it('gives a non-admin the read-only + auto tools (28)', () => {
     const active = resolveActiveTools(baseContext)
-    expect(active).toHaveLength(27)
+    expect(active).toHaveLength(28)
     expect(active.slice().sort()).toEqual(USER_EXPECTED.slice().sort())
   })
 
-  it('gives an admin the approval-class writes too (36)', () => {
+  it('gives an admin the approval-class writes too (37)', () => {
     const active = resolveActiveTools({ ...baseContext, userRole: 'admin' })
-    expect(active).toHaveLength(36)
+    expect(active).toHaveLength(37)
     expect(active.slice().sort()).toEqual(ADMIN_EXPECTED.slice().sort())
   })
 
@@ -99,7 +100,7 @@ describe('resolveActiveTools', () => {
 
   it('tool names all come from the policy registry', () => {
     const active = resolveActiveTools({ ...baseContext, userRole: 'admin' })
-    for (const name of active) expect(name).toMatch(/^(crm|knowledge|mail|doc|revenue)\./)
+    for (const name of active) expect(name).toMatch(/^(crm|knowledge|mail|doc|revenue|marketing)\./)
   })
 })
 
@@ -134,7 +135,7 @@ describe('providerToolName', () => {
 
   it('leaves no dotted id in the list the agent hands the model', () => {
     const providerNames = resolveActiveTools({ ...baseContext, userRole: 'admin' }).map(providerToolName)
-    expect(providerNames).toHaveLength(36)
+    expect(providerNames).toHaveLength(37)
     for (const name of providerNames) {
       expect(name).not.toContain('.')
       expect(name).toMatch(/^[a-zA-Z][a-zA-Z0-9_-]{0,62}$/)
