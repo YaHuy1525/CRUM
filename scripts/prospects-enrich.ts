@@ -12,6 +12,7 @@ import { analysePage } from '../src/prospects/enrich'
 const EXTRACTOR_VERSION = 'enrich-v1'
 const STALE_DAYS = 30
 const TIMEOUT_MS = 8000
+const REQUEST_DELAY_MS = 1000
 const LIMIT = Number(process.env.PROSPECT_ENRICH_LIMIT ?? '25')
 
 type EnrichmentTarget = {
@@ -21,16 +22,26 @@ type EnrichmentTarget = {
   profile_url: string
 }
 
+// Space out requests to one host: a 25-prospect run takes roughly 25 seconds
+// instead of firing every fetch at once.
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 async function main(): Promise<void> {
   const tenantId = process.env.PROSPECT_TENANT_ID
   if (!tenantId) throw new Error('PROSPECT_TENANT_ID is required')
 
   const db = getDbClient()
   const targets = await db.query<EnrichmentTarget>(
+    // A prospect with several channels (say Instagram and LinkedIn) would be
+    // selected once per channel and receive duplicate snapshots in one run, so
+    // DISTINCT ON keeps exactly one row per prospect: the channel with the
+    // biggest audience. DISTINCT ON requires p.id first in the ORDER BY, and
+    // the LIMIT then counts prospects, not joined channel rows.
     // A prospect is stale when none of its snapshots is recent, so re-running
-    // the command an hour later refetches nothing. Biggest audiences first keeps
-    // a small PROSPECT_ENRICH_LIMIT focused on the prospects worth scoring.
-    `SELECT p.id, p.country, c.platform, c.profile_url
+    // the command an hour later refetches nothing.
+    `SELECT DISTINCT ON (p.id) p.id, p.country, c.platform, c.profile_url
        FROM prospects p
        JOIN prospect_channels c ON c.prospect_id = p.id
       WHERE p.tenant_id = $1
@@ -38,14 +49,17 @@ async function main(): Promise<void> {
           SELECT 1 FROM prospect_snapshots s
            WHERE s.prospect_id = p.id AND s.fetched_at > now() - ($2 || ' days')::interval
         )
-      ORDER BY c.audience_count DESC NULLS LAST
+      ORDER BY p.id, c.audience_count DESC NULLS LAST
       LIMIT $3`,
     [tenantId, String(STALE_DAYS), LIMIT],
   )
 
   let enriched = 0
   let failed = 0
-  for (const row of targets.rows) {
+  for (const [index, row] of targets.rows.entries()) {
+    // Pause between requests, never after the last one, so the run does not
+    // sleep before it exits.
+    if (index > 0) await sleep(REQUEST_DELAY_MS)
     try {
       const response = await fetch(row.profile_url, {
         signal: AbortSignal.timeout(TIMEOUT_MS),
