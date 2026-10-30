@@ -41,6 +41,12 @@ export interface CreateDraftParams {
     | 'outreach_draft'
     | 'outreach_send'
     | 'prospect_merge'
+    // marketing_bundle is the auto-committed content row; marketing_stage is the
+    // approval that turns a stored bundle into an approved one. They are two
+    // types because applyDraft dispatches on object_type, so one type would have
+    // to mean both "insert a bundle" and "approve a bundle".
+    | 'marketing_bundle'
+    | 'marketing_stage'
   operation: 'create' | 'update' | 'delete'
   targetId?: string
   payload: unknown
