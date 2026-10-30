@@ -60,6 +60,16 @@ function stageDraft(payload: Record<string, unknown>): PendingWrite {
   }
 }
 
+// Same helper as Task 2's marketing.test.ts fix: the stubs below answer a
+// matched fragment with a fixed row for ANY params, so a stub's return value
+// proves nothing about what a write actually scoped by. Read the recorded call
+// and assert its SQL text and its real parameter array instead.
+function calls(fragment: string): Array<{ sql: string; params: unknown[] }> {
+  return (mockQuery.mock.calls as unknown[][])
+    .filter((call) => (call[0] as string).includes(fragment))
+    .map((call) => ({ sql: call[0] as string, params: (call[1] ?? []) as unknown[] }))
+}
+
 // No auditRow helper here: all three tests stub 'INSERT INTO audit_receipts' by
 // SQL fragment, so a full receipt row is never constructed, and an unused helper
 // function is an `@typescript-eslint/no-unused-vars` error (eslint.config.js:47).
@@ -101,6 +111,16 @@ describe('approving a marketing stage draft', () => {
     })
     expect(result.committedId).toBe(BUNDLE)
     expect(result.receiptId).toBe('receipt-1')
+    // The 'approved' stub above hands back [{ id: BUNDLE }] whatever the params
+    // are, so committedId/receiptId never prove the write was tenant-scoped.
+    // Read the UPDATE the code actually issued: its SQL must carry the tenant
+    // predicate and RETURNING id, and its params must be the caller's
+    // [bundleId, tenantId] in that order. Drop `AND tenant_id = $2` from
+    // commitBundleApproval's UPDATE and this assertion is what fails.
+    const [update] = calls("UPDATE marketing_bundles SET status = 'approved'")
+    expect(update?.sql).toContain('tenant_id = $2')
+    expect(update?.sql).toContain('RETURNING id')
+    expect(update?.params).toEqual([BUNDLE, TENANT])
   })
 
   it('passes a null receipt id to the outbox, because the receipt does not exist yet', async () => {
@@ -129,12 +149,12 @@ describe('approving a marketing stage draft', () => {
         approvedBy: APPROVER,
         scope: 'crm:write',
       })
-      const enqueue = mockQuery.mock.calls.find((c) => (c[0] as string).includes('INSERT INTO marketing_actions'))
+      const [enqueue] = calls('INSERT INTO marketing_actions')
       expect(enqueue).toBeDefined()
       // ['queued', receipt_id] is the tail. The last param is the receipt id the
       // branch hands over, and it must be null: commitWithReceipt signs its
       // receipt only after applyDraft returns, so no real id exists to write.
-      expect(enqueue?.[1]).toEqual([TENANT, BUNDLE, 'publish_page', JSON.stringify({ slug: '/free-scan' }), null])
+      expect(enqueue?.params).toEqual([TENANT, BUNDLE, 'publish_page', JSON.stringify({ slug: '/free-scan' }), null])
     } finally {
       unregister()
     }
