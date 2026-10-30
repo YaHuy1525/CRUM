@@ -1,6 +1,7 @@
 import { getDbClient } from './client'
 import { signReceipt, computeActionHash } from '../governance/receipt'
 import { dismissMergeCandidate, mergeProspects } from './prospect-merge'
+import { BundleNotApprovableError, commitBundleApproval } from '../marketing/outbox'
 
 export interface PendingWrite {
   id: string
@@ -436,6 +437,35 @@ async function applyDraft(
       )
     }
     return mergeProspects(client, { tenantId: draft.tenantId, survivorId, duplicateId })
+  }
+
+  // Approving a bundle is a state change plus a work order, so it does not go
+  // through COMMIT_TARGETS the way a content row does. The lock, the refusal and
+  // the enqueue all belong in one transaction with the receipt, which is the
+  // only reason the bundle can be called approved without anything outside CRUM
+  // having been touched yet.
+  if (draft.objectType === 'marketing_stage') {
+    if (draft.operation !== 'update') {
+      throw new UnsupportedCommitError(
+        `marketing_stage supports only the update operation, not ${draft.operation}`,
+      )
+    }
+    if (!draft.targetId) {
+      throw new UnsupportedCommitError('marketing_stage must name the bundle it approves')
+    }
+    try {
+      // null on purpose: commitWithReceipt signs the receipt after applyDraft
+      // returns, so the id does not exist yet. The drainer back-fills it, and no
+      // slice may pretend otherwise by writing a receipt id it has not earned.
+      return await commitBundleApproval(client, {
+        tenantId: draft.tenantId,
+        bundleId: draft.targetId,
+        receiptId: null,
+      })
+    } catch (err) {
+      if (err instanceof BundleNotApprovableError) throw new UnsupportedCommitError(err.message)
+      throw err
+    }
   }
 
   const target = requireTarget(draft.objectType)
