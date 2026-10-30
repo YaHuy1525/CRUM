@@ -1,9 +1,15 @@
 // scripts/prospects-enrich.ts
 //
-// Fetches the public page behind each stale prospect channel, turns it into
-// evidence with the pure analyser in src/prospects/enrich.ts, and appends one
-// snapshot per page. Without snapshots every prospect has no weakness signals,
-// so funnel-gap scoring stays at zero and the console has nothing to cite.
+// Fetches the public website behind each stale prospect, turns it into evidence
+// with the pure analyser in src/prospects/enrich.ts, and appends one snapshot
+// per page. Without snapshots every prospect has no weakness signals, so
+// funnel-gap scoring stays at zero and the console has nothing to cite.
+//
+// Only website channels are fetched. Social profiles (Instagram, LinkedIn,
+// Facebook, TikTok, Shopee, YouTube) cannot be read without authentication: a
+// logged-out request returns a login wall or a JS-only shell whose chrome is
+// not evidence of anything. A prospect that has only those channels is
+// therefore not enrichable, and the run reports it as `enrichable 0`.
 //
 // Usage: npm run prospects:enrich  (needs DATABASE_URL and PROSPECT_TENANT_ID)
 import path from 'node:path'
@@ -12,58 +18,37 @@ import { getDbClient } from '../src/db/client'
 import { analysePage } from '../src/prospects/enrich'
 
 const EXTRACTOR_VERSION = 'enrich-v1'
-// A page that returned a login wall or a JS-only shell is not evidence, but the
-// attempt still has to be remembered or the next run fetches the same hopeless
-// URL again. The marker version carries no weakness signals, so it satisfies
-// the freshness guard without scoring as an observation.
-const UNUSABLE_EXTRACTOR_VERSION = 'enrich-unusable'
 const STALE_DAYS = 30
 const TIMEOUT_MS = 8000
 const REQUEST_DELAY_MS = 1000
 const LIMIT = Number(process.env.PROSPECT_ENRICH_LIMIT ?? '25')
 
-// A prospect with several channels (say Instagram and LinkedIn) would be
-// selected once per channel and receive duplicate snapshots in one run, so
-// DISTINCT ON keeps exactly one row per prospect. The website channel sorts
-// first and the largest audience breaks the remaining tie: fetching the
-// site is more informative than fetching a social profile, and a page read
-// from Instagram must not be mistaken for the prospect having no site.
-// `has_website_channel` is a fact from the channel table, not a guess about
-// the fetched page, and it is what the analyser reports as hasWebsite.
-// DISTINCT ON requires p.id first in the ORDER BY, and the LIMIT then counts
-// prospects, not joined channel rows.
+// DISTINCT ON keeps exactly one row per prospect when a prospect has more than
+// one website channel, and the LIMIT then counts prospects, not joined channel
+// rows. The join itself is restricted to 'website': no social profile is ever
+// fetched, because the analyser cannot read one without authentication.
 // A prospect is stale when none of its enrichment attempts is recent, so
-// re-running the command an hour later refetches nothing.
-// The import CLI writes a baseline snapshot for every prospect with the
-// 'import-v1' extractor. That baseline is not a reading of the page, so it
-// must not count as freshness: without the extractor_version guard the import
-// hides every prospect from enrichment for STALE_DAYS.
-// A reading the analyser marked unusable is recorded as 'enrich-unusable'. It
-// counts as an attempt, not as evidence: skipping the prospect for STALE_DAYS
-// stops the same login wall being fetched every run. The marker also matches
-// the 'enrich-%' prefix; the explicit equality is kept so the retry contract
-// stays visible (and survives any future narrowing of the prefix pattern).
+// re-running the command an hour later refetches nothing. Only 'enrich-%'
+// snapshots count towards freshness: the import CLI writes an 'import-v1'
+// baseline for every prospect, and counting that baseline would hide every
+// imported prospect from enrichment for STALE_DAYS.
 export const ENRICH_TARGETS_SQL = `SELECT DISTINCT ON (p.id) p.id, p.country, c.platform, c.profile_url,
-            EXISTS (
-              SELECT 1 FROM prospect_channels w
-               WHERE w.prospect_id = p.id AND w.platform = 'website'
-            ) AS has_website_channel
+            TRUE AS has_website_channel
        FROM prospects p
-       JOIN prospect_channels c ON c.prospect_id = p.id
+       JOIN prospect_channels c ON c.prospect_id = p.id AND c.platform = 'website'
       WHERE p.tenant_id = $1
         AND NOT EXISTS (
           SELECT 1 FROM prospect_snapshots s
            WHERE s.prospect_id = p.id
-             AND (s.extractor_version LIKE 'enrich-%'
-                  OR s.extractor_version = 'enrich-unusable')
+             AND s.extractor_version LIKE 'enrich-%'
              AND s.fetched_at > now() - ($2 || ' days')::interval
         )
-      ORDER BY p.id, (c.platform = 'website') DESC, c.audience_count DESC NULLS LAST
+      ORDER BY p.id, c.audience_count DESC NULLS LAST
       LIMIT $3`
 
-// One insert shape for both an observation and an unusable marker. The marker
-// reuses conservative field values from the analyser (no signals, no price,
-// flags false) and differs only in extractor_version.
+// One insert shape, used only for a readable page. An unreadable page writes
+// nothing: a placeholder row would become the latest snapshot and its null
+// price and offer would overwrite whatever the import recorded.
 const SNAPSHOT_INSERT_SQL = `INSERT INTO prospect_snapshots
            (tenant_id, prospect_id, what_they_sell, price_min_minor, price_max_minor, currency,
             price_visible, has_website, has_lead_magnet, has_email_capture, has_funnel,
@@ -95,8 +80,8 @@ async function main(): Promise<void> {
     LIMIT,
   ])
 
+  const enrichable = targets.rows.length
   let enriched = 0
-  let unusable = 0
   let failed = 0
   for (const [index, row] of targets.rows.entries()) {
     // Pause between requests, never after the last one, so the run does not
@@ -116,17 +101,20 @@ async function main(): Promise<void> {
         country: row.country,
         hasWebsiteChannel: row.has_website_channel,
       })
+      // An unread page is not evidence, and writing anything for it would make
+      // a placeholder the latest snapshot. It is retried on the next run.
+      if (!result.usable) {
+        failed += 1
+        console.warn(`skip ${row.id}: page not usable, no snapshot written`)
+        continue
+      }
       await db.query(SNAPSHOT_INSERT_SQL, [
         tenantId, row.id, result.whatTheySell, result.priceMinMinor, result.priceMaxMinor,
         result.currency, result.priceVisible, result.hasWebsite, result.hasLeadMagnet,
         result.hasEmailCapture, result.hasFunnel, result.weaknessSignals,
-        row.profile_url,
-        result.usable ? EXTRACTOR_VERSION : UNUSABLE_EXTRACTOR_VERSION,
+        row.profile_url, EXTRACTOR_VERSION,
       ])
-      // An unread page is recorded only as a retry marker, never counted as
-      // evidence: it must not look like a successful reading in the summary.
-      if (result.usable) enriched += 1
-      else unusable += 1
+      enriched += 1
     } catch (error) {
       failed += 1
       // One unreachable page must not abort the run; the next session retries it
@@ -134,7 +122,9 @@ async function main(): Promise<void> {
       console.warn(`skip ${row.id}: ${(error as Error).message}`)
     }
   }
-  console.log(`enriched ${enriched}, unusable ${unusable}, failed ${failed}, of ${targets.rows.length}`)
+  // A tenant whose prospects have only social or marketplace channels selects
+  // no rows at all; say `enrichable 0` instead of reporting a silent no-op.
+  console.log(`enrichable ${enrichable}, enriched ${enriched}, failed ${failed}`)
 }
 
 // Only run when invoked directly. The test suite imports ENRICH_TARGETS_SQL,
