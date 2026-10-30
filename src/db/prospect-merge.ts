@@ -72,6 +72,19 @@ function scoreOrNull(value: string | number | null): number | null {
   return value === null ? null : Number(value)
 }
 
+/**
+ * Consent strength, strongest first. `recorded_at` alone is the wrong winner:
+ * a manual override recorded in January would outrank an inbound reply from
+ * March, and the send caps would then refuse email despite real consent.
+ */
+function consentRankSql(alias: 's' | 'd'): string {
+  return `CASE ${alias}.basis
+                WHEN 'inbound_reply' THEN 3
+                WHEN 'opt_in' THEN 2
+                ELSE 1
+              END`
+}
+
 // Both prospects are joined on the candidate's own tenant, not just on the FK:
 // a candidate row and a prospect row can only ever be read together when they
 // belong to the same tenant.
@@ -216,9 +229,30 @@ async function mergeWithin(
 
   // draft_hash is unique per tenant, so a draft that would collide with one the
   // survivor already holds is dropped before the repoint. Equal hashes mean the
-  // same generated message, and the survivor's copy is the one that stays.
+  // same generated message, and the survivor's copy is the one that stays — but
+  // only while the duplicate's copy is still unsent. A `sent` row is a real
+  // send that the daily cap ledger counts, so it is never deleted.
   await client.query(
     `DELETE FROM outreach_drafts d
+      WHERE d.tenant_id = $1
+        AND d.prospect_id = $3
+        AND d.status <> 'sent'
+        AND EXISTS (
+          SELECT 1 FROM outreach_drafts s
+           WHERE s.tenant_id = d.tenant_id
+             AND s.prospect_id = $2
+             AND s.draft_hash = d.draft_hash
+        )`,
+    [tenantId, survivorId, duplicateId],
+  )
+
+  // A collision that survived the delete is a sent draft. Keep it and move it
+  // out of the survivor's hash space: the suffix is derived from the row id, so
+  // it is unique. This must run before the repoint below, because the unique
+  // key is (tenant_id, draft_hash) regardless of which prospect holds the row.
+  await client.query(
+    `UPDATE outreach_drafts d
+        SET draft_hash = draft_hash || ':merged:' || d.id::text
       WHERE d.tenant_id = $1
         AND d.prospect_id = $3
         AND EXISTS (
@@ -244,9 +278,11 @@ async function mergeWithin(
   )
 
   // prospect_consents is keyed on prospect_id, so exactly one row may survive.
-  // Three statements keep the earliest record: drop the survivor's row when the
-  // duplicate's is older, drop the duplicate's row when a survivor row remains,
-  // then move whatever is left onto the survivor.
+  // The strongest basis wins, not the earliest one: an inbound reply outranks an
+  // opt-in, which outranks a manual override. Only equal strengths fall back to
+  // earliest recorded_at, and an exact tie keeps the survivor's row. The
+  // duplicate's row then goes whenever a survivor row remains, and whatever is
+  // left moves onto the survivor.
   await client.query(
     `DELETE FROM prospect_consents s
       WHERE s.tenant_id = $1
@@ -255,7 +291,13 @@ async function mergeWithin(
           SELECT 1 FROM prospect_consents d
            WHERE d.tenant_id = $1
              AND d.prospect_id = $3
-             AND d.recorded_at < s.recorded_at
+             AND (
+               ${consentRankSql('d')} > ${consentRankSql('s')}
+               OR (
+                 ${consentRankSql('d')} = ${consentRankSql('s')}
+                 AND d.recorded_at < s.recorded_at
+               )
+             )
         )`,
     [tenantId, survivorId, duplicateId],
   )

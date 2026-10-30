@@ -66,6 +66,7 @@ function mergeClient(): { query: typeof mockQuery } {
 const MERGE_HANDLERS: Record<string, Row[]> = {
   'SELECT id FROM prospects WHERE tenant_id': [{ id: SURVIVOR }, { id: DUPLICATE }],
   'UPDATE prospect_channels c': [],
+  'SET draft_hash': [],
   'UPDATE outreach_drafts d': [],
   'UPDATE outreach_threads t': [],
   'DELETE FROM prospect_channels': [],
@@ -125,14 +126,44 @@ describe('mergeProspects', () => {
     )
   })
 
+  it('keeps a sent duplicate draft by re-keying its hash instead of deleting it', async () => {
+    stubQueries(MERGE_HANDLERS)
+
+    await runMerge()
+
+    // Only unsent collisions may be dropped. Deleting a `sent` row would erase a
+    // real send and silently remove it from the daily cap ledger, which is built
+    // from drafts where status = 'sent'.
+    const drop = queryCall('DELETE FROM outreach_drafts d')
+    expect(drop.sql).toContain("d.status <> 'sent'")
+    expect(drop.sql).toContain('s.draft_hash = d.draft_hash')
+    expect(drop.params).toEqual([TENANT, SURVIVOR, DUPLICATE])
+
+    // Whatever collision is left after the delete is a sent draft. It is kept
+    // and moved out of the survivor's hash space rather than discarded.
+    const rekey = queryCall('SET draft_hash')
+    expect(rekey.sql).toContain(`draft_hash || ':merged:' || d.id::text`)
+    expect(rekey.sql).toContain('s.draft_hash = d.draft_hash')
+    expect(rekey.params).toEqual([TENANT, SURVIVOR, DUPLICATE])
+
+    // The unique key is (tenant_id, draft_hash), so the re-key has to land
+    // between the delete and the repoint or the repoint would abort the merge.
+    expect(stepIndex('DELETE FROM outreach_drafts d')).toBeLessThan(stepIndex('SET draft_hash'))
+    expect(stepIndex('SET draft_hash')).toBeLessThan(
+      stepIndex('UPDATE outreach_drafts SET prospect_id'),
+    )
+  })
+
   it('keeps the survivor consent when both prospects have one', async () => {
     stubQueries(MERGE_HANDLERS)
 
     await runMerge()
 
-    // Only an older duplicate row displaces the survivor's consent; on a tie the
-    // survivor's row stays, which is what the strict `<` pins.
+    // The duplicate's row displaces the survivor's only when it is stronger, or
+    // equally strong and strictly older. An exact tie keeps the survivor's row.
     const dropSurvivor = queryCall('DELETE FROM prospect_consents s')
+    expect(dropSurvivor.sql).toContain("WHEN 'inbound_reply' THEN 3")
+    expect(dropSurvivor.sql).toContain("WHEN 'opt_in' THEN 2")
     expect(dropSurvivor.sql).toContain('d.recorded_at < s.recorded_at')
     expect(dropSurvivor.params).toEqual([TENANT, SURVIVOR, DUPLICATE])
 
@@ -146,6 +177,39 @@ describe('mergeProspects', () => {
     expect(move.sql).toContain('SET prospect_id = $2')
     expect(move.params).toEqual([TENANT, SURVIVOR, DUPLICATE])
 
+    expect(stepIndex('DELETE FROM prospect_consents s')).toBeLessThan(
+      stepIndex('DELETE FROM prospect_consents d'),
+    )
+    expect(stepIndex('DELETE FROM prospect_consents d')).toBeLessThan(
+      stepIndex('UPDATE prospect_consents'),
+    )
+  })
+
+  it('prefers an inbound reply on the duplicate over an older manual override', async () => {
+    stubQueries(MERGE_HANDLERS)
+
+    await runMerge()
+
+    // January's manual_override on the survivor must give way to March's
+    // inbound_reply on the duplicate: strength is compared before date, so the
+    // merge cannot trade real consent for a weaker basis.
+    const dropSurvivor = queryCall('DELETE FROM prospect_consents s')
+    expect(dropSurvivor.sql).toContain('CASE d.basis')
+    expect(dropSurvivor.sql).toContain('CASE s.basis')
+    expect(dropSurvivor.sql).toContain("WHEN 'inbound_reply' THEN 3")
+    expect(dropSurvivor.sql).toContain("WHEN 'opt_in' THEN 2")
+    expect(dropSurvivor.params).toEqual([TENANT, SURVIVOR, DUPLICATE])
+
+    // The rank comparison comes first; recorded_at only breaks a rank tie.
+    const rankWins = dropSurvivor.sql.indexOf('END > CASE s.basis')
+    const tieBreak = dropSurvivor.sql.indexOf('d.recorded_at < s.recorded_at')
+    expect(rankWins).toBeGreaterThan(-1)
+    expect(tieBreak).toBeGreaterThan(rankWins)
+
+    // The survivor's weaker row is gone, so the duplicate's stronger row is the
+    // one moved onto the survivor — exactly one row remains keyed there.
+    const dropDuplicate = queryCall('DELETE FROM prospect_consents d')
+    expect(dropDuplicate.sql).toContain('s.prospect_id = $3')
     expect(stepIndex('DELETE FROM prospect_consents s')).toBeLessThan(
       stepIndex('DELETE FROM prospect_consents d'),
     )
