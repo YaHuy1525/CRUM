@@ -20,6 +20,7 @@ type EnrichmentTarget = {
   country: 'AU' | 'VN'
   platform: string
   profile_url: string
+  has_website_channel: boolean
 }
 
 // Space out requests to one host: a 25-prospect run takes roughly 25 seconds
@@ -36,12 +37,21 @@ async function main(): Promise<void> {
   const targets = await db.query<EnrichmentTarget>(
     // A prospect with several channels (say Instagram and LinkedIn) would be
     // selected once per channel and receive duplicate snapshots in one run, so
-    // DISTINCT ON keeps exactly one row per prospect: the channel with the
-    // biggest audience. DISTINCT ON requires p.id first in the ORDER BY, and
-    // the LIMIT then counts prospects, not joined channel rows.
+    // DISTINCT ON keeps exactly one row per prospect. The website channel sorts
+    // first and the largest audience breaks the remaining tie: fetching the
+    // site is more informative than fetching a social profile, and a page read
+    // from Instagram must not be mistaken for the prospect having no site.
+    // `has_website_channel` is a fact from the channel table, not a guess about
+    // the fetched page, and it is what the analyser reports as hasWebsite.
+    // DISTINCT ON requires p.id first in the ORDER BY, and the LIMIT then counts
+    // prospects, not joined channel rows.
     // A prospect is stale when none of its snapshots is recent, so re-running
     // the command an hour later refetches nothing.
-    `SELECT DISTINCT ON (p.id) p.id, p.country, c.platform, c.profile_url
+    `SELECT DISTINCT ON (p.id) p.id, p.country, c.platform, c.profile_url,
+            EXISTS (
+              SELECT 1 FROM prospect_channels w
+               WHERE w.prospect_id = p.id AND w.platform = 'website'
+            ) AS has_website_channel
        FROM prospects p
        JOIN prospect_channels c ON c.prospect_id = p.id
       WHERE p.tenant_id = $1
@@ -49,7 +59,7 @@ async function main(): Promise<void> {
           SELECT 1 FROM prospect_snapshots s
            WHERE s.prospect_id = p.id AND s.fetched_at > now() - ($2 || ' days')::interval
         )
-      ORDER BY p.id, c.audience_count DESC NULLS LAST
+      ORDER BY p.id, (c.platform = 'website') DESC, c.audience_count DESC NULLS LAST
       LIMIT $3`,
     [tenantId, String(STALE_DAYS), LIMIT],
   )
@@ -72,6 +82,7 @@ async function main(): Promise<void> {
         url: row.profile_url,
         platform: row.platform,
         country: row.country,
+        hasWebsiteChannel: row.has_website_channel,
       })
       await db.query(
         `INSERT INTO prospect_snapshots

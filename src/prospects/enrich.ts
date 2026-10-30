@@ -5,6 +5,11 @@ export interface EnrichmentInput {
   url: string
   platform: string
   country: 'AU' | 'VN'
+  // Whether the prospect has a channel row whose platform is 'website'. This is
+  // a fact about the record, not an inference from the page being read: the
+  // fetcher often reads the Instagram profile of a business that does have a
+  // site, and a Carrd one-pager is still the prospect's website.
+  hasWebsiteChannel: boolean
 }
 
 // The vocabulary score.ts understands. A signal is only ever emitted from a
@@ -33,112 +38,20 @@ export interface EnrichmentResult {
   weaknessSignals: WeaknessSignal[]
 }
 
-// A link-in-bio page aggregates links; it is not a website of its own. This is
-// the same distinction the import pipeline makes when it treats a link hub as a
-// profile channel rather than a site.
-const LINK_HUB_HOSTS = [
-  'linktr.ee',
-  'linkin.bio',
-  'beacons.ai',
-  'bio.site',
-  'bio.link',
-  'lnk.bio',
-  'carrd.co',
-  'stan.store',
-  'solo.to',
-  'hopp.bio',
-  'campsite.bio',
-  'allmylinks.com',
-  'many.link',
-  'tap.bio',
-  'milkshake.app',
-  'snipfeed.co',
-  'linkr.bio',
-  'linkfly.to',
-  'withkoji.com',
-]
+// Only evidence of an actual funnel: a campaign page, a named funnel or the
+// platform hosting one. Generic conversion words ("register", "đăng ký",
+// "sign up") are deliberately absent: they sit in the navigation and footer of
+// almost every page, so they cannot distinguish a funnel from a brochure site.
+const FUNNEL_TEXT =
+  /\bwebinars?\b|\bchallenges?\b|thử thách|\bfunnels?\b|teachable|kajabi|thinkific|payhip/i
 
-// Hosting a course on one of these is evidence of a funnel even when the page
-// never uses the word "funnel": the checkout and delivery steps already exist.
-const FUNNEL_HOSTS = [
-  'teachable.com',
-  'kajabi.com',
-  'thinkific.com',
-  'payhip.com',
-  'podia.com',
-  'systeme.io',
-  'kartra.com',
-  'clickfunnels.com',
-  'gumroad.com',
-  'lemonsqueezy.com',
-  'hotmart.com',
-  'learnworlds.com',
-  'heightsplatform.com',
-  'mightynetworks.com',
-  'circle.so',
-  'calendly.com',
-  'cal.com',
-  'tidycal.com',
-  'savvycal.com',
-  'youcanbook.me',
-  'acuityscheduling.com',
-  'setmore.com',
-  'typeform.com',
-  'tally.so',
-  'jotform.com',
-  'forms.gle',
-  'meetings.hubspot.com',
-]
+// The hosts behind those platform names, checked on links rather than on the
+// anchor text so a generic "Enrol now" pointing at a course platform still
+// counts.
+const FUNNEL_HOST = /teachable|kajabi|thinkific|payhip/i
 
-// A path segment such as /book-a-call or /dang-ky is a conversion step. Bare
-// "join" is deliberately absent: /join-us is usually a careers page.
-const FUNNEL_PATH =
-  /^(?:book|booking|schedule|apply|application|enrol|enroll|enrolment|enrollment|register|registration|signup|sign-up|checkout|cart|intake|waitlist|webinar|challenge|masterclass|course|courses|join-now|join-today|discovery-call|strategy-call|strategy-session|get-started|start-here|khoa-hoc|dang-ky|dangky|tu-van|dat-lich|mua|thanh-toan)(?:[-_].*)?$/
-
-// Text that describes a step a visitor can take, not merely an offer. "Work
-// together" is omitted on purpose: a DM-only profile says it and has no funnel.
-const FUNNEL_TEXT = new RegExp(
-  [
-    'webinar',
-    'masterclass',
-    'bootcamp',
-    '\\bbooking\\b',
-    '\\bchallenge\\b',
-    '\\bwaitlist\\b',
-    '\\b(?:sign ?up|register|registration|enrol|enroll|enrolment|enrollment)\\b',
-    '\\bapply now\\b',
-    '\\bbook\\b[^.!?]{0,24}\\b(?:call|session|consult|discovery)\\b',
-    '\\b(?:discovery|strategy|consultation) (?:call|session)\\b',
-    '\\bschedule (?:a|your) (?:free )?(?:call|session)\\b',
-    '\\bfree consultation\\b',
-    '\\bfree trial\\b',
-    '\\bget started\\b',
-    '\\bstart (?:your|the) (?:course|program|programme|journey)\\b',
-    '\\bjoin (?:the|now|today)\\b',
-    '\\bbuy now\\b',
-    '\\badd to cart\\b',
-    '\\bcheckout\\b',
-    '\\b(?:pre-?order|purchase now)\\b',
-    '\\bwork with me\\b',
-    '\\bfree (?:training|class|lesson|course|workshop)\\b',
-    'đăng ký',
-    'ghi danh',
-    'đặt lịch',
-    'đặt chỗ',
-    'nhận tư vấn',
-    'tư vấn miễn phí',
-    'mua ngay',
-    'thanh toán',
-    'giỏ hàng',
-    'học thử',
-    'dang ky',
-    'dat lich',
-    'nhan tu van',
-    'thanh toan',
-    'hoc thu',
-  ].join('|'),
-  'i',
-)
+// A path segment such as /webinar or /challenge is a campaign step.
+const FUNNEL_PATH_SEGMENT = /^(?:challenges?|webinars?)(?:[-_].*)?$/
 
 const LEAD_MAGNET_TEXT = new RegExp(
   [
@@ -163,16 +76,23 @@ const EMAIL_CAPTURE_TEXT =
 
 const DM_ONLY = /\bdm (?:me|to)\b|\binbox (?:me|để)\b|nhắn tin/iu
 
-const OFFER_TEXT =
-  /course|coach|program|mentor|mastermind|membership|bootcamp|workshop|khoá học|khóa học|khoa hoc|tư vấn|đào tạo/i
-
 // A currency marker is required: on a whole page a bare number is far more
-// often a year, a count or a phone fragment than a price.
+// often a year, a count or a phone fragment than a price. The optional k/m
+// suffix captures shorthand such as "$2k"; it is expanded before parsing.
 const PRICE_PATTERN =
-  /(?:A\$|AU\$|US\$|\$|AUD|USD|VND|VNĐ)\s*\d[\d.,]*|\d[\d.,]*\s*(?:₫|VNĐ|VND|AUD|USD|đồng|đ(?!\p{L}))/giu
+  /(?:A\$|AU\$|US\$|\$|AUD|USD|VND|VNĐ)\s*\d[\d.,]*(?:\s*[kKmM](?![a-z]))?|\d[\d.,]*(?:\s*[kKmM](?![a-z]))?\s*(?:₫|VNĐ|VND|AUD|USD|đồng|đ(?!\p{L}))/giu
+
+// A page that quotes another currency cannot be converted without a rate, so
+// reporting it in AUD or VND would be wrong. The caller gets nulls instead and
+// the prospect stays "pricing hidden" rather than mislabelled.
+const FOREIGN_CURRENCY = /\bUSD(?![a-z])|US\$|€|£/iu
 
 const VND_AMOUNT = /₫|vnđ|vnd|đồng|đ(?!\p{L})/iu
 const AUD_AMOUNT = /\$|aud\b/iu
+
+const SHORTHAND = /^([^\d]*)(\d[\d.,]*)\s*([kKmM])(?![a-z])/
+
+const MAGNITUDE: Record<string, number> = { k: 1_000, m: 1_000_000 }
 
 const URL_ATTRIBUTE = /(?:href|action|src)\s*=\s*["']([^"']+)["']/gi
 
@@ -225,23 +145,6 @@ function visibleText(markup: string): string {
     .trim()
 }
 
-function hostOf(url: string): string | null {
-  try {
-    return new URL(url).hostname.replace(/^www\./i, '').toLowerCase()
-  } catch {
-    return null
-  }
-}
-
-function hostMatches(host: string, suffix: string): boolean {
-  return host === suffix || host.endsWith(`.${suffix}`)
-}
-
-function isLinkHub(url: string): boolean {
-  const host = hostOf(url)
-  return host !== null && LINK_HUB_HOSTS.some((hub) => hostMatches(host, hub))
-}
-
 function isFunnelLink(value: string, baseUrl: string): boolean {
   let parsed: URL
   try {
@@ -249,10 +152,11 @@ function isFunnelLink(value: string, baseUrl: string): boolean {
   } catch {
     return false
   }
-  const host = parsed.hostname.replace(/^www\./i, '').toLowerCase()
-  if (FUNNEL_HOSTS.some((suffix) => hostMatches(host, suffix))) return true
-  const segments = parsed.pathname.toLowerCase().split('/')
-  return segments.some((segment) => FUNNEL_PATH.test(segment))
+  if (FUNNEL_HOST.test(parsed.hostname)) return true
+  return parsed.pathname
+    .toLowerCase()
+    .split('/')
+    .some((segment) => FUNNEL_PATH_SEGMENT.test(segment))
 }
 
 function hasFunnelLink(markup: string, baseUrl: string): boolean {
@@ -284,18 +188,37 @@ function priceSourceFor(raw: string, currency: Currency): string {
   return `AUD $ ${amount}`
 }
 
+// "$2k" is shorthand for $2,000 and "$1.5m" for $1,500,000. Expanding the
+// digits before parsePriceRange keeps the multiplier out of that parser, which
+// only knows plain numbers and separators.
+function expandShorthand(token: string): string {
+  const match = SHORTHAND.exec(token)
+  if (match === null) return token
+  const prefix = match[1] ?? ''
+  const digits = match[2] ?? ''
+  const suffix = match[3] ?? ''
+  const base = Number(digits.replace(/,/g, ''))
+  const multiplier = MAGNITUDE[suffix.toLowerCase()]
+  if (!Number.isFinite(base) || multiplier === undefined) return token
+  return `${prefix}${Math.round(base * multiplier)}`
+}
+
 interface FoundPrice {
   min: number
   max: number
 }
 
 function extractPrice(text: string, country: 'AU' | 'VN'): PriceRange {
+  // Another currency has no exchange rate here, so no amount from this page can
+  // be labelled AUD or VND honestly.
+  if (FOREIGN_CURRENCY.test(text)) return { minMinor: null, maxMinor: null, currency: null }
+
   const found: Record<Currency, FoundPrice[]> = { AUD: [], VND: [] }
 
   for (const match of text.match(PRICE_PATTERN) ?? []) {
     // "for $2,100." leaves a sentence full stop inside the number token, which
     // would parse as NaN. Currency markers never sit after a separator.
-    const raw = match.replace(/[.,]+$/, '')
+    const raw = expandShorthand(match.replace(/[.,]+$/, ''))
     if (raw === '') continue
     const currency = currencyFor(raw, country)
     const parsed = parsePriceRange(priceSourceFor(raw, currency), country)
@@ -325,11 +248,18 @@ function extractPrice(text: string, country: 'AU' | 'VN'): PriceRange {
   }
 }
 
-function firstOffer(text: string): string | null {
-  for (const sentence of text.split(/(?<=[.!?])\s+/)) {
-    if (!OFFER_TEXT.test(sentence)) continue
-    const trimmed = sentence.trim()
-    if (trimmed !== '') return trimmed.slice(0, 200)
+const H1 = /<h1\b[^>]*>([\s\S]*?)<\/h1\s*>/i
+const TITLE = /<title\b[^>]*>([\s\S]*?)<\/title\s*>/i
+
+// Stripped tags turn the navigation and footer into one run-on string, so the
+// old first-offer sentence was mostly menu noise. The page heading is the one
+// place the business says what it sells; <title> is the fallback.
+function whatTheySellOf(markup: string): string | null {
+  for (const pattern of [H1, TITLE]) {
+    const inner = pattern.exec(markup)?.[1]
+    if (inner === undefined) continue
+    const text = visibleText(inner)
+    if (text !== '') return text.slice(0, 200)
   }
   return null
 }
@@ -337,19 +267,17 @@ function firstOffer(text: string): string | null {
 export function analysePage(input: EnrichmentInput): EnrichmentResult {
   const markup = stripNoise(input.html)
   const text = visibleText(markup)
-  const platform = input.platform.trim().toLowerCase()
 
-  // The channel table only carries a website when its platform says so; a
-  // profile URL on a social network is not the prospect's own site.
-  const hasWebsite = platform === 'website' && !isLinkHub(input.url)
+  // Presence of a website is a fact about the prospect's channels, never an
+  // inference from the page shape or from the platform that happened to be
+  // fetched: a Linktree profile cannot turn a real site into "no website".
+  const hasWebsite = input.hasWebsiteChannel
 
   const hasLeadMagnet = LEAD_MAGNET_TEXT.test(text)
   const hasEmailCapture = EMAIL_CAPTURE_MARKUP.test(markup) || EMAIL_CAPTURE_TEXT.test(text)
-  // A capture step is the first stage of a funnel, so a page with only an
-  // opt-in still has one. Campaign wording and conversion links are the other
-  // two positive observations.
-  const hasFunnel =
-    hasEmailCapture || FUNNEL_TEXT.test(text) || hasFunnelLink(markup, input.url)
+  // Only funnel evidence counts. An email signup in the footer is a capture
+  // step most sites have and does not by itself mean there is a funnel.
+  const hasFunnel = FUNNEL_TEXT.test(text) || hasFunnelLink(markup, input.url)
 
   const price = extractPrice(text, input.country)
 
@@ -363,7 +291,7 @@ export function analysePage(input: EnrichmentInput): EnrichmentResult {
   if (price.minMinor === null) weaknessSignals.push('pricing_hidden')
 
   return {
-    whatTheySell: firstOffer(text),
+    whatTheySell: whatTheySellOf(markup),
     priceVisible: price.minMinor !== null,
     priceMinMinor: price.minMinor,
     priceMaxMinor: price.maxMinor,
