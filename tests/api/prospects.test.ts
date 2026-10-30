@@ -22,6 +22,7 @@ const db = vi.hoisted(() => ({
   queryProspects: vi.fn(),
   queryProspect: vi.fn(),
   listMergeCandidates: vi.fn(),
+  getMergeCandidate: vi.fn(),
   getOrCreateDraft: vi.fn(),
 }))
 
@@ -32,6 +33,7 @@ vi.mock('../../src/db/prospect-queries', () => ({
 
 vi.mock('../../src/db/prospect-merge', () => ({
   listMergeCandidates: db.listMergeCandidates,
+  getMergeCandidate: db.getMergeCandidate,
 }))
 
 vi.mock('../../src/db/pending-writes', () => ({
@@ -45,6 +47,7 @@ const TENANT = '550e8400-e29b-41d4-a716-446655440000'
 const USER = '660e8400-e29b-41d4-a716-446655440009'
 const CANDIDATE = '770e8400-e29b-41d4-a716-446655440003'
 const SURVIVOR = '880e8400-e29b-41d4-a716-446655440007'
+const DUPLICATE = '990e8400-e29b-41d4-a716-446655440002'
 const DRAFT = 'aa0e8400-e29b-41d4-a716-446655440001'
 
 const AUTH = {
@@ -71,6 +74,12 @@ async function json<T>(res: Response | Promise<Response>): Promise<T> {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  db.getMergeCandidate.mockResolvedValue({
+    id: CANDIDATE,
+    status: 'pending',
+    leftProspectId: SURVIVOR,
+    rightProspectId: DUPLICATE,
+  })
   db.getOrCreateDraft.mockResolvedValue({ id: DRAFT, gate: 'approval' })
 })
 
@@ -87,7 +96,12 @@ describe('POST /api/prospects/merge-candidates/:id', () => {
         objectType: 'prospect_merge',
         operation: 'update',
         targetId: CANDIDATE,
-        payload: { candidateId: CANDIDATE, survivorId: SURVIVOR, decision: 'merge' },
+        payload: {
+          candidateId: CANDIDATE,
+          survivorId: SURVIVOR,
+          duplicateId: DUPLICATE,
+          decision: 'merge',
+        },
         gate: 'approval',
         requestedBy: USER,
         idempotencyKey: `merge:${CANDIDATE}:${SURVIVOR}:merge`,
@@ -109,10 +123,65 @@ describe('POST /api/prospects/merge-candidates/:id', () => {
 
     expect(db.getOrCreateDraft).toHaveBeenCalledWith(
       expect.objectContaining({
-        payload: { candidateId: CANDIDATE, survivorId: SURVIVOR, decision: 'dismiss' },
+        payload: {
+          candidateId: CANDIDATE,
+          survivorId: SURVIVOR,
+          duplicateId: DUPLICATE,
+          decision: 'dismiss',
+        },
         idempotencyKey: `merge:${CANDIDATE}:${SURVIVOR}:dismiss`,
       }),
     )
+  })
+
+  it('derives the duplicate when the survivor is the right prospect', async () => {
+    const res = await post({ survivorId: DUPLICATE, decision: 'merge' })
+    expect(res.status).toBe(201)
+
+    expect(db.getOrCreateDraft).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: {
+          candidateId: CANDIDATE,
+          survivorId: DUPLICATE,
+          duplicateId: SURVIVOR,
+          decision: 'merge',
+        },
+        idempotencyKey: `merge:${CANDIDATE}:${DUPLICATE}:merge`,
+      }),
+    )
+  })
+
+  it('refuses a survivor that is not one of the candidate pair', async () => {
+    const OTHER = 'bb0e8400-e29b-41d4-a716-446655440005'
+    const res = await post({ survivorId: OTHER, decision: 'merge' })
+
+    expect(res.status).toBe(400)
+    expect((await json<{ error?: string }>(res)).error).toBe('invalid_query')
+    expect(db.getOrCreateDraft).not.toHaveBeenCalled()
+  })
+
+  it('returns 404 when the candidate does not exist', async () => {
+    db.getMergeCandidate.mockResolvedValueOnce(null)
+    const res = await post({ survivorId: SURVIVOR, decision: 'merge' })
+
+    expect(res.status).toBe(404)
+    expect((await json<{ error?: string }>(res)).error).toBe('not_found')
+    expect(db.getMergeCandidate).toHaveBeenCalledWith(TENANT, CANDIDATE)
+    expect(db.getOrCreateDraft).not.toHaveBeenCalled()
+  })
+
+  it('refuses a candidate that is no longer pending', async () => {
+    db.getMergeCandidate.mockResolvedValueOnce({
+      id: CANDIDATE,
+      status: 'dismissed',
+      leftProspectId: SURVIVOR,
+      rightProspectId: DUPLICATE,
+    })
+    const res = await post({ survivorId: SURVIVOR, decision: 'dismiss' })
+
+    expect(res.status).toBe(400)
+    expect((await json<{ error?: string }>(res)).error).toBe('invalid_query')
+    expect(db.getOrCreateDraft).not.toHaveBeenCalled()
   })
 
   it('refuses an unknown decision before staging anything', async () => {

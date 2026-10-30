@@ -123,6 +123,59 @@ export async function listMergeCandidates(tenantId: string): Promise<MergeCandid
   }))
 }
 
+export interface MergeCandidateState {
+  id: string
+  status: 'pending' | 'merged' | 'dismissed'
+  leftProspectId: string
+  rightProspectId: string
+}
+
+/**
+ * The side of the pair that the survivor is not. Null means the survivor names
+ * neither prospect, which both staging paths treat as invalid input rather than
+ * merging two unrelated records.
+ */
+export function duplicateProspectId(
+  survivorId: string,
+  leftProspectId: string,
+  rightProspectId: string,
+): string | null {
+  if (survivorId === leftProspectId) return rightProspectId
+  if (survivorId === rightProspectId) return leftProspectId
+  return null
+}
+
+/**
+ * The candidate a decision names, tenant-scoped. Staging reads this first so a
+ * survivor that is not one of the two prospects, or a pair that was already
+ * resolved, is refused before a pending write exists.
+ */
+export async function getMergeCandidate(
+  tenantId: string,
+  candidateId: string,
+): Promise<MergeCandidateState | null> {
+  const result = await getDbClient().query<{
+    id: string
+    status: 'pending' | 'merged' | 'dismissed'
+    left_prospect_id: string
+    right_prospect_id: string
+  }>(
+    `SELECT id, status, left_prospect_id, right_prospect_id
+       FROM prospect_merge_candidates
+      WHERE id = $1 AND tenant_id = $2`,
+    [candidateId, tenantId],
+  )
+  const row = result.rows[0]
+  return row
+    ? {
+        id: row.id,
+        status: row.status,
+        leftProspectId: row.left_prospect_id,
+        rightProspectId: row.right_prospect_id,
+      }
+    : null
+}
+
 /**
  * Collapse `duplicateId` into `survivorId` and return the survivor id.
  *
@@ -336,4 +389,35 @@ async function mergeWithin(
   if (!deleted.rows[0]) throw new Error('not_found')
 
   return survivorId
+}
+
+export interface DismissMergeCandidateInput {
+  tenantId: string
+  candidateId: string
+}
+
+/**
+ * Close a duplicate pair without touching either prospect.
+ *
+ * Only the candidate row changes, so a dismissal needs no child-table work and
+ * can run on the client the approval commit already holds. The predicate keeps
+ * the write tenant-scoped and idempotent: a pair that is no longer pending is
+ * not reopened or re-marked, and the returned id becomes the receipt's
+ * committed_record_id. A missing row means the candidate is gone or belongs to
+ * another tenant, which is a refused commit rather than a silent no-op.
+ */
+export async function dismissMergeCandidate(
+  client: MergeQueryable,
+  input: DismissMergeCandidateInput,
+): Promise<string> {
+  const result = await client.query<{ id: string }>(
+    `UPDATE prospect_merge_candidates
+        SET status = 'dismissed'
+      WHERE id = $1 AND tenant_id = $2 AND status = 'pending'
+      RETURNING id`,
+    [input.candidateId, input.tenantId],
+  )
+  const id = result.rows[0]?.id
+  if (!id) throw new Error('not_found')
+  return id
 }

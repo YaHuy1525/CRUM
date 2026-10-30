@@ -1,6 +1,6 @@
 import { getDbClient } from './client'
 import { signReceipt, computeActionHash } from '../governance/receipt'
-import { mergeProspects } from './prospect-merge'
+import { dismissMergeCandidate, mergeProspects } from './prospect-merge'
 
 export interface PendingWrite {
   id: string
@@ -377,17 +377,36 @@ async function applyDraft(
   // payload through. It runs on the transaction client already open here, which
   // is what keeps the merge and its receipt atomic. The survivor id becomes the
   // receipt's committed_record_id; the duplicate no longer exists to name.
+  //
+  // A dismissal is the same payload with the other decision. It touches only
+  // the candidate row, but it is still an approval-class write: the candidate
+  // id is what the receipt records, so the receipt proves which pair was closed.
   if (draft.objectType === 'prospect_merge') {
     if (draft.operation !== 'update') {
       throw new UnsupportedCommitError(
         `prospect_merge supports only the update operation, not ${draft.operation}`,
       )
     }
+    const decision = payload['decision']
+    if (decision !== 'merge' && decision !== 'dismiss') {
+      throw new UnsupportedCommitError(
+        `prospect_merge payload decision must be "merge" or "dismiss", not "${String(decision)}"`,
+      )
+    }
+    if (decision === 'dismiss') {
+      const candidateId = payload['candidateId']
+      if (typeof candidateId !== 'string') {
+        throw new UnsupportedCommitError(
+          'prospect_merge dismissal payload must name candidateId',
+        )
+      }
+      return dismissMergeCandidate(client, { tenantId: draft.tenantId, candidateId })
+    }
     const survivorId = payload['survivorId']
     const duplicateId = payload['duplicateId']
     if (typeof survivorId !== 'string' || typeof duplicateId !== 'string') {
       throw new UnsupportedCommitError(
-        'prospect_merge payload must name both survivorId and duplicateId',
+        'prospect_merge merge payload must name both survivorId and duplicateId',
       )
     }
     return mergeProspects(client, { tenantId: draft.tenantId, survivorId, duplicateId })

@@ -5,7 +5,7 @@ import { loadPolicy } from '../../governance/policy'
 import { scoreRisk } from '../../governance/risk'
 import { getOrCreateDraft, createHumanTask } from '../../db/pending-writes'
 import { getDbClient } from '../../db/client'
-import { listMergeCandidates } from '../../db/prospect-merge'
+import { dismissMergeCandidate, duplicateProspectId, listMergeCandidates } from '../../db/prospect-merge'
 
 // ── Duplicate resolution ─────────────────────────────────────────────────────
 //
@@ -67,8 +67,6 @@ interface CandidateRow {
   right_prospect_id: string
   left_name: string
   right_name: string
-  reason: string
-  similarity: string | number
 }
 
 export const resolveMergeCandidateTool = createTool({
@@ -138,7 +136,7 @@ export const resolveMergeCandidateTool = createTool({
       // that names another tenant's prospect is not visible at all.
       const found = await db.query<CandidateRow>(
         `SELECT m.id, m.status, m.left_prospect_id, m.right_prospect_id,
-                m.reason, m.similarity, l.name AS left_name, r.name AS right_name
+                l.name AS left_name, r.name AS right_name
            FROM prospect_merge_candidates m
            JOIN prospects l ON l.id = m.left_prospect_id AND l.tenant_id = m.tenant_id
            JOIN prospects r ON r.id = m.right_prospect_id AND r.tenant_id = m.tenant_id
@@ -174,37 +172,24 @@ export const resolveMergeCandidateTool = createTool({
       }
 
       if (row.status !== 'pending') {
-        return {
-          candidateId: input.candidateId,
-          pendingWriteId: null,
-          survivorId: input.survivorId,
-          duplicateId: null,
-          status: row.status === 'merged' ? ('merged' as const) : ('dismissed' as const),
-          riskScore: assessment.score,
-          gate: approvalGate,
-          message: `Candidate is already ${row.status}; nothing staged.`,
-        }
+        throw new Error(`candidate_not_pending:${row.status}`)
       }
 
-      const duplicateId =
-        input.survivorId === row.left_prospect_id
-          ? row.right_prospect_id
-          : input.survivorId === row.right_prospect_id
-            ? row.left_prospect_id
-            : null
+      const duplicateId = duplicateProspectId(
+        input.survivorId,
+        row.left_prospect_id,
+        row.right_prospect_id,
+      )
       if (!duplicateId) throw new Error('survivor_not_in_candidate')
 
       if (input.decision === 'dismiss') {
         // Dismissing changes only the candidate's own status: no prospect,
         // channel, draft or consent row is touched, so it needs no business
         // record behind an approval receipt.
-        const updated = await db.query<{ id: string }>(
-          `UPDATE prospect_merge_candidates
-              SET status = 'dismissed'
-            WHERE id = $1 AND tenant_id = $2 AND status = 'pending'
-            RETURNING id`,
-          [input.candidateId, rc.tenantId],
-        )
+        await dismissMergeCandidate(db, {
+          tenantId: rc.tenantId,
+          candidateId: input.candidateId,
+        })
         return {
           candidateId: input.candidateId,
           pendingWriteId: null,
@@ -213,9 +198,7 @@ export const resolveMergeCandidateTool = createTool({
           status: 'dismissed' as const,
           riskScore: assessment.score,
           gate: approvalGate,
-          message: updated.rows[0]
-            ? `Candidate dismissed (${input.candidateId}).`
-            : `Candidate was already resolved; nothing changed.`,
+          message: `Candidate dismissed (${input.candidateId}).`,
         }
       }
 
@@ -230,16 +213,14 @@ export const resolveMergeCandidateTool = createTool({
         objectType: 'prospect_merge',
         operation: 'update',
         targetId: input.candidateId,
-        // The approver sees both names and both ids: the merge deletes one of
-        // them, so the pair has to be readable before it is approved.
+        // Exactly the payload the REST staging route writes. The approval
+        // commit branches on `decision` and needs both ids: the survivor to
+        // keep and the duplicate to fold into it.
         payload: {
           candidateId: input.candidateId,
           survivorId: input.survivorId,
           duplicateId,
-          survivorName,
-          duplicateName,
-          reason: row.reason,
-          similarity: Number(row.similarity),
+          decision: input.decision,
         },
         riskScore: assessment.score,
         gate: approvalGate,

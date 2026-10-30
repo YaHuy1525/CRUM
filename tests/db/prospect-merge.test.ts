@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { PendingWrite } from '../../src/db/pending-writes'
 
 const mockQuery = vi.fn()
 const mockClient = { query: mockQuery, release: vi.fn() }
@@ -88,6 +89,33 @@ async function runMerge(): Promise<string> {
     survivorId: SURVIVOR,
     duplicateId: DUPLICATE,
   })
+}
+
+const APPROVER = '77777777-7777-4777-8777-777777777777'
+
+/** A staged decision as the route and the agent tool both write it. */
+function mergeDraft(payload: Record<string, unknown>): PendingWrite {
+  return {
+    id: '66666666-6666-4666-8666-666666666666',
+    tenantId: TENANT,
+    runId: 'pending',
+    threadId: null,
+    objectType: 'prospect_merge',
+    operation: 'update',
+    targetId: CANDIDATE,
+    payload,
+    riskScore: 55,
+    gate: 'approval',
+    draftHash: 'merge:corr-1',
+    receiptId: null,
+    rejectedAt: null,
+    rejectionReason: null,
+    committedAt: null,
+    committedRecordId: null,
+    requestedBy: APPROVER,
+    createdAt: '2026-11-03T12:00:00.000Z',
+    expiresAt: '2026-11-03T13:00:00.000Z',
+  }
 }
 
 beforeEach(() => {
@@ -320,6 +348,32 @@ describe('listMergeCandidates', () => {
   })
 })
 
+describe('dismissMergeCandidate', () => {
+  it('closes only the pending candidate, scoped to the tenant, and returns its id', async () => {
+    stubQueries({ 'UPDATE prospect_merge_candidates': [{ id: CANDIDATE }] })
+    const { dismissMergeCandidate } = await import('../../src/db/prospect-merge')
+
+    await expect(
+      dismissMergeCandidate(mergeClient(), { tenantId: TENANT, candidateId: CANDIDATE }),
+    ).resolves.toBe(CANDIDATE)
+
+    const dismiss = queryCall('UPDATE prospect_merge_candidates')
+    expect(dismiss.sql).toContain("SET status = 'dismissed'")
+    expect(dismiss.sql).toContain("status = 'pending'")
+    expect(dismiss.sql).toContain('tenant_id = $2')
+    expect(dismiss.params).toEqual([CANDIDATE, TENANT])
+  })
+
+  it('refuses a candidate that is not visible to the tenant', async () => {
+    stubQueries({ 'UPDATE prospect_merge_candidates': [] })
+    const { dismissMergeCandidate } = await import('../../src/db/prospect-merge')
+
+    await expect(
+      dismissMergeCandidate(mergeClient(), { tenantId: OTHER_TENANT, candidateId: CANDIDATE }),
+    ).rejects.toThrow('not_found')
+  })
+})
+
 describe('approval commit of a prospect_merge draft', () => {
   it('runs the merge inside the receipt transaction and reports the survivor', async () => {
     stubQueries({
@@ -333,36 +387,89 @@ describe('approval commit of a prospect_merge draft', () => {
     const { commitWithReceipt } = await import('../../src/db/pending-writes')
 
     const result = await commitWithReceipt(
-      {
-        id: '66666666-6666-4666-8666-666666666666',
-        tenantId: TENANT,
-        runId: 'pending',
-        threadId: null,
-        objectType: 'prospect_merge',
-        operation: 'update',
-        targetId: CANDIDATE,
-        payload: { candidateId: CANDIDATE, survivorId: SURVIVOR, duplicateId: DUPLICATE },
-        riskScore: 55,
-        gate: 'approval',
-        draftHash: 'merge:corr-1',
-        receiptId: null,
-        rejectedAt: null,
-        rejectionReason: null,
-        committedAt: null,
-        committedRecordId: null,
-        requestedBy: '77777777-7777-4777-8777-777777777777',
-        createdAt: '2026-11-03T12:00:00.000Z',
-        expiresAt: '2026-11-03T13:00:00.000Z',
-      },
-      { approvedBy: '77777777-7777-4777-8777-777777777777', scope: 'crm:write' },
+      mergeDraft({
+        candidateId: CANDIDATE,
+        survivorId: SURVIVOR,
+        duplicateId: DUPLICATE,
+        decision: 'merge',
+      }),
+      { approvedBy: APPROVER, scope: 'crm:write' },
     )
 
     expect(result).toEqual({ committedId: SURVIVOR, receiptId: RECEIPT })
+    // Both ids reach the merge unchanged: the survivor is kept, the duplicate
+    // is folded into it.
+    expect(queryCall('SELECT id FROM prospects WHERE tenant_id').params).toEqual([
+      TENANT,
+      SURVIVOR,
+      DUPLICATE,
+    ])
+    expect(queryCall('DELETE FROM prospects').params).toEqual([DUPLICATE, TENANT])
     expect(stepIndex('BEGIN')).toBeLessThan(stepIndex('SELECT id FROM prospects WHERE tenant_id'))
     expect(stepIndex('DELETE FROM prospects')).toBeLessThan(
       stepIndex('INSERT INTO audit_receipts'),
     )
     expect(stepIndex('INSERT INTO audit_receipts')).toBeLessThan(stepIndex('COMMIT'))
     expect(mockClient.release).toHaveBeenCalled()
+  })
+
+  it('dismisses the candidate inside the receipt transaction without merging', async () => {
+    stubQueries({
+      'SELECT receipt_id, rejected_at, committed_at': [
+        { receipt_id: null, rejected_at: null, committed_at: null },
+      ],
+      'UPDATE prospect_merge_candidates': [{ id: CANDIDATE }],
+      'INSERT INTO audit_receipts': [{ id: RECEIPT }],
+      'UPDATE pending_writes SET receipt_id': [],
+    })
+    const { commitWithReceipt } = await import('../../src/db/pending-writes')
+
+    const result = await commitWithReceipt(
+      mergeDraft({ candidateId: CANDIDATE, survivorId: SURVIVOR, decision: 'dismiss' }),
+      { approvedBy: APPROVER, scope: 'crm:write' },
+    )
+
+    // The candidate id is the committed record, so the receipt names the pair
+    // that was closed even though no prospect row changed.
+    expect(result).toEqual({ committedId: CANDIDATE, receiptId: RECEIPT })
+
+    const dismiss = queryCall('UPDATE prospect_merge_candidates')
+    expect(dismiss.sql).toContain("SET status = 'dismissed'")
+    expect(dismiss.sql).toContain("status = 'pending'")
+    expect(dismiss.sql).toContain('tenant_id = $2')
+    expect(dismiss.params).toEqual([CANDIDATE, TENANT])
+
+    // A dismissal must never reach the merge path.
+    expect(calls('SELECT id FROM prospects WHERE tenant_id')).toHaveLength(0)
+    expect(calls('DELETE FROM prospects')).toHaveLength(0)
+    expect(stepIndex('INSERT INTO audit_receipts')).toBeLessThan(stepIndex('COMMIT'))
+  })
+
+  it('refuses a decision other than merge or dismiss', async () => {
+    stubQueries({
+      'SELECT receipt_id, rejected_at, committed_at': [
+        { receipt_id: null, rejected_at: null, committed_at: null },
+      ],
+    })
+    const { commitWithReceipt, UnsupportedCommitError } = await import(
+      '../../src/db/pending-writes'
+    )
+
+    await expect(
+      commitWithReceipt(
+        mergeDraft({
+          candidateId: CANDIDATE,
+          survivorId: SURVIVOR,
+          duplicateId: DUPLICATE,
+          decision: 'skip',
+        }),
+        { approvedBy: APPROVER, scope: 'crm:write' },
+      ),
+    ).rejects.toBeInstanceOf(UnsupportedCommitError)
+
+    expect(calls('UPDATE prospect_merge_candidates')).toHaveLength(0)
+    expect(calls('SELECT id FROM prospects WHERE tenant_id')).toHaveLength(0)
+    expect(calls('INSERT INTO audit_receipts')).toHaveLength(0)
+    expect(calls('ROLLBACK')).toHaveLength(1)
   })
 })

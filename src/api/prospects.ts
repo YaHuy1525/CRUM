@@ -5,7 +5,7 @@ import type { CrumEnv } from '../config/env'
 import type { TenantRequestContext } from '../mastra/tenant-context'
 import { IdentityError, resolveIdentity } from '../mastra/identity'
 import { queryProspect, queryProspects } from '../db/prospect-queries'
-import { listMergeCandidates } from '../db/prospect-merge'
+import { getMergeCandidate, listMergeCandidates } from '../db/prospect-merge'
 import { getOrCreateDraft } from '../db/pending-writes'
 import { loadPolicy } from '../governance/policy'
 import { scoreRisk } from '../governance/risk'
@@ -116,6 +116,39 @@ export function createProspectsRouter(deps: ProspectsRouterDeps): Hono {
     }
 
     const { survivorId, decision } = body.data
+
+    // Staging names a concrete pair, so the candidate is read before the draft
+    // is written. A survivor outside the pair would stage a merge of unrelated
+    // prospects, and a resolved pair would stage a decision that can never
+    // commit. Both are the caller's error; a missing candidate is a 404.
+    const candidate = await getMergeCandidate(gate.identity.tenantId, candidateId.data)
+    if (!candidate) return c.json({ error: 'not_found' }, 404)
+    if (candidate.status !== 'pending') {
+      return c.json(
+        {
+          error: 'invalid_query',
+          detail: `candidate is already ${candidate.status}; only a pending candidate can be decided`,
+        },
+        400,
+      )
+    }
+
+    const duplicateId =
+      survivorId === candidate.leftProspectId
+        ? candidate.rightProspectId
+        : survivorId === candidate.rightProspectId
+          ? candidate.leftProspectId
+          : null
+    if (!duplicateId) {
+      return c.json(
+        {
+          error: 'invalid_query',
+          detail: "survivorId must be one of the candidate's two prospects",
+        },
+        400,
+      )
+    }
+
     const assessment = scoreRisk(
       { candidateId: candidateId.data, survivorId, decision },
       loadPolicy().risk,
@@ -128,7 +161,7 @@ export function createProspectsRouter(deps: ProspectsRouterDeps): Hono {
       objectType: 'prospect_merge',
       operation: 'update',
       targetId: candidateId.data,
-      payload: { candidateId: candidateId.data, survivorId, decision },
+      payload: { candidateId: candidateId.data, survivorId, duplicateId, decision },
       riskScore: assessment.score,
       gate: 'approval',
       requestedBy: gate.identity.userId,
