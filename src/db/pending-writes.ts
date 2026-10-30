@@ -1,5 +1,6 @@
 import { getDbClient } from './client'
 import { signReceipt, computeActionHash } from '../governance/receipt'
+import { mergeProspects } from './prospect-merge'
 
 export interface PendingWrite {
   id: string
@@ -39,6 +40,7 @@ export interface CreateDraftParams {
     | 'prospect_channel'
     | 'outreach_draft'
     | 'outreach_send'
+    | 'prospect_merge'
   operation: 'create' | 'update' | 'delete'
   targetId?: string
   payload: unknown
@@ -368,6 +370,27 @@ async function applyDraft(
       )
     }
     return null
+  }
+
+  // A merge is not a row update: it repoints four child tables, folds consent
+  // and deletes the duplicate, so it has no COMMIT_TARGETS entry to map the
+  // payload through. It runs on the transaction client already open here, which
+  // is what keeps the merge and its receipt atomic. The survivor id becomes the
+  // receipt's committed_record_id; the duplicate no longer exists to name.
+  if (draft.objectType === 'prospect_merge') {
+    if (draft.operation !== 'update') {
+      throw new UnsupportedCommitError(
+        `prospect_merge supports only the update operation, not ${draft.operation}`,
+      )
+    }
+    const survivorId = payload['survivorId']
+    const duplicateId = payload['duplicateId']
+    if (typeof survivorId !== 'string' || typeof duplicateId !== 'string') {
+      throw new UnsupportedCommitError(
+        'prospect_merge payload must name both survivorId and duplicateId',
+      )
+    }
+    return mergeProspects(client, { tenantId: draft.tenantId, survivorId, duplicateId })
   }
 
   const target = requireTarget(draft.objectType)

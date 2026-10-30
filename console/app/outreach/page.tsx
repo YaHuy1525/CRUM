@@ -31,6 +31,21 @@ interface ProspectItem {
   audience: number | null
 }
 
+interface MergeCandidateSide {
+  id: string
+  name: string
+  country: string
+  score: number | null
+}
+
+interface MergeCandidate {
+  id: string
+  reason: string
+  similarity: number
+  left: MergeCandidateSide
+  right: MergeCandidateSide
+}
+
 const PAGE_SIZE = 50
 
 const COUNTRY_TABS = [
@@ -62,6 +77,107 @@ async function loadProspects(
   search.set('offset', String(offset))
   const body = await get<{ items: ProspectItem[] }>(`/api/prospects?${search.toString()}`)
   return body.items
+}
+
+function MergeCandidates() {
+  const [items, setItems] = useState<MergeCandidate[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const body = await get<{ items: MergeCandidate[] }>('/api/prospects/merge-candidates')
+      setItems(body.items)
+    } catch (err) {
+      setError(describeError(err))
+      setItems([])
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  return (
+    <section
+      aria-labelledby="merge-candidates-heading"
+      className="mt-4 rounded-lg border border-border bg-bg-card"
+    >
+      <div className="border-b border-border px-3 py-2">
+        <h2 id="merge-candidates-heading" className="text-sm font-semibold text-text-primary">
+          Possible duplicates
+        </h2>
+        <p className="mt-0.5 text-xs text-text-muted">
+          Pairs the import flagged by name. Review only: resolving a pair needs the
+          merge tool, so nothing here merges or dismisses.
+        </p>
+      </div>
+
+      {loading ? (
+        <div className="space-y-2 p-3" data-testid="merge-candidates-loading">
+          <p className="sr-only" role="status">
+            Loading merge candidates
+          </p>
+          <Skeleton className="h-8 w-full" />
+          <Skeleton className="h-8 w-4/5" />
+        </div>
+      ) : error ? (
+        <div
+          role="alert"
+          className="m-3 flex flex-wrap items-center justify-between gap-3 rounded-md border border-danger-line bg-danger-soft px-3 py-2 text-sm text-danger"
+        >
+          <span className="break-words">{error}</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void load()}
+            className="shrink-0 text-danger hover:bg-danger-soft hover:text-danger"
+          >
+            Retry
+          </Button>
+        </div>
+      ) : items.length === 0 ? (
+        <p className="px-3 py-3 text-sm text-text-muted">No duplicate pairs pending.</p>
+      ) : (
+        <ul className="divide-y divide-border">
+          {items.map((candidate) => (
+            <li key={candidate.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-3 py-2 text-sm">
+              <Link
+                className="focus-ring font-medium text-text-primary underline-offset-2 hover:underline"
+                href={`/outreach/${candidate.left.id}`}
+              >
+                {candidate.left.name}
+              </Link>
+              <span className="text-xs text-text-muted">{candidate.left.country}</span>
+              <span className="text-xs tabular-nums text-text-secondary">
+                {candidate.left.score ?? 'unscored'}
+              </span>
+              <span aria-hidden="true" className="text-text-muted">
+                /
+              </span>
+              <Link
+                className="focus-ring font-medium text-text-primary underline-offset-2 hover:underline"
+                href={`/outreach/${candidate.right.id}`}
+              >
+                {candidate.right.name}
+              </Link>
+              <span className="text-xs text-text-muted">{candidate.right.country}</span>
+              <span className="text-xs tabular-nums text-text-secondary">
+                {candidate.right.score ?? 'unscored'}
+              </span>
+              <span className="ml-auto text-xs text-text-muted">
+                {candidate.reason} · {Math.round(candidate.similarity * 100)}% match
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
 }
 
 function ProspectList() {
@@ -119,6 +235,8 @@ function ProspectList() {
           </nav>
         }
       />
+
+      <MergeCandidates />
 
       {loading ? (
         <div className="mt-4 space-y-2" data-testid="outreach-loading">

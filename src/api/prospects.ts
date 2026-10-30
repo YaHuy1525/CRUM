@@ -5,6 +5,7 @@ import type { CrumEnv } from '../config/env'
 import type { TenantRequestContext } from '../mastra/tenant-context'
 import { IdentityError, resolveIdentity } from '../mastra/identity'
 import { queryProspect, queryProspects } from '../db/prospect-queries'
+import { listMergeCandidates } from '../db/prospect-merge'
 
 // ── Prospects: read-only REST surface (Task 12) ─────────────────────────────
 //
@@ -57,6 +58,16 @@ export function createProspectsRouter(deps: ProspectsRouterDeps): Hono {
     }
 
     const items = await queryProspects(gate.identity, parsed.data)
+    return c.json({ items })
+  })
+
+  // Declared before `/:id`, or Hono matches "merge-candidates" as an id and the
+  // request dies on the uuid check.
+  app.get('/merge-candidates', async (c) => {
+    const gate = await auth(c)
+    if ('error' in gate) return gate.error
+
+    const items = await listMergeCandidates(gate.identity.tenantId)
     return c.json({ items })
   })
 

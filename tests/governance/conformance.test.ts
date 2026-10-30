@@ -32,6 +32,7 @@ const SPEC_TOOL_SURFACE: ReadonlyArray<readonly [name: string, klass: string, id
   ['revenue.list_alerts', 'read-only', null],
   ['crm.list_prospects', 'read-only', null],
   ['crm.get_prospect', 'read-only', null],
+  ['crm.list_merge_candidates', 'read-only', null],
   ['crm.create_customer', 'approval', 'draftHash'],
   ['crm.update_customer', 'approval', 'draftHash'],
   ['crm.delete_customer', 'approval', 'draftHash'],
@@ -46,6 +47,7 @@ const SPEC_TOOL_SURFACE: ReadonlyArray<readonly [name: string, klass: string, id
   ['mail.draft', 'auto', 'draftHash'],
   ['mail.send', 'approval', 'draftHash'],
   ['crm.send_outreach', 'approval', 'actionHash'],
+  ['crm.resolve_merge_candidate', 'approval', 'correlationId'],
 ]
 
 /**
@@ -84,7 +86,7 @@ describe('tools.yaml conforms to §4.6.2', () => {
     expect(extra).toEqual([])
   })
 
-  it('has exactly the thirty-five spec tools plus run.side-effect', () => {
+  it('has exactly the thirty-seven spec tools plus run.side-effect', () => {
     expect(policy.tools.tools).toHaveLength(SPEC_TOOL_SURFACE.length + TEMPLATE_TOOLS.size)
   })
 })
@@ -142,8 +144,8 @@ describe('class invariants', () => {
     expect(offenders).toEqual([])
   })
 
-  it('has exactly twenty-one read-only tools', () => {
-    expect(policy.toolsByClass('read-only')).toHaveLength(21)
+  it('has exactly twenty-two read-only tools', () => {
+    expect(policy.toolsByClass('read-only')).toHaveLength(22)
   })
 
   it('has exactly one refuse-class tool', () => {

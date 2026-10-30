@@ -27,7 +27,7 @@ version: 1
 # It is the only such collision in this file. Do not normalise one spelling
 # to the other: doing so silently moves tools across a gate boundary.
 tools:
-  # ── read-only (21) ─────────────────────────────────────────
+  # ── read-only (22) ─────────────────────────────────────────
   - name: crm.list_customers
     description: List customers visible to the caller.
     scope: crm-read
@@ -133,6 +133,11 @@ tools:
     scope: crm-read
     class: read-only
 
+  - name: crm.list_merge_candidates
+    description: List pending duplicate prospect pairs for human review.
+    scope: crm-read
+    class: read-only
+
   # ── auto (5) ───────────────────────────────────────────────
   - name: crm.log_followup
     description: Record a completed contact attempt.
@@ -169,7 +174,7 @@ tools:
     idempotent: true
     idempotency_key: correlationId
 
-  # ── approval (8) ───────────────────────────────────────────
+  # ── approval (9) ───────────────────────────────────────────
   - name: crm.create_customer
     description: Stage a new customer record.
     scope: crm:write
@@ -225,6 +230,13 @@ tools:
     class: approval
     idempotent: true
     idempotency_key: actionHash
+
+  - name: crm.resolve_merge_candidate
+    description: Dismiss a duplicate prospect pair, or stage a merge that folds the duplicate into the survivor.
+    scope: crm:write
+    class: approval
+    idempotent: true
+    idempotency_key: correlationId
 
   # ── workflow side effects (1) ──────────────────────────────
   - name: run.side-effect
