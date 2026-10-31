@@ -38,6 +38,7 @@ import { CRUM_AGENT_CONTROLLER_ID, resourceIdFor } from './sessions'
 import { createGmailConnectRoute, createGmailCallbackRoute } from '../api/gmail'
 import { registerActionAdapter } from '../marketing/outbox'
 import { makePromotePageAdapter, makePublishPageAdapter, pageHostConfigFromEnv } from '../marketing/page-host'
+import { makeCreateCampaignAdapter, makeSetCampaignStatusAdapter } from '../marketing/meta-ads'
 
 export interface CrumMastraOptions {
   storage?: CrumStorage
@@ -99,6 +100,7 @@ export function buildCrumServerConfig(env: CrumEnv): ServerConfig {
 // repeating the same boot line forever, while still leaving one line an operator
 // can find when asking why staging refuses.
 let lastLane: 'pages' | 'none' | undefined
+let lastMetaLane: 'meta-ads' | 'none' | undefined
 
 function logLaneOnce(lane: 'pages' | 'none'): void {
   if (lastLane === lane) return
@@ -107,6 +109,16 @@ function logLaneOnce(lane: 'pages' | 'none'): void {
     lane === 'pages'
       ? '[CRUM] marketing page adapters registered'
       : '[CRUM] marketing page adapters not registered: Pages config incomplete, staging will refuse',
+  )
+}
+
+function logMetaLaneOnce(lane: 'meta-ads' | 'none'): void {
+  if (lastMetaLane === lane) return
+  lastMetaLane = lane
+  console.log(
+    lane === 'meta-ads'
+      ? '[CRUM] Meta Ads API adapters registered'
+      : '[CRUM] Meta Ads API not configured; create_campaign and set_campaign_status actions will be refused at staging',
   )
 }
 
@@ -126,6 +138,35 @@ export function createCrumMastra(env: CrumEnv, options: CrumMastraOptions = {}):
     logLaneOnce('pages')
   } else {
     logLaneOnce('none')
+  }
+
+  // Slice 3 spec section 5.4: both Meta Ads adapters register only when the
+  // access token and the ad accounts list are both present. Either absent means
+  // the adapters stay unmapped, and the slice 1 guard refuses at staging.
+  const metaToken = env.CRUM_META_ADS_ACCESS_TOKEN
+  const metaAccountsRaw = env.CRUM_META_AD_ACCOUNTS
+  if (metaToken && metaAccountsRaw) {
+    let adAccounts: string[]
+    try {
+      const parsed = JSON.parse(metaAccountsRaw)
+      if (!Array.isArray(parsed) || !parsed.every((a) => typeof a === 'string')) {
+        throw new Error('CRUM_META_AD_ACCOUNTS must be a JSON array of strings')
+      }
+      adAccounts = parsed
+    } catch (err) {
+      console.warn('[CRUM] Failed to parse CRUM_META_AD_ACCOUNTS:', err instanceof Error ? err.message : String(err))
+      logMetaLaneOnce('none')
+      adAccounts = []
+    }
+    if (adAccounts.length > 0) {
+      registerActionAdapter(makeCreateCampaignAdapter({ accessToken: metaToken, adAccounts }))
+      registerActionAdapter(makeSetCampaignStatusAdapter({ accessToken: metaToken, adAccounts }))
+      logMetaLaneOnce('meta-ads')
+    } else {
+      logMetaLaneOnce('none')
+    }
+  } else {
+    logMetaLaneOnce('none')
   }
 
   const storage = options.storage ?? buildMastraStorage(env)

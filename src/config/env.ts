@@ -177,6 +177,10 @@ export const EnvSchema = z.object({
     blankAsUnset,
     z.string().trim().min(1).optional(),
   ),
+  // Slice 3 spec section 5.4: the ad accounts the create_campaign adapter
+  // accepts. Parsed as a JSON array of strings at boot; absent means the Meta
+  // Ads adapters stay unmapped and staging refuses.
+  CRUM_META_AD_ACCOUNTS: optionalString,
 })
 
 export type CrumEnv = z.infer<typeof EnvSchema>
