@@ -34,6 +34,7 @@ const TOKEN = '0f0f0f0f-0000-4000-8000-000000000014'
 const TOKEN_PROMOTED = '0f0f0f0f-0000-4000-8000-000000000015'
 const TOKEN_UNPUBLISHED = '0f0f0f0f-0000-4000-8000-000000000016'
 const TOKEN_OTHER = '0f0f0f0f-0000-4000-8000-000000000017'
+const TOKEN_CROSS = '0f0f0f0f-0000-4000-8000-000000000018'
 const TOKEN_UNKNOWN = '00000000-0000-4000-8000-000000000000'
 
 async function insertBundle(params: { token: string; draftHash: string }): Promise<string> {
@@ -241,6 +242,47 @@ describe.skipIf(!url)('inbound lead intake', () => {
     expect(consents.rows[0]?.n).toBe('1')
   })
 
+  it('writes a fresh lead for a known address on a new bundle of the same tenant', async () => {
+    const otherBundle = await insertBundle({
+      token: TOKEN_CROSS,
+      draftHash: 'lead-intake-fixture-cross',
+    })
+    const again = await recordLead(lead({ bundleId: otherBundle }))
+    // The lead key includes the bundle, so a first lead on a second bundle is
+    // fresh even though the prospect and its email channel already exist.
+    expect(again.duplicate).toBe(false)
+    expect(again.prospectId).toBe(first.prospectId)
+    expect(again.leadId).not.toBe(first.leadId)
+
+    const db = getDbClient()
+    const leads = await db.query<{ bundle_id: string; prospect_id: string }>(
+      `SELECT bundle_id, prospect_id FROM marketing_leads
+        WHERE tenant_id = $1 AND email_normalized = $2`,
+      [TENANT, normalizeEmail('A@Example.COM ')],
+    )
+    expect(leads.rows).toHaveLength(2)
+    expect(leads.rows).toEqual(
+      expect.arrayContaining([
+        { bundle_id: bundleId, prospect_id: first.prospectId },
+        { bundle_id: otherBundle, prospect_id: first.prospectId },
+      ]),
+    )
+
+    const prospects = await db.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM prospects
+        WHERE tenant_id = $1 AND name_normalized = 'nguyen van a'`,
+      [TENANT],
+    )
+    expect(prospects.rows[0]?.n).toBe('1')
+
+    const channels = await db.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM prospect_channels
+        WHERE tenant_id = $1 AND platform = 'email' AND handle_normalized = $2`,
+      [TENANT, normalizeEmail('A@Example.COM ')],
+    )
+    expect(channels.rows[0]?.n).toBe('1')
+  })
+
   it('gives a different email on the same bundle its own prospect and lead', async () => {
     const second = await recordLead(lead({ name: 'Tran Thi B', email: 'b@example.com' }))
     expect(second.duplicate).toBe(false)
@@ -262,17 +304,16 @@ describe.skipIf(!url)('inbound lead intake', () => {
 
   it('leaves one of each row when two first submissions of one address race', async () => {
     const db = getDbClient()
-    // Two idle clients, so both submissions start together rather than one
-    // queueing while the other opens a connection.
+    // Two idle clients, so each submission acquires a connection rather than
+    // one queueing while the other opens one.
     const warm = await Promise.all([db.connect(), db.connect()])
     warm.forEach((client) => client.release())
 
     const racer = { name: 'Le Van C', email: 'race@example.com' }
-    // The second submission starts while the first is still writing, which is
-    // the shape of the race this queue is built for.
-    const first = recordLead(lead(racer))
-    await new Promise((resolve) => setTimeout(resolve, 2))
-    const [a, b] = await Promise.all([first, recordLead(lead(racer))])
+    // Both submissions are dispatched before either is awaited, so both
+    // transactions are open and writing before either can commit, and the
+    // lead key decides the winner. No timer stands in for that overlap.
+    const [a, b] = await Promise.all([recordLead(lead(racer)), recordLead(lead(racer))])
 
     // Exactly one submission wins the lead, and the other must name the winner's
     // prospect rather than a row of its own that nothing points at.
