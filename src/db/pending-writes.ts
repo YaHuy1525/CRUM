@@ -52,10 +52,14 @@ export interface CreateDraftParams {
     // declared the moment the database admits them so the closed lists in
     // migrations/0019 and this union stay one edit apart; their applyDraft paths
     // land with the publisher in later slice-2 tasks.
+    // marketing_set_campaign_status is the slice-3 approval for the analyst's
+    // scale and kill recommendations: the campaign stays in its current state
+    // until the owner approves the draft.
     | 'marketing_bundle'
     | 'marketing_stage'
     | 'marketing_promote'
     | 'marketing_retry'
+    | 'marketing_set_campaign_status'
   operation: 'create' | 'update' | 'delete'
   targetId?: string
   payload: unknown

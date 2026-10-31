@@ -762,6 +762,97 @@ export async function stageRetry(params: {
 }
 
 /**
+ * The analyst's scale and kill recommendations stage a draft that changes a
+ * campaign's status. A scale (ACTIVE) requires the campaign to be currently
+ * paused, so the draft re-activates it; a kill (PAUSED) may target any campaign
+ * regardless of its current state, because pausing an already-paused campaign
+ * is harmless and the owner may still want the audit trail. Spec section 9.4.
+ *
+ * Like `stagePromotion`, the function validates before it stages: a campaign
+ * that does not exist, or that is already active when the recommendation is to
+ * scale, is refused before any row is written. The caller (the analyst cron)
+ * logs the refusal and moves on.
+ */
+export async function stageCampaignStatusChange(args: {
+  tenantId: string
+  bundleId: string
+  campaignExternalId: string
+  status: 'ACTIVE' | 'PAUSED'
+  reason: string
+  userRole: string
+}): Promise<string> {
+  const db = getDbClient()
+
+  // The campaign must have been created by a succeeded create_campaign action.
+  // A draft over a campaign that does not exist would authorise nothing, so
+  // this is asked before anything is queued.
+  const created = await db.query<{ id: string }>(
+    `SELECT id FROM marketing_actions
+      WHERE tenant_id = $1
+        AND action = 'create_campaign'
+        AND status = 'succeeded'
+        AND result ->> 'externalId' = $2`,
+    [args.tenantId, args.campaignExternalId],
+  )
+  if (created.rows.length === 0) {
+    throw new Error(
+      `campaign_not_found: no succeeded create_campaign action for external id ${args.campaignExternalId}`,
+    )
+  }
+
+  // A scale recommendation activates a paused campaign. If the campaign is
+  // already active, the draft would change nothing, so refuse before staging.
+  // A kill recommendation pauses a campaign regardless of its current state,
+  // so no status check is needed for PAUSED.
+  if (args.status === 'ACTIVE') {
+    const latest = await db.query<{ status: string }>(
+      `SELECT payload ->> 'status' AS status
+         FROM marketing_actions
+        WHERE tenant_id = $1
+          AND action = 'set_campaign_status'
+          AND payload ->> 'campaignId' = $2
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [args.tenantId, args.campaignExternalId],
+    )
+    // No status change means the campaign is still in its initial paused state
+    // (campaigns are created paused, spec section 2). A latest status of ACTIVE
+    // means the campaign is already running, so a scale draft would be a no-op.
+    if (latest.rows.length > 0 && latest.rows[0]!.status === 'ACTIVE') {
+      throw new Error(
+        `campaign_already_active: ${args.campaignExternalId} is already active, cannot scale`,
+      )
+    }
+  }
+
+  // The payload is identifiers and a status only: no prose, no slug, no bytes.
+  // scoreRisk stringifies the whole draft, so keeping it free of agent-written
+  // text keeps the score stable across runs that differ only in the reason.
+  const payload = { campaignId: args.campaignExternalId, status: args.status }
+  const policy = loadPolicy()
+  const assessment = scoreRisk(payload, policy.risk, 'marketing.set_campaign_status')
+  const gate = policy.gateFor('marketing.set_campaign_status', assessment, {
+    requestContext: { tenantId: args.tenantId, userRole: args.userRole },
+  })
+
+  // One draft per campaign per desired status: a re-ask for the same change
+  // lands on the existing draft rather than a second one.
+  const draft = await getOrCreateDraft({
+    tenantId: args.tenantId,
+    runId: 'analyst-cron',
+    objectType: 'marketing_set_campaign_status',
+    operation: 'update',
+    targetId: args.campaignExternalId,
+    payload,
+    riskScore: assessment.score,
+    gate,
+    requestedBy: 'analyst-cron',
+    idempotencyKey: `campaign_status:${args.campaignExternalId}:${args.status}`,
+  })
+  return draft.id
+}
+
+/**
  * Refusal reasons are tokens so a caller can branch on them; the sentence the
  * model repeats is prose. The three byte-related tokens answer different
  * questions now, so each gets its own sentence rather than the generic
