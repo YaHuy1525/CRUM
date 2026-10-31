@@ -1327,19 +1327,23 @@ git commit -m "feat(governance): declare the promote and retry decisions with pr
 
 **Files:**
 - Create: `src/marketing/page-host.ts`
+- Modify: `src/marketing/outbox.ts` (`MarketingActionAdapter.execute` gains a context argument: every adapter that reads a bundle needs to know whose bundle it is, and a `DerivedAction` carries only a bundle id that nothing tenant-scopes)
 - Test: `tests/marketing/page-host.test.ts`
 
 **Interfaces:**
-- Consumes: Task 1's recorded response shape, `SiteFile` from Task 3, `MarketingActionAdapter` and `DerivedAction` from `src/marketing/outbox.ts:14-31`, and the publish payload `{ bundleId, slug, siteHash }` from Task 4.
+- Consumes: Task 3's `SiteFile`, `MarketingActionAdapter` and `DerivedAction` from `src/marketing/outbox.ts`, and the publish payload `{ bundleId, slug, siteHash }` from Task 4.
 - Produces:
   - `interface PageHostConfig { accountId: string; project: string; apiToken: string; productionBranch: string; previewBranchPrefix: string }`
   - `class PageHostError extends Error` with `readonly status: number` and `readonly body: string`
   - `function buildUploadForm(files: readonly SiteFile[], branch: string, commitMessage: string): FormData`
   - `type DeployResult = { deploymentId: string; url: string }`
   - `function deploySite(config: PageHostConfig, files: readonly SiteFile[], branch: string, commitMessage: string, fetchImpl?: typeof fetch): Promise<DeployResult>`
-  - `function readSiteFiles(action: DerivedAction): Promise<SiteFile[]>` (reads the bundle's artifacts through `src/db/marketing.ts`)
+  - `interface ActionContext { tenantId: string }`, and `MarketingActionAdapter.execute: (action: DerivedAction, context: ActionContext) => Promise<{ externalId: string; url?: string; fileCount?: number }>`
+  - `function readSiteFiles(action: DerivedAction, tenantId: string): Promise<SiteFile[]>` (reads the bundle's artifacts through `src/db/marketing.ts`, tenant-scoped; an unscoped read would let one tenant's action publish another tenant's page)
   - `function makePublishPageAdapter(config: PageHostConfig): MarketingActionAdapter`
   - `function makePromotePageAdapter(config: PageHostConfig): MarketingActionAdapter`
+
+Task 1's spike did not run, so there is no recorded response body. The wire format in this task is the documented Cloudflare Pages direct-upload shape, and the two details no quotable public document pins (the per-hash part name and the SHA-256 encoding) are settled by the spike when credentials exist. A mismatch there fails loudly as a `PageHostError` carrying the provider's body, which is the failure mode the runbook needs.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1746,7 +1750,7 @@ git commit -m "feat(marketing): register page adapters only when the Pages crede
 - Create: `scripts/publish-drain.ts`
 - Modify: `src/marketing/page-host.ts` (`apiBaseUrl`), `src/config/env.ts` (`CRUM_PAGES_API_BASE_URL`), `src/mastra/index.ts` (`pageHostConfigFromEnv` test literal in `tests/mastra/boot.test.ts`)
 - Modify: `src/db/marketing.ts` (`markBundleLive`)
-- Test: `tests/integration/marketing-publish.test.ts`
+- Test: `tests/integration/marketing-publish.test.ts`, and `tests/marketing/page-host.test.ts` — its `CONFIG` literal gains `apiBaseUrl`, which is required the moment the interface widens, so the typecheck breaks here if this file is left out
 
 **Interfaces:**
 - Consumes: `MarketingActionAdapter`, `registerActionAdapter`, the `marketing_actions` table with `result jsonb`, `commitBundleApproval`'s queued rows.
@@ -2052,7 +2056,10 @@ export async function drainOnce(deps: {
 
     try {
       const adapter = adapterFor(action.action)
-      const result = await adapter.execute(action)
+      // The adapter needs to know whose bundle it is reading: the action carries a
+      // bundle id and nothing else, and an unscoped artifact read would let one
+      // tenant's row publish another tenant's page. The claimed row has the tenant.
+      const result = await adapter.execute(action, { tenantId: row.tenant_id })
       await recordSuccess(client as unknown as Queryable, row.id, { ...result })
       succeeded += 1
       if (action.action === 'promote_page') {
