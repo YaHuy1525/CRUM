@@ -510,8 +510,8 @@ export interface MarketingBundleRecord {
 export interface MarketingArtifactRecord {
   id: string
   // Widened to `string` on purpose, exactly as objective and status are widened
-  // above: the real types are six-member literal unions (MarketingRole and
-  // MarketingArtifactKind, src/db/marketing.ts:5-25), and a console type that
+  // above: the real types are fixed literal unions (MarketingRole and
+  // MarketingArtifactKind, src/db/marketing.ts:5-26), and a console type that
   // goes stale the day a role is added breaks the build without protecting
   // anything, because this screen renders whatever the server says rather than
   // branching on the value.

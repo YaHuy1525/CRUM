@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import {
   SlugProblemError,
+  SlotProblemError,
   resolveSite,
   siteHashOf,
   slotProblem,
@@ -61,7 +62,7 @@ describe('resolveSite', () => {
     expect(one.sha256).toBe(createHash('sha256').update('<h1>hi</h1>').digest('hex'))
   })
 
-  it.each(['', 'Free Quote', '../x', 'a/b', 'a'.repeat(64), 'x\n'])(
+  it.each(['', 'Free Quote', '../x', 'a/b', 'a'.repeat(64), 'x\n', '-x', '.x', 'x:y'])(
     'refuses the slug %j before it becomes a hosted path',
     (slug) => {
       expect(() => resolveSite(slug, [file('a1', 'page_html', '<h1>hi</h1>')])).toThrow(SlugProblemError)
@@ -79,6 +80,18 @@ describe('resolveSite', () => {
   it('says which slug it refused and what a slug may look like', () => {
     expect(() => resolveSite('Free Quote', [])).toThrow(/Free Quote/)
     expect(() => resolveSite('Free Quote', [])).toThrow(/63 characters/)
+  })
+
+  it('refuses an ambiguous slot rather than picking one of the rows', () => {
+    // slotProblem answers the same question in text for the stage tool; this is the
+    // throw that stops a derivation. A publisher that chose between two page_html
+    // rows would publish a page the reviewer may never have seen.
+    expect(() =>
+      resolveSite('s', [
+        file('a1', 'page_html', '<h1>old</h1>'),
+        file('a2', 'page_html', '<h1>new</h1>'),
+      ]),
+    ).toThrow(SlotProblemError)
   })
 })
 
