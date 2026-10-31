@@ -9,6 +9,13 @@ const INSTRUCTIONS =
   'third-party script, and name every asset by the designer key rather than ' +
   'inventing a URL. Ask for the fewest fields that still qualify, and in the ' +
   'form itself state what happens to the data and how to ask for its removal. ' +
+  // The save tool refuses a page whose form action is anything else, so the
+  // placeholder is the only action that can work; the token and origin behind it
+  // are minted at save and hashed with the bytes, which is why the model must not
+  // write a URL of its own.
+  'If the page has a form, its action must be exactly the placeholder ' +
+  '{{CRUM_LEAD_ENDPOINT}} with method post: CRUM stamps the real endpoint when ' +
+  'the bundle is saved. ' +
   'You are describing an intention, not publishing anything: a human approves ' +
   'the bundle before a page exists. Answer with one JSON object: page object ' +
   '{slug, title, html}, form object {fields array of {name, type, required, ' +
