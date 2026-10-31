@@ -7,6 +7,7 @@
 import { listMarketingArtifacts } from '../db/marketing'
 import { resolveSite, siteHashOf, type SiteFile } from './site'
 import type { DerivedAction, MarketingActionAdapter, MarketingActionName } from './outbox'
+import { injectPixelIntoFiles } from './pixel-injection'
 
 export interface PageHostConfig {
   accountId: string
@@ -17,6 +18,9 @@ export interface PageHostConfig {
   // The endpoint, not a hostname: a test stands a local server in for Pages and
   // the drainer then talks to it through the same fetch path as production.
   apiBaseUrl: string
+  // Optional: when set, the Meta pixel base code is injected into every HTML
+  // file at publish time. Spec section 6.
+  pixelId?: string
 }
 
 export class PageHostError extends Error {
@@ -140,7 +144,8 @@ export function makePublishPageAdapter(config: PageHostConfig): MarketingActionA
   return {
     name: 'publish_page' satisfies MarketingActionName,
     execute: async (action, context) => {
-      const files = await readSiteFiles(action, context.tenantId)
+      const rawFiles = await readSiteFiles(action, context.tenantId)
+      const { files } = injectPixelIntoFiles(rawFiles, config.pixelId)
       const slug = stringField(action.payload['slug'])
       const deployed = await deploySite(
         config,
@@ -157,7 +162,8 @@ export function makePromotePageAdapter(config: PageHostConfig): MarketingActionA
   return {
     name: 'promote_page' satisfies MarketingActionName,
     execute: async (action, context) => {
-      const files = await readSiteFiles(action, context.tenantId)
+      const rawFiles = await readSiteFiles(action, context.tenantId)
+      const { files } = injectPixelIntoFiles(rawFiles, config.pixelId)
       const deployed = await deploySite(
         config,
         files,
@@ -181,6 +187,7 @@ export function pageHostConfigFromEnv(env: {
   CRUM_CLOUDFLARE_API_TOKEN?: string
   CRUM_PAGES_PRODUCTION_BRANCH?: string
   CRUM_PAGES_API_BASE_URL?: string
+  CRUM_META_PIXEL_ID?: string
 }): PageHostConfig | null {
   const accountId = nonBlank(env.CRUM_CLOUDFLARE_ACCOUNT_ID)
   const project = nonBlank(env.CRUM_CLOUDFLARE_PAGES_PROJECT)
@@ -189,6 +196,7 @@ export function pageHostConfigFromEnv(env: {
   if (accountId === null || project === null || apiToken === null || productionBranch === null) {
     return null
   }
+  const pixelId = nonBlank(env.CRUM_META_PIXEL_ID) ?? undefined
   return {
     accountId,
     project,
@@ -196,6 +204,7 @@ export function pageHostConfigFromEnv(env: {
     productionBranch,
     previewBranchPrefix: 'crum-preview',
     apiBaseUrl: (env.CRUM_PAGES_API_BASE_URL ?? 'https://api.cloudflare.com/client/v4').replace(/\/+$/, ''),
+    pixelId,
   }
 }
 
