@@ -96,7 +96,7 @@ The derivation now needs the artifact set, so `deriveActions` takes it and the t
 |---|---|---|---|
 | `marketing.stage_bundle` | approval | existing fields, now plus `siteHash` | bundle becomes `approved`, `publish_page` queued |
 | `marketing.promote_bundle` | approval | `bundleId`, `pageActionId`, `siteHash` | `promote_page` queued, bundle stays `approved` until it succeeds |
-| `marketing.retry_publish` | approval | `actionId`, `siteHash` | one new `queued` row cloning the failed action, bundle returns to `approved` |
+| `marketing.retry_publish` | approval | `actionId`, `siteHash` | one new `queued` row cloning the failed action's payload; the bundle is untouched, because a failed action never changed the bundle status |
 
 The two new tools are declared in `policy/tools.yaml` with `idempotent: true` and an `idempotency_key` of `siteHash` and `actionId` respectively, as `src/governance/schema.ts` demands for any non read-only class. `marketing.stage_bundle` keeps its existing `draftHash` key. No `marketing` domain block goes into `policy/risk.yaml`, for the reason already recorded in the parent spec section 7.
 
@@ -177,7 +177,13 @@ This is shared behaviour and it changes semantics for the six CRM approval tools
 
 ### 8.3 M4, a suspended run gets a resume control
 
-`GET /api/approvals/suspended-runs` answers `{"items":[],"total":1}`, which is a count with no rows and therefore unusable. It returns items. `console/components/ApprovalQueue.tsx` gains one resume control per suspended run, wired to the `POST /api/approvals/:runId/decision` endpoint the plane already has, because that is the call that completed the slice 1 walkthrough by hand. Proof it is done: stage a bundle from chat, click once in the console, and see the draft in the queue without touching curl.
+Two separate defects, both read out of the installed `@mastra/core` typing and the repository rather than guessed, and both must be fixed or the control still cannot work.
+
+`GET /api/approvals/suspended-runs` answers `{"items":[],"total":1}`, which is a count with no rows and therefore unusable. The cause is a page-number boundary: CRUM's `QueueQuerySchema` declares `page` with `.min(1).default(1)`, because a human reads page one off a screen, while the provider documents `/** Zero-indexed page number. */` and paginates as soon as both `page` and `perPage` arrive. Passing the caller's `1` straight through asks for the second page of a one-run set. Asking for the page that would have worked, `page=0`, is refused by CRUM's own validation, so the first page is unreachable through this route. The boundary translates: send `page - 1`. `/pending` was never affected because it calls `listSuspendedRuns()` with no arguments and so receives everything, which is why the queue counted the run while the list route answered nothing.
+
+The second defect is why no console change alone could have added the control. `src/api/approvals.ts` builds `suspension.tool_call_ids` by mapping `tc.toolName`, so the field named for ids carries names, and `approveToolCallGenerate` needs the `toolCallId` that was thrown away at the mapping layer. The mapping returns ids, and the display labels travel in a separate `tool_names` field so the button can still say what it is resuming.
+
+`console/components/ApprovalQueue.tsx` already prints `Suspended run {run_id}` on the draft row and offers nothing to do about it. It gains one resume control per suspended row, wired to the `POST /api/approvals/:runId/decision` endpoint the plane already has, because that is the call that completed the slice 1 walkthrough by hand. Resuming the run does not decide the draft; the pending write stays in the queue for its own Approve click, which is the two-halves rule of spec section 11.3 in the parent spec holding true. Proof it is done: stage a bundle from chat, click once in the console, and see the run continue without touching curl.
 
 ## 9. Configuration
 
