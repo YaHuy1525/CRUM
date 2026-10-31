@@ -381,6 +381,45 @@ describe('marketing.save_bundle', () => {
   })
 })
 
+async function saveSchema() {
+  const { saveBundleTool } = await import('../../src/mastra/tools/marketing-writes')
+  const schema = saveBundleTool.inputSchema
+  if (!schema) throw new Error('marketing.save_bundle has no input schema')
+  return schema
+}
+
+describe('marketing.save_bundle input schema', () => {
+  /**
+   * `execute` below is called directly in every other case, so none of them runs
+   * the tool's zod input schema. This is the one place the kind enum is asked,
+   * and it is the question that matters: migration 0019 admits a thank-you
+   * artifact, so a schema built from a stale list would reject every one.
+   */
+  it('admits a thank-you artifact, the seventh kind migration 0019 allows', async () => {
+    const schema = await saveSchema()
+    const result = await schema['~standard'].validate(
+      bundleInput({
+        artifacts: [
+          { role: 'funnel-builder', kind: 'thank_you_html', documentId: null, textContent: '<p>thanks</p>' },
+        ],
+      }),
+    )
+    expect(result.issues).toBeUndefined()
+  })
+
+  it('still refuses a kind the artifact table does not admit', async () => {
+    const schema = await saveSchema()
+    const result = await schema['~standard'].validate(
+      bundleInput({
+        artifacts: [
+          { role: 'funnel-builder', kind: 'landing_html', documentId: null, textContent: '<p>hi</p>' },
+        ],
+      }),
+    )
+    expect(result.issues).toBeDefined()
+  })
+})
+
 describe('marketing.stage_bundle', () => {
   const stageHandlers = (row: Row): Record<string, Row[]> => ({
     'FROM marketing_bundles': [row],

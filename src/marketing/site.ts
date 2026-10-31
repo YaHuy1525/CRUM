@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import type { MarketingArtifactKind } from '../db/marketing'
 
 /**
  * The uploaded files of one bundle's page, and the only place a hosted path is
@@ -7,18 +8,21 @@ import { createHash } from 'node:crypto'
  * sanitising and would enter the content-addressed artifact id. Making the slot
  * the artifact kind keeps the model out of both. Spec section 3.1.
  *
- * The slot kind is spelled out here rather than read from `MarketingArtifactKind`
- * (src/db/marketing.ts:25): that union still lists the six kinds migration 0018
- * admitted and has not caught up with the `thank_you_html` that migration 0019
- * adds, so typing a slot as `MarketingArtifactKind` does not compile. Retype it
- * as `MarketingArtifactKind` once `ARTIFACT_KINDS` gains the seventh kind.
+ * `satisfies` pins every slot kind to `MarketingArtifactKind`, so a slot the
+ * artifact table refuses is a compile error rather than a page that can never
+ * be saved.
  */
-export type SiteSlotKind = 'page_html' | 'thank_you_html'
-
-export const SITE_SLOTS: readonly { kind: SiteSlotKind; suffix: string }[] = [
+export const SITE_SLOTS = [
   { kind: 'page_html', suffix: 'index.html' },
   { kind: 'thank_you_html', suffix: 'thanks/index.html' },
-]
+] as const satisfies readonly { kind: MarketingArtifactKind; suffix: string }[]
+
+/**
+ * Narrower than an artifact kind on purpose: only the kinds CRUM places at a
+ * path have a slot, so this union is the vocabulary of the registry, not of the
+ * artifact table.
+ */
+export type SiteSlotKind = (typeof SITE_SLOTS)[number]['kind']
 
 export interface SiteArtifact {
   id: string
@@ -47,6 +51,28 @@ export class SlotProblemError extends Error {
   }
 }
 
+/**
+ * One path segment and no more: lowercase letters, digits and hyphens, starting
+ * with a letter or digit, at most 63 characters, so a slug cannot become a
+ * second segment or climb out of the bundle's own prefix.
+ */
+export const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/
+
+export class SlugProblemError extends Error {
+  readonly slug: string
+
+  constructor(slug: string) {
+    super(
+      `slug_${JSON.stringify(slug)} cannot be published: a slug is one path segment of ` +
+        'lowercase letters, digits and hyphens, starting with a letter or digit, ' +
+        '63 characters at most. The reviewer approves a hash over this path, so a slug ' +
+        'that is not one is refused before it names anything.',
+    )
+    this.name = 'SlugProblemError'
+    this.slug = slug
+  }
+}
+
 function ofKind(artifacts: readonly SiteArtifact[], kind: SiteSlotKind): SiteArtifact[] {
   return artifacts.filter((a) => a.kind === kind && a.textContent !== null)
 }
@@ -69,9 +95,11 @@ export function slotProblem(artifacts: readonly SiteArtifact[]): string | null {
 /**
  * A slug of `physio-melbourne` publishes `physio-melbourne/index.html`, and the
  * thank-you page sits under it, so one bundle owns one path prefix and cannot
- * reach another bundle's page.
+ * reach another bundle's page. The slug is checked first because every path and
+ * the site hash are built from it, and it is a phrase an agent wrote.
  */
 export function resolveSite(slug: string, artifacts: readonly SiteArtifact[]): SiteFile[] {
+  if (!SLUG_PATTERN.test(slug)) throw new SlugProblemError(slug)
   const files: SiteFile[] = []
   for (const slot of SITE_SLOTS) {
     const rows = ofKind(artifacts, slot.kind)

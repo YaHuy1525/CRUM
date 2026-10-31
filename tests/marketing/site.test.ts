@@ -1,5 +1,12 @@
+import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
-import { resolveSite, siteHashOf, slotProblem, type SiteArtifact } from '@/marketing/site'
+import {
+  SlugProblemError,
+  resolveSite,
+  siteHashOf,
+  slotProblem,
+  type SiteArtifact,
+} from '@/marketing/site'
 
 const file = (id: string, kind: string, text: string): SiteArtifact => ({ id, kind, textContent: text })
 
@@ -51,7 +58,27 @@ describe('resolveSite', () => {
     // that does not is the bug this case exists to catch, so it fails loudly.
     if (!one || !two) throw new Error('resolveSite dropped the page_html slot')
     expect(one.sha256).toBe(two.sha256)
-    expect(one.sha256).toBe('b7a6a7c6b4a1e15e4b1e0f0b7a1c2d3e4f5061728394a5b6c7d8e9f0a1b2c3d4'.slice(0, 0) + one.sha256)
+    expect(one.sha256).toBe(createHash('sha256').update('<h1>hi</h1>').digest('hex'))
+  })
+
+  it.each(['', 'Free Quote', '../x', 'a/b', 'a'.repeat(64), 'x\n'])(
+    'refuses the slug %j before it becomes a hosted path',
+    (slug) => {
+      expect(() => resolveSite(slug, [file('a1', 'page_html', '<h1>hi</h1>')])).toThrow(SlugProblemError)
+    },
+  )
+
+  it.each(['physio-melbourne', 's', 'a'.repeat(63), '9-lives'])(
+    'publishes under the slug %j',
+    (slug) => {
+      expect(resolveSite(slug, [file('a1', 'page_html', '<h1>hi</h1>')]).map((f) => f.path))
+        .toEqual([`${slug}/index.html`])
+    },
+  )
+
+  it('says which slug it refused and what a slug may look like', () => {
+    expect(() => resolveSite('Free Quote', [])).toThrow(/Free Quote/)
+    expect(() => resolveSite('Free Quote', [])).toThrow(/63 characters/)
   })
 })
 

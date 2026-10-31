@@ -29,6 +29,15 @@ beforeEach(() => {
   mockQuery.mockReset()
 })
 
+describe('ARTIFACT_KINDS', () => {
+  it('admits the thank-you kind migration 0019 allows', async () => {
+    const { ARTIFACT_KINDS } = await load()
+    // The save tool builds its kind enum from this list, so a kind the database
+    // CHECK admits and this list omits is an artifact no agent can ever save.
+    expect(ARTIFACT_KINDS).toContain('thank_you_html')
+  })
+})
+
 describe('getMarketingBundle', () => {
   it('scopes the read on tenant as well as id', async () => {
     mockQuery.mockResolvedValue({ rows: [] })

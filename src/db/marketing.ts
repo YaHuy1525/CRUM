@@ -21,6 +21,9 @@ export const ARTIFACT_KINDS = [
   'campaign_spec',
   'script',
   'report',
+  // The second slot-as-kind, admitted by migration 0019: a thank-you page sits
+  // at thanks/index.html under the bundle's slug.
+  'thank_you_html',
 ] as const
 export type MarketingArtifactKind = (typeof ARTIFACT_KINDS)[number]
 
