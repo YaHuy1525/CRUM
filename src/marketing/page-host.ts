@@ -14,6 +14,9 @@ export interface PageHostConfig {
   apiToken: string
   productionBranch: string
   previewBranchPrefix: string
+  // The endpoint, not a hostname: a test stands a local server in for Pages and
+  // the drainer then talks to it through the same fetch path as production.
+  apiBaseUrl: string
 }
 
 export class PageHostError extends Error {
@@ -62,8 +65,10 @@ export async function deploySite(
   commitMessage: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<DeployResult> {
+  const base = config.apiBaseUrl || 'https://api.cloudflare.com/client/v4'
+  const target = `${base}/accounts/${config.accountId}/pages/projects/${config.project}/deployments`
   const response = await fetchImpl(
-    `https://api.cloudflare.com/client/v4/accounts/${config.accountId}/pages/projects/${config.project}/deployments`,
+    target,
     { method: 'POST', headers: { Authorization: `Bearer ${config.apiToken}` }, body: buildUploadForm(files, branch, commitMessage) },
   )
   const text = await response.text()
@@ -175,6 +180,7 @@ export function pageHostConfigFromEnv(env: {
   CRUM_CLOUDFLARE_PAGES_PROJECT?: string
   CRUM_CLOUDFLARE_API_TOKEN?: string
   CRUM_PAGES_PRODUCTION_BRANCH?: string
+  CRUM_PAGES_API_BASE_URL?: string
 }): PageHostConfig | null {
   const accountId = nonBlank(env.CRUM_CLOUDFLARE_ACCOUNT_ID)
   const project = nonBlank(env.CRUM_CLOUDFLARE_PAGES_PROJECT)
@@ -183,7 +189,14 @@ export function pageHostConfigFromEnv(env: {
   if (accountId === null || project === null || apiToken === null || productionBranch === null) {
     return null
   }
-  return { accountId, project, apiToken, productionBranch, previewBranchPrefix: 'crum-preview' }
+  return {
+    accountId,
+    project,
+    apiToken,
+    productionBranch,
+    previewBranchPrefix: 'crum-preview',
+    apiBaseUrl: (env.CRUM_PAGES_API_BASE_URL ?? 'https://api.cloudflare.com/client/v4').replace(/\/+$/, ''),
+  }
 }
 
 /**

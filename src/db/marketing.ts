@@ -267,6 +267,23 @@ export async function markBundleStaged(params: {
   return Boolean(result.rows[0])
 }
 
+/**
+ * Only a succeeded promote_page may set this. A successful preview publish
+ * leaves the bundle `approved`, so `live` keeps meaning one thing: the bytes are
+ * on the owner's domain. Spec section 5.
+ */
+export async function markBundleLive(params: { tenantId: string; bundleId: string }): Promise<boolean> {
+  const db = getDbClient()
+  const result = await db.query<{ id: string }>(
+    `UPDATE marketing_bundles
+        SET status = 'live'
+      WHERE id = $1 AND tenant_id = $2 AND status IN ('approved','publishing','live')
+      RETURNING id`,
+    [params.bundleId, params.tenantId],
+  )
+  return Boolean(result.rows[0])
+}
+
 export function roleColumnsOf(bundle: MarketingBundleRow): BundleHashInput {
   return {
     brief: bundle.brief,

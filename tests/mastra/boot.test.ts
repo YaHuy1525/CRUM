@@ -331,6 +331,7 @@ const PAGE_CONFIG: PageHostConfig = {
   apiToken: 'tok',
   productionBranch: 'main',
   previewBranchPrefix: 'crum-preview',
+  apiBaseUrl: 'https://api.cloudflare.com/client/v4',
 }
 
 /** The four settings the adapters need, all present. */
@@ -374,6 +375,7 @@ describe('slice 2 adapter registration', () => {
     })).toEqual({
       accountId: 'acc', project: 'proj', apiToken: 'tok',
       productionBranch: 'main', previewBranchPrefix: 'crum-preview',
+      apiBaseUrl: 'https://api.cloudflare.com/client/v4',
     })
   })
 

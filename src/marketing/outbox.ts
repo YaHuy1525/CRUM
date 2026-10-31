@@ -78,6 +78,16 @@ export function isExecutable(action: MarketingActionName): boolean {
   return adapters.has(action)
 }
 
+/**
+ * The same map `isExecutable` reads, so the two questions cannot disagree: a row
+ * the drainer decides it can run is a row it can also hand to an adapter. Null
+ * rather than a throw, because the caller's answer to a missing adapter is to
+ * record a failure naming the action, not to crash the pass.
+ */
+export function actionAdapter(name: MarketingActionName): MarketingActionAdapter | null {
+  return adapters.get(name) ?? null
+}
+
 export function blockedActions(actions: readonly DerivedAction[]): MarketingActionName[] {
   return actions.filter((action) => !isExecutable(action.action)).map((action) => action.action)
 }

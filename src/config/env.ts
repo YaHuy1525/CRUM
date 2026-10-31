@@ -157,6 +157,9 @@ export const EnvSchema = z.object({
     z.string().trim().min(32, 'must be at least 32 bytes').optional(),
   ),
   CRUM_PAGES_PRODUCTION_BRANCH: optionalString,
+  // Unset means the documented Cloudflare endpoint. A test or a local stand-in
+  // points the adapters elsewhere without a code change.
+  CRUM_PAGES_API_BASE_URL: optionalString,
   CRUM_MARKETING_SITE_ORIGIN: optionalString,
   CRUM_LEAD_API_ORIGIN: optionalString,
   // Blank means unset, so the default cap applies instead of a coerced 0 that
