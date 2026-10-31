@@ -527,18 +527,34 @@ export const stageBundleTool = createTool({
   },
 })
 
+/**
+ * The tokens a caller branches on. Each names one refusal: a slug that cannot
+ * be published, bytes that no longer hash to the recorded value, and a bundle
+ * with no page to hash are three different answers, and only the last two are
+ * about bytes at all. `bundle_is_*` stays open because it names the status the
+ * bundle actually holds.
+ */
+export type PromotionRefusal =
+  | 'bad_bundle_id'
+  | 'not_found'
+  | 'no_published_preview'
+  | 'not_executable'
+  | 'slug_unpublishable'
+  | 'site_hash_moved'
+  | 'bundle_unavailable'
+  | `bundle_is_${string}`
+
 export type StagePromotionResult =
   | { ok: true; pendingWriteId: string; riskScore: number }
   // `message` is prose for the owner; `reason` stays the token a caller branches
-  // on. It exists because one token can cover two sentences: moved bytes and an
-  // unpublishable slug are both site_hash_moved, and only one of them is about
-  // the hash.
-  | { ok: false; reason: string; message?: string }
+  // on. A sentence overrides the token only when it says something the token
+  // cannot, which today is the slug itself inside the unpublishable refusal.
+  | { ok: false; reason: PromotionRefusal; message?: string }
 
-// The id shape the uuid column needs. The tool's inputSchema already asks for a
-// uuid, but Task 12's REST route will pass a raw path parameter, and a value that
-// is not a uuid cannot be answered by a uuid column at all.
-const BUNDLE_ID_SHAPE = z.string().uuid()
+// The id shape the uuid columns need. The tools' inputSchemas already ask for a
+// uuid, but Task 12's REST routes will pass raw path parameters, and a value
+// that is not a uuid cannot be answered by a uuid column at all.
+const ID_SHAPE = z.string().uuid()
 
 /**
  * The one implementation of "ask the owner to put that preview on the domain",
@@ -558,7 +574,7 @@ export async function stagePromotion(params: {
   userRole: string
   bundleId: string
 }): Promise<StagePromotionResult> {
-  if (!BUNDLE_ID_SHAPE.safeParse(params.bundleId).success) {
+  if (!ID_SHAPE.safeParse(params.bundleId).success) {
     return { ok: false, reason: 'bad_bundle_id' }
   }
 
@@ -592,20 +608,26 @@ export async function stagePromotion(params: {
   } catch (err) {
     // currentSiteHash resolves the slug through resolveSite, which throws rather
     // than returns null when the slug cannot name a page. The approval path
-    // translates the same throw (src/marketing/outbox.ts:276-281). The token
-    // stays site_hash_moved because both answers mean the preview the reviewer
-    // saw is not publishable now; the message names the slug, because that is
-    // the part a human can fix.
+    // translates the same throw (src/marketing/outbox.ts:276-281). This is its
+    // own token, not site_hash_moved: the bytes may be untouched, and a caller
+    // that told the owner "the bytes moved" would send them looking in the wrong
+    // place. The message names the slug, because that is the part a human can fix.
     if (err instanceof SlugProblemError) {
       return {
         ok: false,
-        reason: 'site_hash_moved',
-        message: 'the page slug cannot be published, so the preview bytes cannot be put on the domain',
+        reason: 'slug_unpublishable',
+        message:
+          `the page slug ${JSON.stringify(err.slug)} cannot be published, ` +
+          'so the preview bytes cannot be put on the domain',
       }
     }
     throw err
   }
-  if (liveHash === null || liveHash !== pageAction.siteHash) {
+  // Null and unequal are two answers, not one: null means there is no page to
+  // compare (a missing bundle, a plan with no page, or an ambiguous slot), while
+  // unequal means there is a page and it is not the one the reviewer saw.
+  if (liveHash === null) return { ok: false, reason: 'bundle_unavailable' }
+  if (liveHash !== pageAction.siteHash) {
     return { ok: false, reason: 'site_hash_moved' }
   }
 
@@ -635,6 +657,23 @@ export async function stagePromotion(params: {
 }
 
 /**
+ * The tokens a retry caller branches on. They mirror the promotion door's set
+ * minus the bundle-status questions: an action id replaces a bundle id because
+ * the failed row is what a retry names.
+ */
+export type RetryRefusal =
+  | 'bad_action_id'
+  | 'not_failed'
+  | 'not_executable'
+  | 'slug_unpublishable'
+  | 'site_hash_moved'
+  | 'bundle_unavailable'
+
+export type StageRetryResult =
+  | { ok: true; pendingWriteId: string; riskScore: number }
+  | { ok: false; reason: RetryRefusal; message?: string }
+
+/**
  * The one implementation of "ask the owner for another go at that failed
  * publish", behind the Mastra tool here and Task 12's REST route.
  *
@@ -651,10 +690,10 @@ export async function stageRetry(params: {
   userId: string
   userRole: string
   actionId: string
-}): Promise<
-  | { ok: true; pendingWriteId: string; riskScore: number }
-  | { ok: false; reason: string; message?: string }
-> {
+}): Promise<StageRetryResult> {
+  if (!ID_SHAPE.safeParse(params.actionId).success) {
+    return { ok: false, reason: 'bad_action_id' }
+  }
   const failed = await getFailedAction(params.tenantId, params.actionId)
   if (!failed) return { ok: false, reason: 'not_failed' }
   if (!isExecutable(failed.action as MarketingActionName)) return { ok: false, reason: 'not_executable' }
@@ -665,18 +704,25 @@ export async function stageRetry(params: {
   } catch (err) {
     // currentSiteHash resolves the slug through resolveSite, which throws rather
     // than returns null when the slug cannot name a page. The promotion door
-    // makes the same translation; the token stays site_hash_moved because both
-    // answers mean the bytes the failed row recorded are not publishable now,
-    // and the message names the slug because that is the part a human can fix.
+    // makes the same translation to the same token. It is not site_hash_moved:
+    // the bytes may be untouched, and the message names the slug because that
+    // is the part a human can fix.
     if (err instanceof SlugProblemError) {
       return {
         ok: false,
-        reason: 'site_hash_moved',
-        message: 'the page slug cannot be published, so the failed action cannot be re-queued',
+        reason: 'slug_unpublishable',
+        message:
+          `the page slug ${JSON.stringify(err.slug)} cannot be published, ` +
+          'so the failed action cannot be re-queued',
       }
     }
     throw err
   }
+  // Null and unequal are two answers, not one: null means the row's bundle has
+  // no page to compare (missing, plan without one, or an ambiguous slot), while
+  // unequal means there is a page and it is not the bytes the failed row
+  // recorded.
+  if (liveHash === null) return { ok: false, reason: 'bundle_unavailable' }
   if (liveHash !== failed.siteHash) return { ok: false, reason: 'site_hash_moved' }
 
   const payload = retryPayload({ actionId: failed.id, siteHash: failed.siteHash })
@@ -702,11 +748,21 @@ export async function stageRetry(params: {
 
 /**
  * Refusal reasons are tokens so a caller can branch on them; the sentence the
- * model repeats is prose. This is a message, not a scored payload, so spelling
- * the token out is safe here and unreadable otherwise.
+ * model repeats is prose. The three byte-related tokens answer different
+ * questions now, so each gets its own sentence rather than the generic
+ * underscore replacement: a slug problem, a missing page and moved bytes are
+ * not interchangeable to the person who has to fix them. This is a message, not
+ * a scored payload, so spelling the token out is safe here and unreadable
+ * otherwise.
  */
+const REFUSAL_PROSE: Record<string, string> = {
+  slug_unpublishable: 'the page slug cannot be published',
+  site_hash_moved: 'the page bytes changed since this action was staged',
+  bundle_unavailable: 'the bundle has no publishable page to hash',
+}
+
 function readableReason(reason: string): string {
-  return reason.replaceAll('_', ' ')
+  return REFUSAL_PROSE[reason] ?? reason.replaceAll('_', ' ')
 }
 
 export const promoteBundleTool = createTool({
@@ -826,8 +882,8 @@ export const retryPublishTool = createTool({
         // Refusing as a queue entry rather than a throw, the same way the stage
         // and promote tools do: an owner reading a refusal can act on it, and a
         // failed turn leaves no record of why nothing was re-queued. The
-        // stager's own sentence wins when it has one, because a slug problem and
-        // moved bytes share a token and only the sentence tells them apart.
+        // stager's own sentence wins when it has one, because it can name the
+        // slug, and no token can.
         const why = result.message ?? readableReason(result.reason)
         const humanTaskId = await createHumanTask(
           {

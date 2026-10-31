@@ -127,18 +127,57 @@ describe('marketing.promote_bundle', () => {
     // instead of returning null. The approval path translates it the same way.
     db.currentSiteHash.mockRejectedValue(new SlugProblemError('Not A Slug'))
     const out = await stagePromotion({ tenantId: rc.tenantId, userId: rc.userId, userRole: rc.userRole, bundleId: BUNDLE })
-    expect(out).toMatchObject({ ok: false, reason: 'site_hash_moved' })
-    if (!out.ok) expect(out.message).toMatch(/slug/)
+    // Its own token: the bytes may be untouched, so a caller may not report
+    // which answer it got by reusing site_hash_moved.
+    expect(out).toMatchObject({ ok: false, reason: 'slug_unpublishable' })
+    if (!out.ok) expect(out.message).toMatch(/Not A Slug/)
+    expect(db.getOrCreateDraft).not.toHaveBeenCalled()
+    unregister()
+  })
+
+  it('answers a null live hash as bundle_unavailable, not moved bytes', async () => {
+    const unregister = registerActionAdapter({ name: 'promote_page', execute: () => Promise.resolve({ externalId: 'x' }) })
+    db.getMarketingBundle.mockResolvedValue(bundle())
+    db.listPublishSucceeded.mockResolvedValue([PUBLISHED])
+    // A bundle that lost its page, or whose artifacts now sit in an ambiguous
+    // slot, has nothing to compare: that is a different problem from a hash
+    // that differs, and the owner fixes it somewhere else.
+    db.currentSiteHash.mockResolvedValue(null)
+    const out = await stagePromotion({ tenantId: rc.tenantId, userId: rc.userId, userRole: rc.userRole, bundleId: BUNDLE })
+    expect(out).toEqual({ ok: false, reason: 'bundle_unavailable' })
     expect(db.getOrCreateDraft).not.toHaveBeenCalled()
     unregister()
   })
 })
 
 describe('marketing.retry_publish', () => {
+  it('refuses an id that is not a uuid before reaching the database', async () => {
+    // The tool's schema guards this, but Task 12's REST route will call
+    // stageRetry with a raw path parameter, and a uuid column cannot answer a
+    // question asked with something else.
+    const out = await stageRetry({ tenantId: rc.tenantId, userId: rc.userId, userRole: 'admin', actionId: 'b1' })
+    expect(out).toEqual({ ok: false, reason: 'bad_action_id' })
+    expect(db.getFailedAction).not.toHaveBeenCalled()
+    expect(db.getOrCreateDraft).not.toHaveBeenCalled()
+  })
+
   it('refuses to retry a row that has not failed', async () => {
     db.getFailedAction.mockResolvedValue(null)
     const out = await stageRetry({ tenantId: rc.tenantId, userId: rc.userId, userRole: 'admin', actionId: ACT })
     expect(out).toMatchObject({ ok: false, reason: 'not_failed' })
+  })
+
+  it('refuses when no adapter can execute the failed action', async () => {
+    // No adapter registered in this process, the same way a build without the
+    // provider configured runs: the refusal has to arrive before anything is
+    // staged, because an approval may not exist before its action is executable.
+    const unregister = registerActionAdapter({ name: 'publish_page', execute: () => Promise.resolve({ externalId: 'x' }) })
+    unregister()
+    db.getFailedAction.mockResolvedValue({ id: ACT, bundleId: 'b1', siteHash: 'a'.repeat(64), action: 'publish_page' })
+    const out = await stageRetry({ tenantId: rc.tenantId, userId: rc.userId, userRole: 'admin', actionId: ACT })
+    expect(out).toEqual({ ok: false, reason: 'not_executable' })
+    expect(db.currentSiteHash).not.toHaveBeenCalled()
+    expect(db.getOrCreateDraft).not.toHaveBeenCalled()
   })
 
   it('refuses when the bytes moved, so a retry cannot publish an unseen page', async () => {
@@ -153,17 +192,29 @@ describe('marketing.retry_publish', () => {
     unregister()
   })
 
+  it('answers a null live hash as bundle_unavailable, not moved bytes', async () => {
+    const unregister = registerActionAdapter({ name: 'publish_page', execute: () => Promise.resolve({ externalId: 'x' }) })
+    db.getFailedAction.mockResolvedValue({ id: ACT, bundleId: 'b1', siteHash: 'a'.repeat(64), action: 'publish_page' })
+    // No page to hash: the bundle is gone, its plan has no page, or its
+    // artifacts sit in an ambiguous slot. None of those is "the bytes moved".
+    db.currentSiteHash.mockResolvedValue(null)
+    const out = await stageRetry({ tenantId: rc.tenantId, userId: rc.userId, userRole: 'admin', actionId: ACT })
+    expect(out).toEqual({ ok: false, reason: 'bundle_unavailable' })
+    expect(db.getOrCreateDraft).not.toHaveBeenCalled()
+    unregister()
+  })
+
   it('refuses an unpublishable slug as a refusal, not a throw', async () => {
     const unregister = registerActionAdapter({ name: 'publish_page', execute: () => Promise.resolve({ externalId: 'x' }) })
     db.getFailedAction.mockResolvedValue({ id: ACT, bundleId: 'b1', siteHash: 'a'.repeat(64), action: 'publish_page' })
     // The same throw the promotion door translates: currentSiteHash resolves the
     // slug through resolveSite, which refuses to return a hash for a slug that
-    // cannot name a page. The retry door must answer with a refusal token too,
+    // cannot name a page. The retry door must answer with its own refusal token,
     // because Task 12 puts both behind REST routes and only one may 500.
     db.currentSiteHash.mockRejectedValue(new SlugProblemError('Not A Slug'))
     const out = await stageRetry({ tenantId: rc.tenantId, userId: rc.userId, userRole: 'admin', actionId: ACT })
-    expect(out).toMatchObject({ ok: false, reason: 'site_hash_moved' })
-    if (!out.ok) expect(out.message).toMatch(/slug/)
+    expect(out).toMatchObject({ ok: false, reason: 'slug_unpublishable' })
+    if (!out.ok) expect(out.message).toMatch(/Not A Slug/)
     expect(db.getOrCreateDraft).not.toHaveBeenCalled()
     unregister()
   })

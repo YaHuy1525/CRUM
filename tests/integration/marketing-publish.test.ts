@@ -702,4 +702,77 @@ describe.skipIf(!url)('publish drain against a local pages stand-in', () => {
       unregisterFailed()
     }
   })
+
+  /**
+   * The commit-time hash read resolves the slug through the same `resolveSite`
+   * the stage door uses, and a slug that cannot name a page throws rather than
+   * returning null. The retry branch has to turn that throw into its refusal:
+   * a signed receipt over a page whose path cannot be published is the same
+   * lie as one over moved bytes, and a raw throw would surface as a 500.
+   */
+  it('refuses to sign a retry whose bundle slug can no longer be published', async () => {
+    const db = getDbClient()
+    const down = { ...config, apiBaseUrl: 'http://127.0.0.1:1' }
+    const unregisterFailed = registerActionAdapter(makePublishPageAdapter(down))
+    try {
+      const slug = 'physio-retry-slug'
+      const bundle = await db.query<{ id: string }>(
+        `INSERT INTO marketing_bundles
+           (tenant_id, brief, objective, status, funnel_plan, prompt_version, draft_hash)
+         VALUES ($1, 'A brief long enough to pass the tool floor for this probe', 'inbound_leads',
+                 'staged', jsonb_build_object('page', jsonb_build_object('slug',$3::text)),
+                 'v1', $2)
+         RETURNING id`,
+        [TENANT, `probe-retry-slug-${Date.now()}`, slug],
+      )
+      const bundleId = bundle.rows[0]!.id
+      await db.query(
+        `INSERT INTO marketing_artifacts (tenant_id, bundle_id, role, kind, text_content)
+         VALUES ($1, $2, 'funnel-builder', 'page_html', $3)`,
+        [TENANT, bundleId, PAGE_HTML],
+      )
+      await commitBundleApproval(db, {
+        tenantId: TENANT, bundleId, receiptId: null, expectedSiteHash: siteHashFor(slug),
+      })
+
+      expect((await drainOnce({ bundleId })).failed).toBe(1)
+      const failedRows = await db.query<{ id: string }>(
+        `SELECT id FROM marketing_actions
+          WHERE bundle_id = $1 AND action = 'publish_page' AND status = 'failed'`,
+        [bundleId],
+      )
+      const failed = failedRows.rows[0]!
+      const staged = await stageRetry({ tenantId: TENANT, userId: APPROVER, userRole: 'admin', actionId: failed.id })
+      if (!staged.ok) throw new Error(`expected a staged retry, was refused with ${staged.reason}`)
+      const draft = await getPendingWrite(staged.pendingWriteId, TENANT)
+      if (!draft) throw new Error('the staged retry draft is not visible to its own tenant')
+
+      // A plan edit a human could make between the staging and the approval:
+      // the slug is still present, so it is not a missing page, but it is a
+      // phrase resolveSite refuses to turn into a path.
+      await db.query(
+        `UPDATE marketing_bundles
+            SET funnel_plan = jsonb_build_object('page', jsonb_build_object('slug', 'Not A Slug'))
+          WHERE id = $1`,
+        [bundleId],
+      )
+      await expect(
+        commitWithReceipt(draft, { approvedBy: APPROVER, scope: 'marketing:retry' }),
+      ).rejects.toThrow(/bundle slug can no longer be published/)
+
+      // The refusal is the branch's translation of SlugProblemError: nothing was
+      // queued and no receipt was signed.
+      const queued = await db.query<{ n: string }>(
+        `SELECT count(*) AS n FROM marketing_actions
+          WHERE bundle_id = $1 AND action = 'publish_page' AND status = 'queued'`,
+        [bundleId],
+      )
+      expect(Number(queued.rows[0]!.n)).toBe(0)
+      expect((await getPendingWrite(staged.pendingWriteId, TENANT))?.receiptId).toBeNull()
+
+      await db.query('DELETE FROM marketing_bundles WHERE id = $1', [bundleId])
+    } finally {
+      unregisterFailed()
+    }
+  })
 })

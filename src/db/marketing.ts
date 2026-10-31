@@ -239,6 +239,17 @@ export async function getFailedAction(
  * connection that a concurrent save could race. Null when the bundle has no
  * publishable page; a slug that cannot be resolved still throws, and the caller
  * translates it the way the approval path does.
+ *
+ * `FOR UPDATE` holds the bundle row until the caller's transaction ends. That
+ * serialises this read against `commitBundleApproval`, the stage transition,
+ * which locks the same row before it re-derives, so two commits cannot both
+ * read the plan and then act on it. It does not lock `marketing_artifacts`: a
+ * concurrent save can still insert or update artifact rows after this read, so
+ * the hash is a snapshot of the bytes at read time, not a promise that they
+ * stay. That gap is why the publisher re-derives at drain time and refuses
+ * `site_hash_moved` instead of trusting a hash computed earlier. Through
+ * `currentSiteHash` there is no transaction to hold the lock, so there it
+ * covers only the statement that takes it.
  */
 export async function siteHashInTransaction(
   client: { query: <T = Record<string, unknown>>(text: string, values?: unknown[]) => Promise<{ rows: T[] }> },
@@ -246,7 +257,9 @@ export async function siteHashInTransaction(
   bundleId: string,
 ): Promise<string | null> {
   const bundle = await client.query<{ funnel_plan: unknown }>(
-    `SELECT funnel_plan FROM marketing_bundles WHERE id = $1 AND tenant_id = $2`,
+    `SELECT funnel_plan FROM marketing_bundles
+      WHERE id = $1 AND tenant_id = $2
+        FOR UPDATE`,
     [bundleId, tenantId],
   )
   const row = bundle.rows[0]
