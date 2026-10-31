@@ -31,15 +31,24 @@ export interface DerivedAction {
   payload: Record<string, unknown>
 }
 
+export interface ActionContext {
+  tenantId: string
+}
+
 export interface MarketingActionAdapter {
   name: MarketingActionName
   /**
    * Called by the drainer after the approval transaction has committed. It must
    * never be called from inside one: an approval that signs a receipt for a page
    * the provider never received is the exact failure the outbox exists to make
-   * impossible (spec section 5).
+   * impossible (spec section 5). The context carries the tenant because the
+   * action carries only a bundle id and nothing in it tenant-scopes that id; the
+   * claimed row is the only place the tenant is known.
    */
-  execute: (action: DerivedAction) => Promise<{ externalId: string; url?: string; fileCount?: number }>
+  execute: (
+    action: DerivedAction,
+    context: ActionContext,
+  ) => Promise<{ externalId: string; url?: string; fileCount?: number }>
 }
 
 /**

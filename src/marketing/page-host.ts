@@ -4,7 +4,7 @@
  * Hand-written fetch rather than wrangler, because wrangler is a CLI and this is
  * a server that must report what the provider said.
  */
-import { getDbClient } from '../db/client'
+import { listMarketingArtifacts } from '../db/marketing'
 import { resolveSite, siteHashOf, type SiteFile } from './site'
 import type { DerivedAction, MarketingActionAdapter, MarketingActionName } from './outbox'
 
@@ -85,8 +85,6 @@ export async function deploySite(
   return { deploymentId: id, url: deploymentUrl(result) }
 }
 
-interface ArtifactRow { id: string; kind: string; text_content: string | null }
-
 // A payload key that is not a string is a payload this build cannot act on, and
 // an empty value refuses downstream (resolveSite shouts at an empty slug). It
 // must not become '[object Object]' in a query or a commit message instead.
@@ -97,21 +95,17 @@ function stringField(value: unknown): string {
 /**
  * The outbox payload is a hash and an id, never the bytes: spec section 7. So
  * the adapter reads the artifacts back and re-derives the hash, and refuses to
- * upload anything other than the bytes the receipt covered.
+ * upload anything other than the bytes the receipt covered. The read goes
+ * through `listMarketingArtifacts`, because the payload's bundle id carries no
+ * tenant: only the claimed action row knows whose bundle this is, and a query
+ * scoped by bundle id alone would happily publish another tenant's page.
  */
-export async function readSiteFiles(action: DerivedAction): Promise<SiteFile[]> {
+export async function readSiteFiles(action: DerivedAction, tenantId: string): Promise<SiteFile[]> {
   const bundleId = stringField(action.payload['bundleId'])
   const slug = stringField(action.payload['slug'])
   const expected = action.payload['siteHash']
-  const db = getDbClient()
-  const found = await db.query<ArtifactRow>(
-    `SELECT id, kind, text_content
-       FROM marketing_artifacts
-      WHERE bundle_id = $1 AND kind IN ('page_html','thank_you_html')
-      ORDER BY created_at ASC`,
-    [bundleId],
-  )
-  const files = resolveSite(slug, found.rows.map((r) => ({ id: r.id, kind: r.kind, textContent: r.text_content })))
+  const artifacts = await listMarketingArtifacts(tenantId, bundleId)
+  const files = resolveSite(slug, artifacts)
   if (files.length === 0) {
     throw new Error(`no_site_files: bundle ${bundleId} holds no uploaded file for slug ${slug}`)
   }
@@ -130,8 +124,8 @@ export async function readSiteFiles(action: DerivedAction): Promise<SiteFile[]> 
 export function makePublishPageAdapter(config: PageHostConfig): MarketingActionAdapter {
   return {
     name: 'publish_page' satisfies MarketingActionName,
-    execute: async (action) => {
-      const files = await readSiteFiles(action)
+    execute: async (action, context) => {
+      const files = await readSiteFiles(action, context.tenantId)
       const slug = stringField(action.payload['slug'])
       const deployed = await deploySite(
         config,
@@ -147,8 +141,8 @@ export function makePublishPageAdapter(config: PageHostConfig): MarketingActionA
 export function makePromotePageAdapter(config: PageHostConfig): MarketingActionAdapter {
   return {
     name: 'promote_page' satisfies MarketingActionName,
-    execute: async (action) => {
-      const files = await readSiteFiles(action)
+    execute: async (action, context) => {
+      const files = await readSiteFiles(action, context.tenantId)
       const deployed = await deploySite(
         config,
         files,

@@ -1,6 +1,13 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const db = vi.hoisted(() => ({ listMarketingArtifacts: vi.fn() }))
+
+vi.mock('../../src/db/marketing', () => ({
+  listMarketingArtifacts: db.listMarketingArtifacts,
+}))
+
 import { buildUploadForm, PageHostError, type PageHostConfig } from '@/marketing/page-host'
-import { resolveSite } from '@/marketing/site'
+import { resolveSite, siteHashOf } from '@/marketing/site'
 
 const CONFIG: PageHostConfig = {
   accountId: 'acc',
@@ -10,9 +17,44 @@ const CONFIG: PageHostConfig = {
   previewBranchPrefix: 'crum-preview',
 }
 
+const TENANT = '11111111-1111-4111-8111-111111111111'
+const OTHER_TENANT = '22222222-2222-4222-8222-222222222222'
+const BUNDLE = '33333333-3333-4333-8333-333333333333'
+
 const files = resolveSite('physio', [
   { id: 'a1', kind: 'page_html', textContent: '<h1>hi</h1>' },
 ])
+
+const PAYLOAD = { bundleId: BUNDLE, slug: 'physio', siteHash: siteHashOf(files) }
+
+function artifactRow() {
+  return {
+    id: 'a1',
+    role: 'funnel-builder',
+    kind: 'page_html',
+    documentId: null,
+    textContent: '<h1>hi</h1>',
+    status: 'saved',
+    createdAt: '2026-10-31T00:00:00.000Z',
+  }
+}
+
+function stubUpload(): void {
+  vi.stubGlobal('fetch', vi.fn(() =>
+    Promise.resolve(new Response(
+      JSON.stringify({ success: true, result: { id: 'd1', url: 'h1.pages.dev' } }),
+      { status: 200 },
+    )),
+  ))
+}
+
+beforeEach(() => {
+  db.listMarketingArtifacts.mockReset()
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 function formText(form: FormData, name: string): string {
   const value = form.get(name)
@@ -120,5 +162,32 @@ describe('the page adapters', () => {
     // must not be enough to make an action approvable.
     expect(isExecutable('publish_page')).toBe(false)
     expect(isExecutable('promote_page')).toBe(false)
+  })
+
+  it('reads the bundle with the tenant the drainer claimed, not one the payload could name', async () => {
+    stubUpload()
+    db.listMarketingArtifacts.mockResolvedValue([artifactRow()])
+    const { makePublishPageAdapter } = await import('@/marketing/page-host')
+    const deployed = await makePublishPageAdapter(CONFIG).execute(
+      // A payload that somehow carried a tenant is still not the authority: the
+      // claimed action row is. The decoy is what makes a read that prefers the
+      // payload fail this assertion, not just a read that drops the tenant.
+      { action: 'publish_page', payload: { ...PAYLOAD, tenantId: OTHER_TENANT } },
+      { tenantId: TENANT },
+    )
+    expect(db.listMarketingArtifacts).toHaveBeenCalledWith(TENANT, BUNDLE)
+    expect(deployed).toEqual({ externalId: 'd1', url: 'https://h1.pages.dev', fileCount: 1 })
+  })
+
+  it('threads the same tenant through the promote read, because promotion re-uploads the same bundle', async () => {
+    stubUpload()
+    db.listMarketingArtifacts.mockResolvedValue([artifactRow()])
+    const { makePromotePageAdapter } = await import('@/marketing/page-host')
+    const deployed = await makePromotePageAdapter(CONFIG).execute(
+      { action: 'promote_page', payload: PAYLOAD },
+      { tenantId: TENANT },
+    )
+    expect(db.listMarketingArtifacts).toHaveBeenCalledWith(TENANT, BUNDLE)
+    expect(deployed).toEqual({ externalId: 'd1', url: 'https://h1.pages.dev', fileCount: 1 })
   })
 })
