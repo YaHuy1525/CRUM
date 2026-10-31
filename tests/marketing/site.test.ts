@@ -70,6 +70,15 @@ describe('siteHashOf', () => {
     expect(siteHashOf(before)).not.toBe(siteHashOf(after))
   })
 
+  it('moves when the same bytes sit at a different path', () => {
+    const landing = resolveSite('s', [file('a1', 'page_html', '<h1>hi</h1>')])[0]
+    const thanks = resolveSite('s', [file('a2', 'thank_you_html', '<h1>hi</h1>')])[0]
+    if (!landing || !thanks) throw new Error('resolveSite dropped a slot')
+    expect(landing.path).not.toBe(thanks.path)
+    expect(landing.sha256).toBe(thanks.sha256)
+    expect(siteHashOf([landing])).not.toBe(siteHashOf([thanks]))
+  })
+
   it('is 64 hex characters', () => {
     expect(siteHashOf(resolveSite('s', [file('a1', 'page_html', '<h1>hi</h1>')]))).toMatch(/^[0-9a-f]{64}$/)
   })
