@@ -551,3 +551,23 @@ export interface MarketingActionRecord {
   createdAt: string
   executedAt: string | null
 }
+
+// ── Campaign metrics (slice 3) ───────────────────────────────────────────────
+//
+// Shape returned by /api/marketing/campaign-metrics and consumed by the
+// CampaignMetricsDashboard component.
+
+export interface CampaignMetrics {
+  bundleId: string
+  campaignExternalId: string
+  campaignName: string
+  adAccountId: string
+  status: 'ACTIVE' | 'PAUSED'
+  impressions: number
+  clicks: number
+  spend: number
+  leads: number
+  costPerLead: number
+  recommendation: 'scale' | 'hold' | 'kill' | null
+  lastAnalystRun: string | null
+}

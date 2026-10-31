@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import { CampaignMetricsDashboard } from '../components/CampaignMetricsDashboard'
-import type { CampaignMetrics } from '../components/CampaignMetricsDashboard'
+import type { CampaignMetrics } from '../lib/types'
 import { route, stubFetch, type FetchStub, type Reply, type Rule } from './fetchStub'
 
 

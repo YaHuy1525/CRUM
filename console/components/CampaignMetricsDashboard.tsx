@@ -4,24 +4,9 @@ import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 
 import { get, describeError } from '../lib/api'
+import type { CampaignMetrics } from '../lib/types'
 import { PageHeader } from './PageHeader'
 import { Badge } from './ui/badge'
-
-
-export interface CampaignMetrics {
-  bundleId: string
-  campaignExternalId: string
-  campaignName: string
-  adAccountId: string
-  status: 'ACTIVE' | 'PAUSED'
-  impressions: number
-  clicks: number
-  spend: number
-  leads: number
-  costPerLead: number
-  recommendation: 'scale' | 'hold' | 'kill' | null
-  lastAnalystRun: string | null
-}
 
 export interface CampaignMetricsResponse {
   items: CampaignMetrics[]
