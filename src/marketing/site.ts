@@ -1,4 +1,3 @@
-// src/marketing/site.ts
 import { createHash } from 'node:crypto'
 
 /**
