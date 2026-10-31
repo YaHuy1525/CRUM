@@ -2,31 +2,33 @@
 
 **Date:** 2026-10-31
 **Branch:** `feat/marketing-slice-2`
-**Commit:** `025ee9e`
+**Commit:** `aa8788a`
 **Slice 3 range:** `c006b43..afc18dc` (15 commits)
 
 ## Test Results
 
 ### Typecheck
 - Command: `npm run typecheck`
-- Result: **FAIL** — 57 TypeScript errors
+- Result: **PASS** — 0 errors
 
-Errors concentrate in three groups:
+Previously (commit `025ee9e`) this reported 57 TypeScript errors concentrated in three groups:
 
 1. **Source files** — `src/marketing/meta-ads.ts` (12 errors: `unknown` json access, unsafe casts), `src/marketing/metrics-readback.ts` (4 errors: `unknown` json access), `src/db/marketing-metrics.ts` (1 error: possibly undefined row), `src/db/marketing.ts` (1 error: possibly undefined object)
 2. **Test files** — `tests/db/marketing-metrics.test.ts` (18 errors: `call` possibly undefined), `tests/db/marketing-active-campaigns.test.ts` (5 errors: object possibly undefined), `tests/marketing/meta-ads.test.ts` (4 errors: undefined access, missing property, missing config field), `tests/marketing/metrics-readback.test.ts` (5 errors: object possibly undefined)
 
-All errors are strict-null / unknown-type issues introduced by slice 3 code. The runtime behavior is correct (all tests pass), but the typechecker is not satisfied.
+All errors were strict-null / unknown-type issues introduced by slice 3 code. They were resolved in commit `aa8788a` (see [Fixes Applied](#fixes-applied) below).
 
 ### Lint
 - Command: `npm run lint`
-- Result: **FAIL** — 90 errors (0 warnings)
+- Result: **PASS** — 0 errors, 0 warnings
 
-Errors concentrate in:
+Previously (commit `025ee9e`) this reported 90 errors (0 warnings) concentrated in:
 
 1. `@typescript-eslint/no-unsafe-assignment`, `no-unsafe-argument`, `no-unsafe-member-access`, `no-unsafe-return` — throughout new slice 3 source and test files
 2. `@typescript-eslint/require-await` — async `json()` methods in `metrics-readback.test.ts` and `meta-ads.ts` that return literals without `await`
-3. All 90 errors are in files touched by slice 3
+3. All 90 errors were in files touched by slice 3
+
+All errors were resolved in commit `aa8788a` (see [Fixes Applied](#fixes-applied) below).
 
 ### Unit Tests
 
@@ -34,20 +36,20 @@ Errors concentrate in:
 |-------|--------|--------|--------------|-------|
 | Marketing | 158 | 0 | 0 | 10/10 |
 | Governance | 245 | 0 | 1 todo | 10/10 |
-| Mastra | 478 | **4** | 0 | 52/55 |
+| Mastra | 482 | 0 | 0 | 55/55 |
 | DB | 133 | 0 | 0 | 10/10 |
 | API | 260 | 0 | 0 | 20/20 |
 
-**Mastra failures (4):**
+**Mastra (previously 4 failures, now resolved):**
 
-All four are off-by-one tool count assertions. Slice 3 added `marketing.set_campaign_status` as a new governance-surface tool, but the hardcoded counts in these tests were not updated:
+All four were off-by-one tool count assertions. Slice 3 added `marketing.set_campaign_status` as a new governance-surface tool, but the hardcoded counts in these tests were not updated. They were fixed in commit `aa8788a`:
 
-1. `tests/mastra/active-tools.test.ts` — "gives an admin the approval-class writes too" expects 40 tools, got 41
-2. `tests/mastra/active-tools.test.ts` — "leaves no dotted id in the list the agent hands the model" expects 40, got 41
-3. `tests/mastra/agent.test.ts` — "has 39 tools configured" expects 39, got 40
-4. `tests/mastra/processors/write-claim-guard.test.ts` — "MUTATING_TOOL_IDS lists every write tool" expects 14, got 15
+1. `tests/mastra/active-tools.test.ts` — "gives an admin the approval-class writes too" expected 40 tools, got 41 → bumped to 41
+2. `tests/mastra/active-tools.test.ts` — "leaves no dotted id in the list the agent hands the model" expected 40, got 41 → bumped to 41
+3. `tests/mastra/agent.test.ts` — "has 39 tools configured" expected 39, got 40 → bumped to 40
+4. `tests/mastra/processors/write-claim-guard.test.ts` — "MUTATING_TOOL_IDS lists every write tool" expected 14, got 15 → bumped to 15, added `marketing.set_campaign_status` to `MUTATING_TOOL_IDS`
 
-**Fix:** Bump each expected count by 1 and add `marketing.set_campaign_status` to the `MUTATING_TOOL_IDS` list.
+All 55 Mastra test files now pass (20/20 in the suites that were previously failing).
 
 ### Console Tests
 - Command: `cd console && npm test`
@@ -68,26 +70,61 @@ The 13 skipped files require `CRUM_INTEGRATION_DATABASE_URL` (a live Postgres co
 
 ### New failures introduced by slice 3
 
-| Gate | Slice 2 | Slice 3 | Delta |
-|------|---------|---------|-------|
-| Typecheck | PASS (0 errors) | **FAIL (57 errors)** | +57 errors in new files |
-| Lint | PASS (0 errors) | **FAIL (90 errors)** | +90 errors in new files |
-| Marketing tests | 95/95 | 158/158 | +63 new tests, all pass |
-| Governance tests | 157/157 + 1 todo | 245/245 + 1 todo | +88 new tests, all pass |
-| Mastra tests | 88/88 | 478/482 | **+4 failures** (stale counts) |
-| DB tests | 21/21 | 133/133 | +112 new tests, all pass |
-| API tests | 57/57 | 260/260 | +203 new tests, all pass |
-| Console tests | 37/37 | 205/205 | +168 new tests, all pass |
-| Integration tests | 28/28 | 35/35 (+55 skip) | +7 pass, 55 skip (no DB) |
+| Gate | Slice 2 | Slice 3 (initial) | Slice 3 (after aa8788a) | Delta |
+|------|---------|---------|---------|-------|
+| Typecheck | PASS (0 errors) | FAIL (57 errors) | **PASS (0 errors)** | resolved |
+| Lint | PASS (0 errors) | FAIL (90 errors) | **PASS (0 errors)** | resolved |
+| Marketing tests | 95/95 | 158/158 | 158/158 | +63 new tests, all pass |
+| Governance tests | 157/157 + 1 todo | 245/245 + 1 todo | 245/245 + 1 todo | +88 new tests, all pass |
+| Mastra tests | 88/88 | 478/482 | **482/482** | resolved (stale counts fixed) |
+| DB tests | 21/21 | 133/133 | 133/133 | +112 new tests, all pass |
+| API tests | 57/57 | 260/260 | 260/260 | +203 new tests, all pass |
+| Console tests | 37/37 | 205/205 | 205/205 | +168 new tests, all pass |
+| Integration tests | 28/28 | 35/35 (+55 skip) | 35/35 (+55 skip) | +7 pass, 55 skip (no DB) |
 
 ### Regressions
 
-- **Mastra tool counts:** The 4 Mastra failures are regressions caused by stale hardcoded counts. The underlying functionality works; only the test assertions need updating.
-- **Typecheck and lint:** These were clean in slice 2. The 57 typecheck errors and 90 lint errors are all in new slice 3 code (strict-null checks on `unknown` JSON responses, possibly-undefined array/object access). No existing file was broken.
+- **Mastra tool counts (resolved):** The 4 Mastra failures were regressions caused by stale hardcoded counts. Fixed in commit `aa8788a` by bumping expected counts and adding `marketing.set_campaign_status` to `MUTATING_TOOL_IDS`.
+- **Typecheck and lint (resolved):** These were clean in slice 2. The 57 typecheck errors and 90 lint errors were all in new slice 3 code (strict-null checks on `unknown` JSON responses, possibly-undefined array/object access). Fixed in commit `aa8788a` — see [Fixes Applied](#fixes-applied) below. No existing file was broken.
 
 ### Test volume growth
 
-Slice 3 added approximately **839 new passing tests** (from 455 to 1294 across unit suites), a 2.8x increase. Every new test passes at runtime.
+Slice 3 added approximately **839 new passing tests** (from 455 to 1294 across unit suites), a 2.8x increase. Every new test passes at runtime. After commit `aa8788a`, all 1294 tests pass (previously 1290 passed, 4 failed).
+
+## Fixes Applied
+
+Commit `aa8788a` resolved all typecheck, lint, and Mastra test failures. The fixes were mechanical — no design changes, no runtime behavior changes.
+
+### Typecheck fixes (57 errors → 0)
+
+1. **`unknown` JSON access** — Added type assertions (`as { ... }`) after `response.json()` calls in `src/marketing/meta-ads.ts` and `src/marketing/metrics-readback.ts`, and in corresponding test files. The JSON shape is controlled by our own adapters, so the assertion is safe.
+2. **Possibly undefined array/object access** — Added non-null assertions (`!`) or explicit undefined checks for `rows[0]` in `src/db/marketing-metrics.ts` and `src/db/marketing.ts`, and for `call` / object access in test files. In production code, the queries always return a row (guarded by earlier logic); in tests, the mock setup guarantees the value is present.
+3. **Missing test config field** — Added the missing `pixelId` field to the test config fixture in `tests/marketing/meta-ads.test.ts`.
+
+### Lint fixes (90 errors → 0)
+
+1. **`no-unsafe-assignment` / `no-unsafe-argument` / `no-unsafe-member-access` / `no-unsafe-return`** — Resolved by the same type assertions added for typecheck. Where a type assertion was not appropriate, added explicit `unknown` → typed narrowing via a helper function.
+2. **`require-await`** — Removed `async` keyword from `json()` methods in `metrics-readback.test.ts` and `meta-ads.ts` that returned literals without `await`. These methods never needed to be async.
+
+### Mastra test fixes (4 failures → 0)
+
+1. Bumped expected tool count from 39 → 40 in `tests/mastra/agent.test.ts`.
+2. Bumped expected tool count from 40 → 41 in `tests/mastra/active-tools.test.ts` (two assertions).
+3. Bumped expected `MUTATING_TOOL_IDS` count from 14 → 15 and added `marketing.set_campaign_status` to the list in `tests/mastra/processors/write-claim-guard.test.ts`.
+
+### Files changed in aa8788a
+
+- `src/marketing/meta-ads.ts`
+- `src/marketing/metrics-readback.ts`
+- `src/db/marketing-metrics.ts`
+- `src/db/marketing.ts`
+- `tests/marketing/meta-ads.test.ts`
+- `tests/marketing/metrics-readback.test.ts`
+- `tests/db/marketing-metrics.test.ts`
+- `tests/db/marketing-active-campaigns.test.ts`
+- `tests/mastra/active-tools.test.ts`
+- `tests/mastra/agent.test.ts`
+- `tests/mastra/processors/write-claim-guard.test.ts`
 
 ## Hand-offs
 
@@ -134,27 +171,25 @@ The following env vars need to be set for slice 3 to function:
 | `4a92dd4` | feat(console): add campaign metrics dashboard component |
 | `148004a` | feat(console): add campaigns route page |
 | `afc18dc` | feat(console): move CampaignMetrics type to shared types module |
+| `aa8788a` | fix(marketing): resolve typecheck/lint errors and fix stale Mastra tool counts |
 
 ## Summary
 
 **What was verified:**
-- 1294 unit tests across 5 suites (marketing, governance, mastra, db, api) — 1290 pass, 4 fail
+- 1294 unit tests across 5 suites (marketing, governance, mastra, db, api) — all 1294 pass
 - 205 console tests — all pass
 - 35 integration tests (non-DB) — all pass, 55 skipped (no Postgres)
+- Typecheck: PASS (0 errors)
+- Lint: PASS (0 errors, 0 warnings)
 
-**What failed:**
-- Typecheck: 57 errors (strict-null and unknown-type issues in new slice 3 code)
-- Lint: 90 errors (unsafe assignments, require-await in new slice 3 code)
-- Mastra: 4 failures (stale tool count assertions, not functional regressions)
+**What was fixed in aa8788a:**
+- 57 typecheck errors resolved (type assertions for `unknown` JSON, non-null checks for array/object access)
+- 90 lint errors resolved (same type assertions, removed unnecessary `async` keywords)
+- 4 Mastra test failures resolved (bumped stale tool counts, added `marketing.set_campaign_status` to `MUTATING_TOOL_IDS`)
 
 **What was not verified:**
 - Manual walkthrough against real Meta Ads API (no credentials)
 - Integration tests requiring `CRUM_INTEGRATION_DATABASE_URL` (no Postgres)
 - `npm run verify` paid suite (spends credit, owner decision required)
 
-**Required fixes before merge:**
-1. Fix 57 typecheck errors — add null checks and type assertions for `unknown` JSON responses
-2. Fix 90 lint errors — add `await` to async methods, type unsafe assignments
-3. Fix 4 Mastra test failures — bump tool counts from 39→40, 40→41, 14→15 and add `marketing.set_campaign_status` to `MUTATING_TOOL_IDS`
-
-**Slice 3 is NOT shippable** in its current state. The runtime behavior is correct (all functional tests pass), but the typecheck and lint gates are red, and 4 Mastra tests have stale assertions. These are mechanical fixes, not design issues.
+**Slice 3 is shippable pending manual walkthrough.** All automated gates pass (typecheck, lint, unit tests, console tests, non-DB integration tests). The manual walkthrough requires live Meta Ads API credentials and a Meta pixel ID — see [Manual Walkthrough Procedure](#manual-walkthrough-procedure) above.
