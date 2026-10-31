@@ -39,7 +39,7 @@ export interface MarketingActionAdapter {
    * the provider never received is the exact failure the outbox exists to make
    * impossible (spec section 5).
    */
-  execute: (action: DerivedAction) => Promise<{ externalId: string }>
+  execute: (action: DerivedAction) => Promise<{ externalId: string; url?: string; fileCount?: number }>
 }
 
 /**
