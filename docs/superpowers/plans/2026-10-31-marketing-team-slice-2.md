@@ -553,7 +553,7 @@ git commit -m "feat(marketing): give a bundle a slot registry and a hash of its 
 - Test: `tests/marketing/outbox.test.ts` (modify), `tests/db/marketing-commit.test.ts` (modify), `tests/governance/marketing-payload.test.ts` (modify: six `stagePayload(...)` literals and one key-set assertion)
 
 **Interfaces:**
-- Consumes: `resolveSite`, `siteHashOf`, `slotProblem`, `SiteArtifact` from Task 3.
+- Consumes: `resolveSite`, `siteHashOf`, `slotProblem`, `slugProblem`, `SLUG_PATTERN`, `SlugProblemError` and `SiteArtifact` from Task 3.
 - Produces:
   - `deriveActions(bundle: Pick<MarketingBundleRow, 'id' | 'funnelPlan' | 'mediaPlan'>, artifacts: readonly SiteArtifact[]): DerivedAction[]`
   - `pageSlugOf(bundle: Pick<MarketingBundleRow, 'funnelPlan'>): string | null`
@@ -567,6 +567,7 @@ git commit -m "feat(marketing): give a bundle a slot registry and a hash of its 
 ```ts
 // tests/marketing/outbox.test.ts, appended
 import { deriveActions, pageSlugOf, slotProblemCheck } from '@/marketing/outbox'
+import { SlugProblemError } from '@/marketing/site'
 
 const pageArtifact = (text: string) => ({ id: 'a1', kind: 'page_html', textContent: text })
 const bundleWithPage = { id: 'b1', funnelPlan: { page: { slug: 'physio' } }, mediaPlan: null }
@@ -586,6 +587,18 @@ describe('slice 2 derivation', () => {
     const a = deriveActions(bundleWithPage, [pageArtifact('<h1>hi</h1>')])[0]
     const b = deriveActions(bundleWithPage, [pageArtifact('<h1>hi</h1>')])[0]
     expect(a?.payload.siteHash).toBe(b?.payload.siteHash)
+  })
+
+  it('refuses to derive a page from a slug the site cannot publish', () => {
+    // The slug is a phrase an agent wrote. Task 3 decides what a publishable one
+    // looks like; this asserts the decision reaches derivation rather than being
+    // quoted in a comment.
+    expect(() =>
+      deriveActions(
+        { ...bundleWithPage, funnelPlan: { page: { slug: 'Free Quote' } } },
+        [pageArtifact('<h1>hi</h1>')],
+      ),
+    ).toThrow(SlugProblemError)
   })
 
   it('reports the slug it will publish', () => {
@@ -720,6 +733,10 @@ export const DERIVED_ACTION_NAMES: readonly MarketingActionName[] = ['publish_pa
     )
   }
 
+  // A bundle with an unusable slug should never reach here, because the stage tool
+  // refuses it. If one does — an older row, or a plan edited after staging — this
+  // call throws SlugProblemError and the approval fails closed, which is the right
+  // failure: no receipt over a page whose path nobody can publish.
   const actions = deriveActions(
     { id: row.id, funnelPlan: row.funnel_plan, mediaPlan: row.media_plan },
     artifacts,
@@ -803,21 +820,29 @@ And the stage tool supplies both halves. The whole block replaces `marketing-wri
       // file because a count you cannot name the rows behind is the number this
       // slice stops trusting.
       const artifacts = await listMarketingArtifacts(rc.tenantId, bundle.id)
-      const actions = deriveActions(bundle, artifacts)
+      const slugIssue = slugProblem(pageSlugOf(bundle))
+      // Nothing is derived for a bundle whose page cannot be placed. deriveActions
+      // calls resolveSite, which throws SlugProblemError on such a slug, and a throw
+      // inside an agent turn is not a refusal a human can act on — the queue entry
+      // below is.
+      const actions = slugIssue === null ? deriveActions(bundle, artifacts) : []
       const blocked = blockedActions(actions)
       const slotIssue = slotProblemCheck(artifacts)
       // The arms stay in this order because each is a cheaper question than the
       // next, and the existing comment at :322-325 still argues the first and last:
-      // an unread plan cannot be counted, an ambiguous slot cannot be hashed, and
-      // a name with no adapter is a build question, not a bundle question.
+      // an unread plan cannot be counted, an unnameable page cannot be placed, an
+      // ambiguous slot cannot be hashed, and a name with no adapter is a build
+      // question, not a bundle question.
       const refusal =
         unread.length > 0
           ? `unreadable ${unread.join(' and ')}`
-          : slotIssue !== null
-            ? `ambiguous page slot: ${slotIssue}`
-            : blocked.length > 0
-              ? `no adapter for ${blocked.join(', ')}`
-              : null
+          : slugIssue !== null
+            ? `unusable page slug: ${slugIssue}`
+            : slotIssue !== null
+              ? `ambiguous page slot: ${slotIssue}`
+              : blocked.length > 0
+                ? `no adapter for ${blocked.join(', ')}`
+                : null
 ```
 
 `deriveActions` and `blockedActions` must sit above the refusal, not beside it: `blocked` is the third arm of the ternary, so a block that reads the artifacts, derives, and *then* refuses is the only arrangement where all three arms have their inputs. The payload block below replaces `:360-370` and drops the `countMarketingArtifacts` line it contains:
