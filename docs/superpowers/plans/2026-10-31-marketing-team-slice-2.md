@@ -52,7 +52,7 @@ Tests that need migrations applied call `migrate` from `scripts/db-migrate.ts` i
 | Site | `src/marketing/site.ts` (new) | slot registry, path constants, per-file sha256, `siteHashOf`, `slotProblem` |
 | Outbox | `src/marketing/outbox.ts` (modify) | artifact-aware derivation, `HUMAN_INITIATED_ACTION_NAMES`, re-check under lock |
 | Tokens | `src/marketing/lead-token.ts` (new) | mint, stamp, refuse on zero or two placeholders |
-| Payloads | `src/marketing/payload.ts` (modify) | `siteHash` added to the stage view, `promotePayload`, `retryPayload` |
+| Payloads | `src/marketing/payload.ts` (modify) | `siteHash` added to the stage view in Task 4, `promotePayload` and `retryPayload` added in Task 6 |
 | Host | `src/marketing/page-host.ts` (new) | manifest form builder, Cloudflare upload, two adapters, `PageHostError` |
 | Data | `src/db/marketing.ts` (modify) | `lead_token` on the row, artifact read that a transaction client can use, `markBundleLive` |
 | Data | `src/db/marketing-leads.ts` (new) | one tenant-scoped insert that writes lead, prospect, channel and consent |
@@ -547,8 +547,10 @@ git commit -m "feat(marketing): give a bundle a slot registry and a hash of its 
 
 **Files:**
 - Modify: `src/marketing/outbox.ts:5-13` (action names, `HUMAN_INITIATED_ACTION_NAMES`), `:70-83` (`deriveActions`), `:93-99`, `:160-207` (`commitBundleApproval`)
-- Modify: `src/mastra/tools/marketing-writes.ts:316-370` (stage reads artifacts, refuses on slot problem)
-- Test: `tests/marketing/outbox.test.ts` (modify), `tests/db/marketing-commit.test.ts` (modify)
+- Modify: `src/marketing/payload.ts:25-43` (`StagePayload` gains `siteHash`; `stagePayload` passes it through)
+- Modify: `src/db/pending-writes.ts` (the `marketing_stage` branch hands `expectedSiteHash` to the commit)
+- Modify: `src/mastra/tools/marketing-writes.ts:326-334` (stage reads artifacts, refuses on a slot problem), `:360-370` and `:419` (payload and message), `:12` (import), `:251-266` and `:268-281` (the two placeholder hooks)
+- Test: `tests/marketing/outbox.test.ts` (modify), `tests/db/marketing-commit.test.ts` (modify), `tests/governance/marketing-payload.test.ts` (modify: six `stagePayload(...)` literals and one key-set assertion)
 
 **Interfaces:**
 - Consumes: `resolveSite`, `siteHashOf`, `slotProblem`, `SiteArtifact` from Task 3.
@@ -558,6 +560,7 @@ git commit -m "feat(marketing): give a bundle a slot registry and a hash of its 
   - `HUMAN_INITIATED_ACTION_NAMES: readonly MarketingActionName[]`
   - `commitBundleApproval(client, params: { tenantId, bundleId, receiptId, expectedSiteHash: string | null })`
   - publish payload `{ bundleId: string, slug: string, siteHash: string }`
+  - `StagePayload` gains `siteHash: string | null` — in **this** task, not Task 6, because this is the task that first builds a stage payload carrying it. Deferring the field to Task 6 would leave `npm run typecheck` red for two tasks.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -740,6 +743,42 @@ interface ArtifactSqlRow {
 }
 ```
 
+None of the above compiles yet: the staged payload has no `siteHash` field to read, and it is this task that first builds a stage payload carrying one, so the field lands here rather than in Task 6. Task 6 adds the two *new* decision payloads and touches `StagePayload` not at all. `src/marketing/payload.ts` changes in both halves, the type and the builder:
+
+```ts
+// src/marketing/payload.ts, replacing the StagePayload interface at :25-32
+export interface StagePayload {
+  bundleId: string
+  draftHash: string
+  objective: string
+  artifactCount: number
+  requestedCeilingMinor: number
+  actionCount: number
+  // null when the bundle carries no page. A number where a hash belongs would
+  // let a stage pass while describing nothing to re-derive at approval.
+  siteHash: string | null
+}
+```
+
+```ts
+// src/marketing/payload.ts, the last key of the object stagePayload returns (:41)
+    actionCount: input.actionCount,
+    siteHash: input.siteHash,
+```
+
+The field is required, not optional, and that is the point: an optional field is a field a caller can forget, and forgetting it here means staging a bundle whose approval has nothing to re-derive against. So every existing caller must state it, and the two in `marketing-writes.ts` above the `execute` body have nothing honest to state:
+
+```ts
+// src/mastra/tools/marketing-writes.ts:254 (requireApproval) and :271
+// (beforeApproval). Both score a placeholder view, and the comment at :242-250
+// already says why: neither hook can know the draft hash, the objective or the
+// counts without a database read. A hash of the stored bytes needs that read
+// more than anything else does, so null is the only true value here, and it
+// sits beside the placeholder '' and 0 it is already paired with.
+        actionCount: 0,
+        siteHash: null,
+```
+
 `marketing_stage`'s staged payload now carries `siteHash`, so the `applyDraft` branch that calls this must pass it:
 
 ```ts
@@ -754,12 +793,23 @@ interface ArtifactSqlRow {
       })
 ```
 
-And the stage tool supplies both halves:
+And the stage tool supplies both halves. The whole block replaces `marketing-writes.ts:326-334` (the derivation and the refusal chain) and `:360-370` (the count and the payload), in this order and for this reason:
 
 ```ts
-// src/mastra/tools/marketing-writes.ts, in stageBundleTool.execute after the unread check
+// src/mastra/tools/marketing-writes.ts, replacing :326-334
+      const unread = unreadPlanColumns(bundle)
+      // One read, three uses: the slot check, the hash, and the artifact count the
+      // payload and the message report. `countMarketingArtifacts` is gone from this
+      // file because a count you cannot name the rows behind is the number this
+      // slice stops trusting.
       const artifacts = await listMarketingArtifacts(rc.tenantId, bundle.id)
+      const actions = deriveActions(bundle, artifacts)
+      const blocked = blockedActions(actions)
       const slotIssue = slotProblemCheck(artifacts)
+      // The arms stay in this order because each is a cheaper question than the
+      // next, and the existing comment at :322-325 still argues the first and last:
+      // an unread plan cannot be counted, an ambiguous slot cannot be hashed, and
+      // a name with no adapter is a build question, not a bundle question.
       const refusal =
         unread.length > 0
           ? `unreadable ${unread.join(' and ')}`
@@ -770,13 +820,15 @@ And the stage tool supplies both halves:
               : null
 ```
 
+`deriveActions` and `blockedActions` must sit above the refusal, not beside it: `blocked` is the third arm of the ternary, so a block that reads the artifacts, derives, and *then* refuses is the only arrangement where all three arms have their inputs. The payload block below replaces `:360-370` and drops the `countMarketingArtifacts` line it contains:
+
 ```ts
-// the actions call and the payload, both now artifact-aware
-      const actions = deriveActions(bundle, artifacts)
-      const blocked = blockedActions(actions)
+// src/mastra/tools/marketing-writes.ts, replacing :360-370
       const publish = actions.find((a) => a.action === 'publish_page')
       const payload = stagePayload({
         bundleId: bundle.id,
+        // Recomputed from the stored row, never handed back by the caller: jsonb
+        // normalisation means the row is the only version that stays stable.
         draftHash: hashOf(bundle),
         objective: bundle.objective,
         artifactCount: artifacts.length,
@@ -786,7 +838,11 @@ And the stage tool supplies both halves:
       })
 ```
 
-Note the ordering consequence the existing comment at `marketing-writes.ts:322-325` already argues: the unread check stays first, the slot check goes second, and the adapter check stays last, because an unread plan cannot be counted and an ambiguous slot cannot be hashed.
+Three consequences of deleting that `const artifactCount`, each of which `npm run lint` would otherwise fail on:
+
+- `:12` loses `countMarketingArtifacts` from the import list and gains `listMarketingArtifacts` (`src/db/marketing.ts:128`). `countMarketingArtifacts` itself stays exported in the db module with its own test at `tests/db/marketing.test.ts:195-207`; removing a module API is not this slice's change, and an unused export is not a lint error.
+- `:419`, the returned message, reads `${numOf('artifactCount', artifactCount)}` and must become `${numOf('artifactCount', artifacts.length)}`. The `numOf` fallback still matters: `getOrCreateDraft`'s `ON CONFLICT` is a no-op on the payload, so a re-stage keeps the first stage's numbers.
+- `artifactCount` is the value the reviewer is told, and it is now the length of the same rows the hash was taken over, so the number and the bytes cannot disagree.
 
 - [ ] **Step 5: Add the commit-path test, then make everything pass**
 
@@ -808,16 +864,79 @@ it('refuses to approve when the bytes moved after staging', async () => {
 })
 ```
 
-Run: `npx vitest run tests/marketing/outbox.test.ts tests/db/marketing-commit.test.ts tests/mastra/marketing-write-tools.test.ts`
+The required field reaches into the hygiene suite that slice 1 left green. `tests/governance/marketing-payload.test.ts` builds six `stagePayload(...)` literals, at `:42`, `:57`, `:65`, `:107`, `:132` and `:205`, and asserts the key set of the result at `:140-147`. Give each literal a `siteHash` and give the assertion its seventh key:
+
+```ts
+// tests/governance/marketing-payload.test.ts — every literal above gains one key,
+// and the five that already pass draftHash: HASH pass siteHash: HASH.
+        actionCount: 1,
+        siteHash: HASH,
+
+// :205, the zero-count case, is the one that passes null, so the null branch of
+// the type is swept by the loop at :81 as well as compiled by the interface.
+        actionCount: 0,
+        siteHash: null,
+
+// :140, the declared key set.
+    expect(Object.keys(payload).sort()).toEqual([
+      'actionCount',
+      'artifactCount',
+      'bundleId',
+      'draftHash',
+      'objective',
+      'requestedCeilingMinor',
+      'siteHash',
+    ])
+```
+
+The "no string value contains a space" loop at `:156` needs no edit: `null` is not a string, so the new field skips itself there, and a hash-shaped `HASH` was already in the loop through `draftHash`.
+
+Two more declared-key-set assertions exist elsewhere and both go red the moment the field is required; they are part of this task, not a later one:
+
+```ts
+// tests/mastra/marketing-write-tools.test.ts:395-402, "stages exactly the
+// identifier payload and nothing else". Its stub also stops answering
+// 'SELECT count(*) AS count FROM marketing_artifacts' (:387) once the tool reads
+// rows instead of a count, so that handler becomes the artifact list the tool now
+// selects — an empty list here is what makes siteHash null and keeps this case
+// about the key set rather than about hashing.
+    expect(Object.keys(stagedInsert()).sort()).toEqual([
+      'actionCount',
+      'artifactCount',
+      'bundleId',
+      'draftHash',
+      'objective',
+      'requestedCeilingMinor',
+      'siteHash',
+    ])
+
+// tests/integration/marketing-bundle.test.ts:134-141, the same assertion against
+// a stored draft row. The bundle staged there carries one artifact and no page
+// slug, so the expected value of draft.payload.siteHash is null.
+    expect(Object.keys(draft?.payload as Record<string, unknown>).sort()).toEqual([
+      'actionCount',
+      'artifactCount',
+      'bundleId',
+      'draftHash',
+      'objective',
+      'requestedCeilingMinor',
+      'siteHash',
+    ])
+```
+
+Run: `npx vitest run tests/marketing/outbox.test.ts tests/db/marketing-commit.test.ts tests/mastra/marketing-write-tools.test.ts tests/governance/marketing-payload.test.ts`
 Expected: PASS. `marketing-write-tools.test.ts` calls `deriveActions` through the tool, so its fixtures gain an artifacts array; that edit is part of this task, not a later one.
 
+Run: `npx vitest run --project integration tests/integration/marketing-bundle.test.ts`
+Expected: PASS against the throwaway Postgres. Use explicit file paths, never a bare project run: an unfiltered run spends paid live-model credit on other suites.
+
 Run: `npm run typecheck`
-Expected: exit 0, including every older `deriveActions` caller the compiler now flags.
+Expected: exit 0, including every older `deriveActions` caller and every `stagePayload` caller the compiler now flags.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/marketing/outbox.ts src/db/pending-writes.ts src/mastra/tools/marketing-writes.ts tests/marketing/outbox.test.ts tests/db/marketing-commit.test.ts tests/mastra/marketing-write-tools.test.ts
+git add src/marketing/outbox.ts src/marketing/payload.ts src/db/pending-writes.ts src/mastra/tools/marketing-writes.ts tests/marketing/outbox.test.ts tests/db/marketing-commit.test.ts tests/mastra/marketing-write-tools.test.ts tests/governance/marketing-payload.test.ts tests/integration/marketing-bundle.test.ts
 git commit -m "feat(marketing): derive publishing from the stored bytes and re-check them at approval"
 ```
 
@@ -1044,7 +1163,7 @@ git commit -m "feat(marketing): mint and stamp a bundle's lead credential before
 ### Task 6: The two new decision payloads, and the sweep that proves they carry no prose
 
 **Files:**
-- Modify: `src/marketing/payload.ts`
+- Modify: `src/marketing/payload.ts` (append the two new builders; `StagePayload.siteHash` already landed in Task 4)
 - Modify: `policy/tools.yaml:248-256` (two entries appended to the approval section, section count comment)
 - Modify: `tests/governance/conformance.test.ts:13-51` (`SPEC_TOOL_SURFACE`), `tests/governance/policy.test.ts:55-70` (counts), `tests/mastra/active-tools.test.ts` (marketing prefix assertion)
 - Modify: `docs/TECHNICAL_PLAN.md` section 4.6.2 table
@@ -1052,17 +1171,17 @@ git commit -m "feat(marketing): mint and stamp a bundle's lead credential before
 - Test: `tests/governance/marketing-payload.test.ts` (append)
 
 **Interfaces:**
-- Consumes: nothing.
+- Consumes: nothing. `StagePayload` already carries `siteHash` from Task 4, and this task must not redefine it — a second declaration in the same file is a duplicate identifier, not a widening.
 - Produces:
   - `interface PromotePayload { bundleId: string; pageActionId: string; siteHash: string }`, `promotePayload(input: PromotePayload): PromotePayload`
   - `interface RetryPayload { actionId: string; siteHash: string }`, `retryPayload(input: RetryPayload): RetryPayload`
-  - `StagePayload` gains `siteHash: string | null`
 
 - [ ] **Step 1: Write the failing sweep extension**
 
 ```ts
-// tests/governance/marketing-payload.test.ts, appended inside the existing
-// describe that loops over `payloads`
+// tests/governance/marketing-payload.test.ts, appended as three it(...) blocks
+// inside the existing describe('the marketing payload rule') block, with
+// promotePayload and retryPayload added to the import at :5.
 const promote = promotePayload({
   bundleId: BUNDLE,
   pageActionId: '44444444-4444-4444-8444-444444444444',
@@ -1078,15 +1197,6 @@ it('keeps the two new decision payloads free of any scored term', () => {
 it('declares exactly the keys each decision is allowed to carry', () => {
   expect(Object.keys(promote).sort()).toEqual(['bundleId', 'pageActionId', 'siteHash'])
   expect(Object.keys(retry).sort()).toEqual(['actionId', 'siteHash'])
-  expect(Object.keys(stagePayload({ ...STAGE_BASE, siteHash: HASH })).sort()).toEqual([
-    'actionCount',
-    'artifactCount',
-    'bundleId',
-    'draftHash',
-    'objective',
-    'requestedCeilingMinor',
-    'siteHash',
-  ])
 })
 
 // The rule this slice nearly broke, stated as a test: a reviewer-facing URL is
@@ -1098,7 +1208,7 @@ it('would catch a previewUrl if one were ever added', () => {
 })
 ```
 
-`STAGE_BASE` is the object the existing file already builds for `stagePayload`; reuse it rather than inventing a second fixture, and update its literal to include `siteHash: HASH` in the same edit so the file's two existing `stagePayload(...)` calls keep compiling.
+The consts go at the bottom of the `describe` body, above their `it` blocks, or at module scope beside `BUNDLE` and `HASH` — either compiles; do not add a second `stagePayload` fixture, since Task 4 already put `siteHash` into the six literals this file builds and the key-set assertion at `:140` already lists it.
 
 - [ ] **Step 2: Run it to make sure it fails**
 
@@ -1108,19 +1218,9 @@ Expected: FAIL, `promotePayload` is not exported from `@/marketing/payload`.
 - [ ] **Step 3: Write the payload builders**
 
 ```ts
-// src/marketing/payload.ts, appended
-export interface StagePayload {
-  bundleId: string
-  draftHash: string
-  objective: string
-  artifactCount: number
-  requestedCeilingMinor: number
-  actionCount: number
-  // null when the bundle carries no page. A number where a hash belongs would
-  // let a stage pass while describing nothing to re-derive at approval.
-  siteHash: string | null
-}
-
+// src/marketing/payload.ts, appended below the existing builders. StagePayload is
+// not touched here: Task 4 gave it siteHash, and redeclaring it in this file would
+// be a duplicate identifier rather than a widening.
 export interface PromotePayload {
   bundleId: string
   pageActionId: string
@@ -1145,8 +1245,6 @@ export function retryPayload(input: RetryPayload): RetryPayload {
   return { actionId: input.actionId, siteHash: input.siteHash }
 }
 ```
-
-Update `stagePayload`'s body to pass `siteHash: input.siteHash`.
 
 - [ ] **Step 4: Declare the two tools and move every count with them, in this one commit**
 
@@ -3871,8 +3969,8 @@ Then use superpowers:finishing-a-development-branch: the merge decision is the o
 ## Self-review record
 
 Checked against the spec with fresh eyes, and against the repository for every
-signature this plan asks someone to call. Six defects were found and fixed in
-place; they are listed because an executor will otherwise re-introduce them.
+signature this plan asks someone to call. The defects below were found and fixed
+in place; they are listed because an executor will otherwise re-introduce them.
 
 1. **Coverage.** Spec section 2 is Tasks 1 and 7. Section 3.1 is Tasks 2 and 3. Section 3.2 is Task 2's `result` column and Task 9's `recordSuccess`. Section 3.3 is Task 5. Section 3.4 is Task 2. Section 4 is Task 4. Section 5's three approvals are Tasks 4, 10 and 11, declared in Task 6. Section 6 is Tasks 7, 8 and 9. Section 7 is Tasks 5 and 14. Section 8.1 is Tasks 12 and 13, 8.2 is Task 15, 8.3 is Task 16. Section 9 is Task 8 plus Task 17's hand-off. Section 10's table has a test in Tasks 4, 9, 10, 11, 14, 15 and 16. Section 11's layers are Tasks 3, 5, 6, 9, 14, 15, 16 and 17. Section 12's file list matches the File structure table row for row.
 2. **Fixed: three ellipses that were asking the executor to invent test bodies.** Task 9 Step 5's failure path, Task 13 Step 1's second and third cases, and Task 15 Step 1's `describe.skipIf` harness are now written out in full. A comment that says "same shape, two fields changed" is a plan failure wearing a note.
@@ -3881,4 +3979,6 @@ place; they are listed because an executor will otherwise re-introduce them.
 5. **Fixed: `stagePromotion` was defined without `userRole` and called with it.** Task 10's signature, its Interfaces block, its two test calls and the `'admin'` literal inside `gateFor` now thread the real role, which is what Task 11's `stageRetry` and Task 12's route already assumed. The stale note that told the reviewer to fix it later is gone.
 6. **Fixed: `currentSiteHash` appeared twice in Task 10, once calling a function that does not exist.** The broken copy is deleted rather than corrected in place, because a plan that shows wrong code first gets the wrong code written.
 7. **Types.** `SiteFile`, `SiteArtifact`, `slotProblem`, `resolveSite` and `siteHashOf` are defined in Task 3 and used with those exact names in Tasks 4, 7, 9, 10, 12 and 13. `pageSlugOf` and `slotProblemCheck` come from Task 4. `markBundleLive` is produced by Task 9 and consumed only there. `listPublishSucceeded` and `currentSiteHash` are produced by Task 10, `getFailedAction` by Task 11, `listMarketingActions` by Task 12. `actionAdapter` and `registerActionAdapter` are Task 9's and Task 4's. `MarketingActionRecord.actions` is produced by Task 12's GET and consumed by Task 13's fixture.
-8. **Known sharp edges.** `src/db/marketing.ts` importing `pageSlugOf` from `src/marketing/outbox.ts`, which imports `MarketingBundleRow` from `src/db/marketing.ts`, is a cycle. It is legal because both sides are type-only or lazily called, and it must be checked by `npm run typecheck` in Task 10 Step 5; if the bundler objects, move `pageSlugOf` into `src/marketing/site.ts` and update Tasks 4, 9 and 10 together rather than leaving half a cycle behind. Task 1's spike is the other: it can invalidate Task 7's adapter shape, and the plan says to stop rather than code through a failed spike.
+8. **Fixed: `StagePayload.siteHash` was declared in Task 6 and consumed in Task 4.** The field now belongs to Task 4, because Task 4 is the task that first builds a stage payload carrying it; a required field declared two tasks late leaves `npm run typecheck` red across the gap. That move pulls in the callers the field makes compile-breaks of: the two placeholder hooks in `marketing-writes.ts` (both `siteHash: null`), the six literals and one key-set assertion in `tests/governance/marketing-payload.test.ts`, and the two further key-set assertions at `tests/mastra/marketing-write-tools.test.ts:395` and `tests/integration/marketing-bundle.test.ts:134`. Task 6 appends the two new builders and says so out loud rather than redeclaring the interface.
+9. **Fixed: Task 4's stage-tool snippets had `blocked` used above where it was defined.** The refusal ternary's third arm reads `blocked`, and the first draft placed `deriveActions` and `blockedActions` in the block *below* it. Task 4 now gives one ordered block for `:326-334`, names the three consequences of deleting `const artifactCount` (the import at `:12`, the message at `:419`, and the count-and-hash agreement that is the point of the change), and keeps `countMarketingArtifacts` exported rather than deleting a db-module API the slice never asked to remove.
+10. **Known sharp edges.** `src/db/marketing.ts` importing `pageSlugOf` from `src/marketing/outbox.ts`, which imports `MarketingBundleRow` from `src/db/marketing.ts`, is a cycle. It is legal because both sides are type-only or lazily called, and it must be checked by `npm run typecheck` in Task 10 Step 5; if the bundler objects, move `pageSlugOf` into `src/marketing/site.ts` and update Tasks 4, 9 and 10 together rather than leaving half a cycle behind. Task 1's spike is the other: it can invalidate Task 7's adapter shape, and the plan says to stop rather than code through a failed spike.
