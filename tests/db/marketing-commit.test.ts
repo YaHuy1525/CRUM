@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PendingWrite } from '../../src/db/pending-writes'
+import { resolveSite, siteHashOf } from '../../src/marketing/site'
 
 const mockQuery = vi.fn()
 const mockClient = { query: mockQuery, release: vi.fn() }
@@ -70,6 +71,31 @@ function calls(fragment: string): Array<{ sql: string; params: unknown[] }> {
     .map((call) => ({ sql: call[0] as string, params: (call[1] ?? []) as unknown[] }))
 }
 
+interface CommitFixture {
+  bundle: Record<string, unknown>
+  artifacts: Record<string, unknown>[]
+}
+
+/**
+ * A client for the commit alone, without the pg pool above: the two reads it
+ * makes before it decides, and an empty answer for the write a refused case must
+ * never reach. The commit's client type is generic over the row shape, so the
+ * fake hands back `T[]` for whichever T the caller asked for; the rows are the
+ * real shapes for the SQL branch they answer.
+ */
+function clientWith(fixture: CommitFixture) {
+  return {
+    query: <T = Record<string, unknown>>(sql: string): Promise<{ rows: T[] }> => {
+      const rows: unknown[] = sql.includes('FROM marketing_bundles')
+        ? [fixture.bundle]
+        : sql.includes('FROM marketing_artifacts')
+          ? fixture.artifacts
+          : []
+      return Promise.resolve({ rows: rows as T[] })
+    },
+  }
+}
+
 // No auditRow helper here: all three tests stub 'INSERT INTO audit_receipts' by
 // SQL fragment, so a full receipt row is never constructed, and an unused helper
 // function is an `@typescript-eslint/no-unused-vars` error (eslint.config.js:47).
@@ -83,7 +109,12 @@ describe('approving a marketing stage draft', () => {
     stubQueries({
       'SELECT receipt_id, rejected_at, committed_at FROM pending_writes': [{ receipt_id: null, rejected_at: null, committed_at: null }],
       'FROM marketing_bundles': [
-        { id: BUNDLE, status: 'staged', objective: 'inbound_leads', funnel_plan: { page: { slug: '/free-scan' } }, media_plan: null },
+        { id: BUNDLE, status: 'staged', objective: 'inbound_leads', funnel_plan: { page: { slug: 'free-scan' } }, media_plan: null },
+      ],
+      // The publish action is derived from the stored bytes now, so the bundle
+      // needs a page artifact as well as a slug to ask for one.
+      'FROM marketing_artifacts': [
+        { id: 'a1', kind: 'page_html', text_content: '<h1>Free scan</h1>' },
       ],
     })
     const { commitWithReceipt, UnsupportedCommitError } = await import('../../src/db/pending-writes')
@@ -104,6 +135,7 @@ describe('approving a marketing stage draft', () => {
       'FROM marketing_bundles': [
         { id: BUNDLE, status: 'staged', objective: 'outreach_support', funnel_plan: null, media_plan: null },
       ],
+      'FROM marketing_artifacts': [],
       "UPDATE marketing_bundles SET status = 'approved'": [{ id: BUNDLE }],
       'INSERT INTO audit_receipts': [{ id: 'receipt-1' }],
       'UPDATE pending_writes SET receipt_id': [],
@@ -141,7 +173,10 @@ describe('approving a marketing stage draft', () => {
       stubQueries({
         'SELECT receipt_id, rejected_at, committed_at FROM pending_writes': [{ receipt_id: null, rejected_at: null, committed_at: null }],
         'FROM marketing_bundles': [
-          { id: BUNDLE, status: 'staged', objective: 'inbound_leads', funnel_plan: { page: { slug: '/free-scan' } }, media_plan: null },
+          { id: BUNDLE, status: 'staged', objective: 'inbound_leads', funnel_plan: { page: { slug: 'free-scan' } }, media_plan: null },
+        ],
+        'FROM marketing_artifacts': [
+          { id: 'a1', kind: 'page_html', text_content: '<h1>Free scan</h1>' },
         ],
         "UPDATE marketing_bundles SET status = 'approved'": [{ id: BUNDLE }],
         'INSERT INTO marketing_actions': [{ id: 'action-1' }],
@@ -158,9 +193,43 @@ describe('approving a marketing stage draft', () => {
       // ['queued', receipt_id] is the tail. The last param is the receipt id the
       // branch hands over, and it must be null: commitWithReceipt signs its
       // receipt only after applyDraft returns, so no real id exists to write.
-      expect(enqueue?.params).toEqual([TENANT, BUNDLE, 'publish_page', JSON.stringify({ slug: '/free-scan' }), null])
+      // The payload is the one the approval re-derived under the lock: the same
+      // hash the stage payload showed for these bytes, computed here from site.ts
+      // rather than pasted, so a commit that enqueued a slug or a constant fails.
+      const expectedPayload = {
+        bundleId: BUNDLE,
+        slug: 'free-scan',
+        siteHash: siteHashOf(
+          resolveSite('free-scan', [{ id: 'a1', kind: 'page_html', textContent: '<h1>Free scan</h1>' }]),
+        ),
+      }
+      expect(enqueue?.params).toEqual([
+        TENANT,
+        BUNDLE,
+        'publish_page',
+        JSON.stringify(expectedPayload),
+        null,
+      ])
     } finally {
       unregister()
     }
+  })
+})
+
+describe('the review-to-commit byte re-check', () => {
+  it('refuses to approve when the bytes moved after staging', async () => {
+    const client = clientWith({
+      bundle: { id: 'b1', status: 'staged', funnel_plan: { page: { slug: 's' } }, media_plan: null },
+      artifacts: [{ id: 'a1', kind: 'page_html', text_content: '<h1>changed</h1>' }],
+    })
+    const { commitBundleApproval } = await import('../../src/marketing/outbox')
+    await expect(
+      commitBundleApproval(client, {
+        tenantId: TENANT,
+        bundleId: 'b1',
+        receiptId: null,
+        expectedSiteHash: '0'.repeat(64),
+      }),
+    ).rejects.toThrow(/no longer hashes/)
   })
 })

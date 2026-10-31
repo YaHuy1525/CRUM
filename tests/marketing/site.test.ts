@@ -5,11 +5,25 @@ import {
   SlotProblemError,
   resolveSite,
   siteHashOf,
+  slugProblem,
   slotProblem,
   type SiteArtifact,
 } from '@/marketing/site'
 
 const file = (id: string, kind: string, text: string): SiteArtifact => ({ id, kind, textContent: text })
+
+describe('slugProblem', () => {
+  it('is null for a bundle with no page and for a publishable slug', () => {
+    expect(slugProblem(null)).toBeNull()
+    expect(slugProblem('physio-melbourne')).toBeNull()
+  })
+
+  it('says which slug it refused and what a slug may look like', () => {
+    const problem = slugProblem('Free Quote')
+    expect(problem).toContain('Free Quote')
+    expect(problem).toContain('63 characters')
+  })
+})
 
 describe('slotProblem', () => {
   it('is null for one landing page', () => {

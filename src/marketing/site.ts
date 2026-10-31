@@ -93,6 +93,18 @@ export function slotProblem(artifacts: readonly SiteArtifact[]): string | null {
 }
 
 /**
+ * The slug question in text for the same reason slotProblem answers in text: the
+ * stage tool wants to refuse and report in a sentence a human can act on, not
+ * throw inside an agent turn. A null slug is an understood plan — a bundle with
+ * no page publishes nothing — so only a present-and-unpublishable slug is a
+ * problem.
+ */
+export function slugProblem(slug: string | null): string | null {
+  if (slug === null || SLUG_PATTERN.test(slug)) return null
+  return new SlugProblemError(slug).message
+}
+
+/**
  * A slug of `physio-melbourne` publishes `physio-melbourne/index.html`, and the
  * thank-you page sits under it, so one bundle owns one path prefix and cannot
  * reach another bundle's page. The slug is checked first because every path and

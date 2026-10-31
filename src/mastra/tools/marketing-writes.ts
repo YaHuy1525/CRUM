@@ -9,17 +9,24 @@ import {
   ARTIFACT_KINDS,
   MARKETING_OBJECTIVES,
   MARKETING_ROLES,
-  countMarketingArtifacts,
   getMarketingBundle,
   insertMarketingArtifacts,
+  listMarketingArtifacts,
   markBundleStaged,
   roleColumnsOf,
   type ArtifactInput,
   type MarketingBundleRow,
 } from '../../db/marketing'
 import { computeBundleHash } from '../../marketing/hash'
-import { blockedActions, deriveActions, unreadPlanColumns } from '../../marketing/outbox'
+import {
+  blockedActions,
+  deriveActions,
+  pageSlugOf,
+  slotProblemCheck,
+  unreadPlanColumns,
+} from '../../marketing/outbox'
 import { saveRiskView, stagePayload } from '../../marketing/payload'
+import { slugProblem } from '../../marketing/site'
 
 // One role output is a JSON document, not a fixed shape: each producer owns its
 // own contract and the columns exist so an audit can say which version of which
@@ -258,6 +265,7 @@ export const stageBundleTool = createTool({
         artifactCount: 0,
         requestedCeilingMinor: input.requestedCeilingMinor,
         actionCount: 0,
+        siteHash: null,
       }),
       policy.risk,
       'marketing.stage_bundle',
@@ -275,6 +283,7 @@ export const stageBundleTool = createTool({
         artifactCount: 0,
         requestedCeilingMinor: input.requestedCeilingMinor,
         actionCount: 0,
+        siteHash: null,
       }),
       policy.risk,
       'marketing.stage_bundle',
@@ -324,14 +333,33 @@ export const stageBundleTool = createTool({
       // of the human-task call. An unread plan is checked first because a plan you
       // cannot read is also a plan whose actions you cannot count (Task 5, Ruling T5-D3).
       const unread = unreadPlanColumns(bundle)
-      const actions = deriveActions(bundle)
+      // One read, three uses: the slot check, the hash, and the artifact count the
+      // payload and the message report. `countMarketingArtifacts` is gone from this
+      // file because a count you cannot name the rows behind is the number this
+      // slice stops trusting.
+      const artifacts = await listMarketingArtifacts(rc.tenantId, bundle.id)
+      const slugIssue = slugProblem(pageSlugOf(bundle))
+      // Nothing is derived for a bundle whose page cannot be placed. deriveActions
+      // calls resolveSite, which throws SlugProblemError on such a slug, and a throw
+      // inside an agent turn is not a refusal a human can act on — the queue entry
+      // below is.
+      const actions = slugIssue === null ? deriveActions(bundle, artifacts) : []
       const blocked = blockedActions(actions)
+      const slotIssue = slotProblemCheck(artifacts)
+      // The arms stay in this order because each is a cheaper question than the
+      // next: an unread plan cannot be counted, an unnameable page cannot be
+      // placed, an ambiguous slot cannot be hashed, and a name with no adapter is
+      // a build question, not a bundle question.
       const refusal =
         unread.length > 0
           ? `unreadable ${unread.join(' and ')}`
-          : blocked.length > 0
-            ? `no adapter for ${blocked.join(', ')}`
-            : null
+          : slugIssue !== null
+            ? `unusable page slug: ${slugIssue}`
+            : slotIssue !== null
+              ? `ambiguous page slot: ${slotIssue}`
+              : blocked.length > 0
+                ? `no adapter for ${blocked.join(', ')}`
+                : null
       if (refusal !== null) {
         // Refusing here rather than at commit time is the difference between one
         // wasted review and a queue full of decisions that cannot be made.
@@ -357,16 +385,17 @@ export const stageBundleTool = createTool({
         }
       }
 
-      const artifactCount = await countMarketingArtifacts(rc.tenantId, bundle.id)
+      const publish = actions.find((a) => a.action === 'publish_page')
       const payload = stagePayload({
         bundleId: bundle.id,
         // Recomputed from the stored row, never handed back by the caller: jsonb
         // normalisation means the row is the only version that stays stable.
         draftHash: hashOf(bundle),
         objective: bundle.objective,
-        artifactCount,
+        artifactCount: artifacts.length,
         requestedCeilingMinor: input.requestedCeilingMinor,
         actionCount: actions.length,
+        siteHash: typeof publish?.payload['siteHash'] === 'string' ? publish.payload['siteHash'] : null,
       })
 
       const policy = loadPolicy()
@@ -416,7 +445,7 @@ export const stageBundleTool = createTool({
         gate: draft.gate === 'auto' ? ('auto' as const) : ('approval' as const),
         message:
           `Bundle ${bundle.id} staged for approval (${draft.id}). ` +
-          `${numOf('artifactCount', artifactCount)} asset(s), ${numOf('actionCount', actions.length)} action(s), ` +
+          `${numOf('artifactCount', artifacts.length)} asset(s), ${numOf('actionCount', actions.length)} action(s), ` +
           `ceiling ${numOf('requestedCeilingMinor', input.requestedCeilingMinor)} minor units.`,
       }
     })

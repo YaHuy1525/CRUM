@@ -46,6 +46,7 @@ describe('the marketing payload rule', () => {
       artifactCount: 4,
       requestedCeilingMinor: 2500,
       actionCount: 1,
+      siteHash: HASH,
     })
     const assessment = scoreRisk(payload, risk, 'marketing.stage_bundle')
     expect(assessment.score).toBe(risk.preflight.scores.benign)
@@ -61,6 +62,7 @@ describe('the marketing payload rule', () => {
         artifactCount: 6,
         requestedCeilingMinor: 99_000,
         actionCount: 2,
+        siteHash: HASH,
       }),
       stagePayload({
         bundleId: BUNDLE,
@@ -69,6 +71,7 @@ describe('the marketing payload rule', () => {
         artifactCount: 0,
         requestedCeilingMinor: 0,
         actionCount: 0,
+        siteHash: HASH,
       }),
       // The save-side view is the one scored beside real copy, so it is swept for
       // every objective the bundle table will accept, read from the source of
@@ -111,6 +114,7 @@ describe('the marketing payload rule', () => {
       artifactCount: 1,
       requestedCeilingMinor: 100,
       actionCount: 1,
+      siteHash: HASH,
     }))).toEqual([])
   })
 
@@ -136,6 +140,7 @@ describe('the marketing payload rule', () => {
       artifactCount: 0,
       requestedCeilingMinor: 0,
       actionCount: 0,
+      siteHash: HASH,
     })
     expect(Object.keys(payload).sort()).toEqual([
       'actionCount',
@@ -144,6 +149,7 @@ describe('the marketing payload rule', () => {
       'draftHash',
       'objective',
       'requestedCeilingMinor',
+      'siteHash',
     ])
 
     // Every scored string is an identifier, a hash or a slug, so none of them can
@@ -209,6 +215,7 @@ describe('the marketing payload rule', () => {
         artifactCount: 0,
         requestedCeilingMinor: 0,
         actionCount: 0,
+        siteHash: null,
       }),
       risk,
       'marketing.stage_bundle',

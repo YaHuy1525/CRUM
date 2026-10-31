@@ -463,10 +463,13 @@ async function applyDraft(
       // null on purpose: commitWithReceipt signs the receipt after applyDraft
       // returns, so the id does not exist yet. The drainer back-fills it, and no
       // slice may pretend otherwise by writing a receipt id it has not earned.
+      const expectedSiteHash =
+        typeof payload['siteHash'] === 'string' ? payload['siteHash'] : null
       return await commitBundleApproval(client, {
         tenantId: draft.tenantId,
         bundleId: draft.targetId,
         receiptId: null,
+        expectedSiteHash,
       })
     } catch (err) {
       if (err instanceof BundleNotApprovableError) throw new UnsupportedCommitError(err.message)

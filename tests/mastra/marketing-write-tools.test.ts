@@ -162,6 +162,24 @@ function stagedInsert(): Record<string, unknown> {
   return JSON.parse(insert.params[6] as string) as Record<string, unknown>
 }
 
+/**
+ * One stored artifact row, shaped as listMarketingArtifacts selects it. The
+ * stage tool reads rows rather than a count, so every stage fixture needs the
+ * select answered, and a page fixture needs a page_html to derive a publish from.
+ */
+function artifactRow(over: Row = {}): Row {
+  return {
+    id: '77777777-7777-4777-8777-777777777777',
+    role: 'funnel-builder',
+    kind: 'page_html',
+    document_id: null,
+    text_content: '<h1>Physio in an hour</h1>',
+    status: 'active',
+    created_at: '2026-10-30T00:00:00.000Z',
+    ...over,
+  }
+}
+
 interface StageResult {
   pendingWriteId: string
   riskScore: number
@@ -421,9 +439,9 @@ describe('marketing.save_bundle input schema', () => {
 })
 
 describe('marketing.stage_bundle', () => {
-  const stageHandlers = (row: Row): Record<string, Row[]> => ({
+  const stageHandlers = (row: Row, artifacts: Row[] = []): Record<string, Row[]> => ({
     'FROM marketing_bundles': [row],
-    'SELECT count(*) AS count FROM marketing_artifacts': [{ count: 3 }],
+    'FROM marketing_artifacts': artifacts,
     'INSERT INTO pending_writes': [pendingWriteRow({ object_type: 'marketing_stage', gate: 'approval' })],
     'UPDATE marketing_bundles': [{ id: BUNDLE_ID }],
   })
@@ -438,11 +456,16 @@ describe('marketing.stage_bundle', () => {
       'draftHash',
       'objective',
       'requestedCeilingMinor',
+      'siteHash',
     ])
     expect(stagedInsert().requestedCeilingMinor).toBe(2500)
     expect(stagedInsert().actionCount).toBe(0)
     expect(stagedInsert().objective).toBe('outreach_support')
-    expect(stagedInsert().artifactCount).toBe(3)
+    // An empty artifact list: no rows, so no bytes to hash and nothing to
+    // publish. This case is about the key set, and siteHash's null branch is the
+    // one a bundle with no page records.
+    expect(stagedInsert().artifactCount).toBe(0)
+    expect(stagedInsert().siteHash).toBeNull()
   })
 
   it('keys the draft on the bundle id and the hash recomputed from the stored row', async () => {
@@ -465,8 +488,11 @@ describe('marketing.stage_bundle', () => {
 
   it('refuses a bundle whose plan asks for something nothing can execute, and stages nothing', async () => {
     stubQueries({
-      'FROM marketing_bundles': [bundleRow({ funnel_plan: { page: { slug: '/free-scan' } }, objective: 'inbound_leads' })],
-      'SELECT count(*) AS count FROM marketing_artifacts': [{ count: 1 }],
+      'FROM marketing_bundles': [bundleRow({ funnel_plan: { page: { slug: 'free-scan' } }, objective: 'inbound_leads' })],
+      // A publishable slug is not enough on its own any more: the action is only
+      // derived when there are bytes to publish, so the refusal is only about the
+      // adapter when a page_html row exists.
+      'FROM marketing_artifacts': [artifactRow()],
       'INSERT INTO human_tasks': [{ id: '66666666-6666-4666-8666-666666666666' }],
     })
     const result = await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
@@ -490,7 +516,7 @@ describe('marketing.stage_bundle', () => {
   it('refuses a plan it cannot read, before it reports an action count of zero', async () => {
     stubQueries({
       'FROM marketing_bundles': [bundleRow({ funnel_plan: { page: { title: 'Free scan' } }, objective: 'inbound_leads' })],
-      'SELECT count(*) AS count FROM marketing_artifacts': [{ count: 1 }],
+      'FROM marketing_artifacts': [],
       'INSERT INTO human_tasks': [{ id: '66666666-6666-4666-8666-666666666666' }],
     })
     const result = await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
@@ -516,7 +542,7 @@ describe('marketing.stage_bundle', () => {
       'FROM marketing_bundles': [
         bundleRow({ media_plan: { campaigns: [{ name: 'melbourne-physio-awareness' }] }, objective: 'inbound_leads' }),
       ],
-      'SELECT count(*) AS count FROM marketing_artifacts': [{ count: 2 }],
+      'FROM marketing_artifacts': [],
       'INSERT INTO human_tasks': [{ id: '66666666-6666-4666-8666-666666666666' }],
     })
     const result = await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
@@ -525,6 +551,42 @@ describe('marketing.stage_bundle', () => {
     expect(String(call('INSERT INTO human_tasks')?.params[4])).toContain('create_campaign')
     expect(call('INSERT INTO pending_writes')).toBeUndefined()
     expect(call('UPDATE marketing_bundles')).toBeUndefined()
+  })
+
+  /**
+   * deriveActions throws SlugProblemError on a slug the site cannot publish, and a
+   * throw inside an agent turn is not a refusal a human can act on. The queue entry
+   * is, so the tool asks slugProblem first and never hands the bad slug to
+   * derivation.
+   */
+  it('refuses an unusable page slug as a queue entry, not as a throw', async () => {
+    stubQueries({
+      'FROM marketing_bundles': [
+        bundleRow({ funnel_plan: { page: { slug: 'Free Quote' } }, objective: 'inbound_leads' }),
+      ],
+      'FROM marketing_artifacts': [artifactRow()],
+      'INSERT INTO human_tasks': [{ id: '66666666-6666-4666-8666-666666666666' }],
+    })
+    const result = await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
+    expect(result).toMatchObject({ proceed: false })
+    expect(String(result.reason)).toContain('unusable page slug')
+    expect(String(result.reason)).toContain('Free Quote')
+    expect(call('INSERT INTO pending_writes')).toBeUndefined()
+  })
+
+  it('refuses a slot two artifacts claim, before anything is hashed', async () => {
+    stubQueries({
+      'FROM marketing_bundles': [
+        bundleRow({ funnel_plan: { page: { slug: 'free-scan' } }, objective: 'inbound_leads' }),
+      ],
+      'FROM marketing_artifacts': [artifactRow({ id: 'a1' }), artifactRow({ id: 'a2' })],
+      'INSERT INTO human_tasks': [{ id: '66666666-6666-4666-8666-666666666666' }],
+    })
+    const result = await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
+    expect(result).toMatchObject({ proceed: false })
+    expect(String(result.reason)).toContain('ambiguous page slot')
+    expect(String(result.reason)).toContain('page_html')
+    expect(call('INSERT INTO pending_writes')).toBeUndefined()
   })
 
   it('refuses a bundle that is already approved, rather than double-approving it', async () => {
@@ -595,7 +657,7 @@ describe('marketing.stage_bundle', () => {
   it('reports the ceiling the open draft holds when the key already exists', async () => {
     stubQueries({
       'FROM marketing_bundles': [bundleRow()],
-      'SELECT count(*) AS count FROM marketing_artifacts': [{ count: 3 }],
+      'FROM marketing_artifacts': [],
       'INSERT INTO pending_writes': [
         pendingWriteRow({
           object_type: 'marketing_stage',

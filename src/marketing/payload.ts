@@ -29,6 +29,9 @@ export interface StagePayload {
   artifactCount: number
   requestedCeilingMinor: number
   actionCount: number
+  // null when the bundle carries no page. A number where a hash belongs would
+  // let a stage pass while describing nothing to re-derive at approval.
+  siteHash: string | null
 }
 
 export function stagePayload(input: StagePayload): StagePayload {
@@ -39,5 +42,6 @@ export function stagePayload(input: StagePayload): StagePayload {
     artifactCount: input.artifactCount,
     requestedCeilingMinor: input.requestedCeilingMinor,
     actionCount: input.actionCount,
+    siteHash: input.siteHash,
   }
 }
