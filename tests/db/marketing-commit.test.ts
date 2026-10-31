@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PendingWrite } from '../../src/db/pending-writes'
+import { resolveSite, siteHashOf } from '../../src/marketing/site'
 
 const mockQuery = vi.fn()
 const mockClient = { query: mockQuery, release: vi.fn() }
@@ -25,6 +26,15 @@ vi.mock('../../src/config/env', () => ({
 const TENANT = '11111111-1111-4111-8111-111111111111'
 const APPROVER = '22222222-2222-4222-8222-222222222222'
 const BUNDLE = '33333333-3333-4333-8333-333333333333'
+
+// The one-page fixture the page-bundle drafts below stage against, and the hash
+// a stage would have recorded for those bytes. Since the approval compares
+// unconditionally, a draft for a bundle that has a page must carry this value;
+// null would mean the payload identified no page, and the approval refuses.
+const PAGE_TEXT = '<h1>Free scan</h1>'
+const PAGE_HASH = siteHashOf(
+  resolveSite('free-scan', [{ id: 'a1', kind: 'page_html', textContent: PAGE_TEXT }]),
+)
 
 function stubQueries(handlers: Record<string, Record<string, unknown>[]>) {
   mockQuery.mockImplementation((sql: string) => {
@@ -70,6 +80,31 @@ function calls(fragment: string): Array<{ sql: string; params: unknown[] }> {
     .map((call) => ({ sql: call[0] as string, params: (call[1] ?? []) as unknown[] }))
 }
 
+interface CommitFixture {
+  bundle: Record<string, unknown>
+  artifacts: Record<string, unknown>[]
+}
+
+/**
+ * A client for the commit alone, without the pg pool above: the two reads it
+ * makes before it decides, and an empty answer for the write a refused case must
+ * never reach. The commit's client type is generic over the row shape, so the
+ * fake hands back `T[]` for whichever T the caller asked for; the rows are the
+ * real shapes for the SQL branch they answer.
+ */
+function clientWith(fixture: CommitFixture) {
+  return {
+    query: <T = Record<string, unknown>>(sql: string): Promise<{ rows: T[] }> => {
+      const rows: unknown[] = sql.includes('FROM marketing_bundles')
+        ? [fixture.bundle]
+        : sql.includes('FROM marketing_artifacts')
+          ? fixture.artifacts
+          : []
+      return Promise.resolve({ rows: rows as T[] })
+    },
+  }
+}
+
 // No auditRow helper here: all three tests stub 'INSERT INTO audit_receipts' by
 // SQL fragment, so a full receipt row is never constructed, and an unused helper
 // function is an `@typescript-eslint/no-unused-vars` error (eslint.config.js:47).
@@ -83,12 +118,17 @@ describe('approving a marketing stage draft', () => {
     stubQueries({
       'SELECT receipt_id, rejected_at, committed_at FROM pending_writes': [{ receipt_id: null, rejected_at: null, committed_at: null }],
       'FROM marketing_bundles': [
-        { id: BUNDLE, status: 'staged', objective: 'inbound_leads', funnel_plan: { page: { slug: '/free-scan' } }, media_plan: null },
+        { id: BUNDLE, status: 'staged', objective: 'inbound_leads', funnel_plan: { page: { slug: 'free-scan' } }, media_plan: null },
+      ],
+      // The publish action is derived from the stored bytes now, so the bundle
+      // needs a page artifact as well as a slug to ask for one.
+      'FROM marketing_artifacts': [
+        { id: 'a1', kind: 'page_html', text_content: PAGE_TEXT },
       ],
     })
     const { commitWithReceipt, UnsupportedCommitError } = await import('../../src/db/pending-writes')
     await expect(
-      commitWithReceipt(stageDraft({ bundleId: BUNDLE }), { approvedBy: APPROVER, scope: 'crm:write' }),
+      commitWithReceipt(stageDraft({ bundleId: BUNDLE, siteHash: PAGE_HASH }), { approvedBy: APPROVER, scope: 'crm:write' }),
     ).rejects.toThrow(UnsupportedCommitError)
     expect(mockQuery.mock.calls.some((c) => (c[0] as string).includes('INSERT INTO audit_receipts'))).toBe(false)
     expect(mockQuery.mock.calls.some((c) => (c[0] as string).includes('ROLLBACK'))).toBe(true)
@@ -98,12 +138,39 @@ describe('approving a marketing stage draft', () => {
     expect(calls("UPDATE marketing_bundles SET status = 'approved'")).toEqual([])
   })
 
+  it('refuses a staged draft whose plan names a slug the site cannot publish', async () => {
+    // Slice 1 fixtures wrote slugs like '/free-scan', which SLUG_PATTERN
+    // refuses, so this is reachable stored data rather than a hypothetical.
+    // resolveSite throws SlugProblemError on it, and an untranslated throw would
+    // leave this approval as a 500 instead of the refusal applyDraft reports.
+    stubQueries({
+      'SELECT receipt_id, rejected_at, committed_at FROM pending_writes': [{ receipt_id: null, rejected_at: null, committed_at: null }],
+      'FROM marketing_bundles': [
+        { id: BUNDLE, status: 'staged', objective: 'inbound_leads', funnel_plan: { page: { slug: '/free-scan' } }, media_plan: null },
+      ],
+      'FROM marketing_artifacts': [],
+    })
+    const { commitWithReceipt, UnsupportedCommitError } = await import('../../src/db/pending-writes')
+    const attempt = commitWithReceipt(stageDraft({ bundleId: BUNDLE }), {
+      approvedBy: APPROVER,
+      scope: 'crm:write',
+    })
+    await expect(attempt).rejects.toThrow(UnsupportedCommitError)
+    // The refusal carries the slug sentence, so the reviewer learns which path
+    // is unusable rather than reading a generic commit failure.
+    await expect(attempt).rejects.toThrow(/slug_.*cannot be published/)
+    await expect(attempt).rejects.toThrow(/free-scan/)
+    expect(mockQuery.mock.calls.some((c) => (c[0] as string).includes('INSERT INTO audit_receipts'))).toBe(false)
+    expect(mockQuery.mock.calls.some((c) => (c[0] as string).includes('ROLLBACK'))).toBe(true)
+  })
+
   it('approves a content-only bundle and writes the receipt against the bundle id', async () => {
     stubQueries({
       'SELECT receipt_id, rejected_at, committed_at FROM pending_writes': [{ receipt_id: null, rejected_at: null, committed_at: null }],
       'FROM marketing_bundles': [
         { id: BUNDLE, status: 'staged', objective: 'outreach_support', funnel_plan: null, media_plan: null },
       ],
+      'FROM marketing_artifacts': [],
       "UPDATE marketing_bundles SET status = 'approved'": [{ id: BUNDLE }],
       'INSERT INTO audit_receipts': [{ id: 'receipt-1' }],
       'UPDATE pending_writes SET receipt_id': [],
@@ -141,7 +208,10 @@ describe('approving a marketing stage draft', () => {
       stubQueries({
         'SELECT receipt_id, rejected_at, committed_at FROM pending_writes': [{ receipt_id: null, rejected_at: null, committed_at: null }],
         'FROM marketing_bundles': [
-          { id: BUNDLE, status: 'staged', objective: 'inbound_leads', funnel_plan: { page: { slug: '/free-scan' } }, media_plan: null },
+          { id: BUNDLE, status: 'staged', objective: 'inbound_leads', funnel_plan: { page: { slug: 'free-scan' } }, media_plan: null },
+        ],
+        'FROM marketing_artifacts': [
+          { id: 'a1', kind: 'page_html', text_content: PAGE_TEXT },
         ],
         "UPDATE marketing_bundles SET status = 'approved'": [{ id: BUNDLE }],
         'INSERT INTO marketing_actions': [{ id: 'action-1' }],
@@ -149,7 +219,7 @@ describe('approving a marketing stage draft', () => {
         'UPDATE pending_writes SET receipt_id': [],
       })
       const { commitWithReceipt } = await import('../../src/db/pending-writes')
-      await commitWithReceipt(stageDraft({ bundleId: BUNDLE }), {
+      await commitWithReceipt(stageDraft({ bundleId: BUNDLE, siteHash: PAGE_HASH }), {
         approvedBy: APPROVER,
         scope: 'crm:write',
       })
@@ -158,9 +228,85 @@ describe('approving a marketing stage draft', () => {
       // ['queued', receipt_id] is the tail. The last param is the receipt id the
       // branch hands over, and it must be null: commitWithReceipt signs its
       // receipt only after applyDraft returns, so no real id exists to write.
-      expect(enqueue?.params).toEqual([TENANT, BUNDLE, 'publish_page', JSON.stringify({ slug: '/free-scan' }), null])
+      // The payload is the one the approval re-derived under the lock: the same
+      // hash the stage payload carried for these bytes. PAGE_HASH is computed
+      // from site.ts rather than pasted, so a commit that enqueued a slug or a
+      // constant fails.
+      const expectedPayload = {
+        bundleId: BUNDLE,
+        slug: 'free-scan',
+        siteHash: PAGE_HASH,
+      }
+      expect(enqueue?.params).toEqual([
+        TENANT,
+        BUNDLE,
+        'publish_page',
+        JSON.stringify(expectedPayload),
+        null,
+      ])
     } finally {
       unregister()
     }
+  })
+})
+
+describe('the review-to-commit byte re-check', () => {
+  it('refuses to approve when the bytes moved after staging', async () => {
+    const client = clientWith({
+      bundle: { id: 'b1', status: 'staged', funnel_plan: { page: { slug: 's' } }, media_plan: null },
+      artifacts: [{ id: 'a1', kind: 'page_html', text_content: '<h1>changed</h1>' }],
+    })
+    const { commitBundleApproval } = await import('../../src/marketing/outbox')
+    await expect(
+      commitBundleApproval(client, {
+        tenantId: TENANT,
+        bundleId: 'b1',
+        receiptId: null,
+        expectedSiteHash: '0'.repeat(64),
+      }),
+    ).rejects.toThrow(/no longer hashes/)
+  })
+
+  it('refuses to approve a page the staged payload never identified', async () => {
+    // The other direction the null guard used to let through: the bundle had no
+    // page when it was staged, so the payload identified no bytes, and a
+    // page_html arrived before approval. There is nothing to compare, and a
+    // commit over bytes the reviewer never saw is the failure the re-check
+    // exists to prevent, so the only safe answer is to refuse.
+    const client = clientWith({
+      bundle: { id: 'b1', status: 'staged', funnel_plan: { page: { slug: 's' } }, media_plan: null },
+      artifacts: [{ id: 'a1', kind: 'page_html', text_content: '<h1>added later</h1>' }],
+    })
+    const { commitBundleApproval } = await import('../../src/marketing/outbox')
+    const attempt = commitBundleApproval(client, {
+      tenantId: TENANT,
+      bundleId: 'b1',
+      receiptId: null,
+      expectedSiteHash: null,
+    })
+    await expect(attempt).rejects.toThrow(/no longer hashes/)
+    // The staged side must say what it has, not print the word `null`.
+    await expect(attempt).rejects.toThrow(/nothing staged/)
+  })
+
+  it('refuses to approve a page that was deleted after staging', async () => {
+    // The mirror of the case above, and the direction the last fix left
+    // untested: the payload carried the hash of a page the reviewer saw, and the
+    // page_html row is gone by approval. The plan still names a slug, so a
+    // derivation that trusted the plan alone would enqueue a publish over a file
+    // set that is now empty. The live side must read 'nothing', not a hash.
+    const client = clientWith({
+      bundle: { id: 'b1', status: 'staged', funnel_plan: { page: { slug: 'free-scan' } }, media_plan: null },
+      artifacts: [],
+    })
+    const { commitBundleApproval } = await import('../../src/marketing/outbox')
+    const attempt = commitBundleApproval(client, {
+      tenantId: TENANT,
+      bundleId: 'b1',
+      receiptId: null,
+      expectedSiteHash: PAGE_HASH,
+    })
+    await expect(attempt).rejects.toThrow(/no longer hashes/)
+    await expect(attempt).rejects.toThrow(/nothing now/)
   })
 })

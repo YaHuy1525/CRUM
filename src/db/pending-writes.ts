@@ -1,7 +1,9 @@
 import { getDbClient } from './client'
 import { signReceipt, computeActionHash } from '../governance/receipt'
 import { dismissMergeCandidate, mergeProspects } from './prospect-merge'
-import { BundleNotApprovableError, commitBundleApproval } from '../marketing/outbox'
+import { BundleNotApprovableError, commitBundleApproval, pageSlugOf } from '../marketing/outbox'
+import { SlugProblemError } from '../marketing/site'
+import { siteHashInTransaction } from './marketing'
 
 export interface PendingWrite {
   id: string
@@ -46,8 +48,18 @@ export interface CreateDraftParams {
     // approval that turns a stored bundle into an approved one. They are two
     // types because applyDraft dispatches on object_type, so one type would have
     // to mean both "insert a bundle" and "approve a bundle".
+    // marketing_promote and marketing_retry are the two publish-gate approvals,
+    // declared the moment the database admits them so the closed lists in
+    // migrations/0019 and this union stay one edit apart; their applyDraft paths
+    // land with the publisher in later slice-2 tasks.
+    // marketing_set_campaign_status is the slice-3 approval for the analyst's
+    // scale and kill recommendations: the campaign stays in its current state
+    // until the owner approves the draft.
     | 'marketing_bundle'
     | 'marketing_stage'
+    | 'marketing_promote'
+    | 'marketing_retry'
+    | 'marketing_set_campaign_status'
   operation: 'create' | 'update' | 'delete'
   targetId?: string
   payload: unknown
@@ -457,15 +469,164 @@ async function applyDraft(
       // null on purpose: commitWithReceipt signs the receipt after applyDraft
       // returns, so the id does not exist yet. The drainer back-fills it, and no
       // slice may pretend otherwise by writing a receipt id it has not earned.
+      const expectedSiteHash =
+        typeof payload['siteHash'] === 'string' ? payload['siteHash'] : null
       return await commitBundleApproval(client, {
         tenantId: draft.tenantId,
         bundleId: draft.targetId,
         receiptId: null,
+        expectedSiteHash,
       })
     } catch (err) {
       if (err instanceof BundleNotApprovableError) throw new UnsupportedCommitError(err.message)
       throw err
     }
+  }
+
+  // A promotion is one work order and no content change: the bundle is already
+  // approved and its preview already exists. Status moves to `live` only after
+  // the publisher reports success, in scripts/publish-drain.ts, never here.
+  if (draft.objectType === 'marketing_promote') {
+    if (draft.operation !== 'create') {
+      throw new UnsupportedCommitError(
+        `marketing_promote supports only the create operation, not ${draft.operation}`,
+      )
+    }
+    const bundleId = draft.targetId
+    const pageActionId = payload['pageActionId']
+    const siteHash = payload['siteHash']
+    if (!bundleId || typeof pageActionId !== 'string' || typeof siteHash !== 'string') {
+      throw new UnsupportedCommitError('marketing_promote must name a bundle, a publish action and its hash')
+    }
+    // The publish the reviewer approved the promotion of has to still be the
+    // succeeded publish this payload names, with the URL and the hash the review
+    // rode on. Re-read inside the transaction, like commitBundleApproval,
+    // because the payload is a claim about another row: a URL that is gone, or
+    // bytes that now hash differently, must refuse here rather than sign a
+    // receipt over an action that could only be recorded as a failure.
+    const check = await client.query<{
+      id: string
+      payload: { siteHash?: unknown } | null
+      result: { url?: unknown } | null
+    }>(
+      `SELECT id, payload, result FROM marketing_actions
+        WHERE id = $1 AND tenant_id = $2 AND bundle_id = $3 AND action = 'publish_page' AND status = 'succeeded'`,
+      [pageActionId, draft.tenantId, bundleId],
+    )
+    const published = check.rows[0]
+    if (!published) {
+      throw new UnsupportedCommitError(
+        `marketing_promote names publish action ${pageActionId}, which is not a succeeded publish on bundle ${bundleId}`,
+      )
+    }
+    const url = published.result?.url
+    if (typeof url !== 'string' || url.length === 0) {
+      throw new UnsupportedCommitError(
+        `marketing_promote names publish action ${pageActionId}, which reported no URL, so there is no preview to put on the domain`,
+      )
+    }
+    const publishedHash = typeof published.payload?.siteHash === 'string' ? published.payload.siteHash : null
+    if (publishedHash !== siteHash) {
+      throw new UnsupportedCommitError(
+        `marketing_promote carries hash ${siteHash}, but publish action ${pageActionId} published ` +
+          `${publishedHash ?? 'nothing'}, so the bytes the reviewer approved are not the bytes that went live`,
+      )
+    }
+    // The slug the drainer's adapter needs, and the one field the promote payload
+    // may not carry: a slug is a phrase an agent wrote, and prose in a scored
+    // payload moves the score (spec section 5). It is read from the bundle the
+    // promotion names, through the same reader the stage side uses, so a plan
+    // shape cannot be understood two ways in two places.
+    const bundleRow = await client.query<{ funnel_plan: unknown }>(
+      `SELECT funnel_plan FROM marketing_bundles WHERE id = $1 AND tenant_id = $2`,
+      [bundleId, draft.tenantId],
+    )
+    const bundle = bundleRow.rows[0]
+    if (!bundle) {
+      throw new UnsupportedCommitError(
+        `marketing_promote names bundle ${bundleId}, which this tenant cannot see`,
+      )
+    }
+    const slug = pageSlugOf({ funnelPlan: bundle.funnel_plan })
+    if (slug === null) {
+      throw new UnsupportedCommitError(
+        `marketing_promote names bundle ${bundleId}, which has no page slug, so there is no page to put on the domain`,
+      )
+    }
+    // receipt_id is null on purpose, for the reason the marketing_stage branch
+    // gives: the receipt is signed after applyDraft returns, so no id exists yet
+    // and the drainer back-fills it.
+    await client.query(
+      `INSERT INTO marketing_actions (tenant_id, bundle_id, action, payload, status, receipt_id)
+       VALUES ($1, $2, 'promote_page', $3, 'queued', $4)`,
+      [draft.tenantId, bundleId, JSON.stringify({ bundleId, slug, siteHash }), draft.receiptId ?? null],
+    )
+    return bundleId
+  }
+
+  // The database caps attempts at 3 and a terminal failure may not retry inside
+  // its own row, so a retry is exactly one new queued row, cloned from the
+  // payload the human already approved once. Spec section 5.
+  if (draft.objectType === 'marketing_retry') {
+    if (draft.operation !== 'create') {
+      throw new UnsupportedCommitError(
+        `marketing_retry supports only the create operation, not ${draft.operation}`,
+      )
+    }
+    const sourceId = draft.targetId
+    const siteHash = payload['siteHash']
+    if (!sourceId || typeof siteHash !== 'string') {
+      throw new UnsupportedCommitError('marketing_retry must name the failed action and its hash')
+    }
+    const source = await client.query<{
+      id: string
+      bundle_id: string
+      action: string
+      status: string
+      payload: { siteHash?: string } | null
+    }>(
+      `SELECT id, bundle_id, action, status, payload FROM marketing_actions
+        WHERE id = $1 AND tenant_id = $2 AND status = 'failed'`,
+      [sourceId, draft.tenantId],
+    )
+    const row = source.rows[0]
+    if (!row) {
+      throw new UnsupportedCommitError(`marketing_retry names ${sourceId}, which is not a failed action visible to this tenant`)
+    }
+    if (String(row.payload?.['siteHash'] ?? '') !== siteHash) {
+      throw new UnsupportedCommitError(`marketing_retry carries a hash that does not match action ${sourceId}`)
+    }
+    // The clone carries the hash the failed row recorded, and the owner agreed
+    // to re-queue exactly those bytes. A bundle re-saved between staging and
+    // approval has different bytes, so the receipt would attest to a row the
+    // drainer could only record as failed; read them under this transaction and
+    // refuse instead of signing. This is the same question stageRetry asked
+    // when it staged, asked at the last moment the answer can still matter.
+    let liveHash: string | null
+    try {
+      liveHash = await siteHashInTransaction(client, draft.tenantId, row.bundle_id)
+    } catch (err) {
+      // A slug that can no longer name a page is the same refusal, not a throw:
+      // the bytes the owner approved cannot be published, so nothing is queued.
+      if (err instanceof SlugProblemError) {
+        throw new UnsupportedCommitError(
+          `marketing_retry names action ${sourceId}, whose bundle slug can no longer be published`,
+        )
+      }
+      throw err
+    }
+    if (liveHash !== siteHash) {
+      throw new UnsupportedCommitError(
+        `marketing_retry carries hash ${siteHash}, but bundle ${row.bundle_id} hashes to ` +
+          `${liveHash ?? 'nothing'} now, so the bytes the owner approved are not the bytes stored`,
+      )
+    }
+    await client.query(
+      `INSERT INTO marketing_actions (tenant_id, bundle_id, action, payload, status, receipt_id)
+       VALUES ($1, $2, $3, $4::jsonb, 'queued', $5)`,
+      [draft.tenantId, row.bundle_id, row.action, JSON.stringify(row.payload), draft.receiptId ?? null],
+    )
+    return row.bundle_id
   }
 
   const target = requireTarget(draft.objectType)

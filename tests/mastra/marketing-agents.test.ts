@@ -8,6 +8,7 @@ import { creativeDesignerAgent, creativeDesignerSubagent } from '../../src/mastr
 import { mediaBuyerAgent, mediaBuyerSubagent } from '../../src/mastra/agents/media-buyer'
 import { funnelBuilderAgent, funnelBuilderSubagent } from '../../src/mastra/agents/funnel-builder'
 import { campaignAnalystAgent, campaignAnalystSubagent } from '../../src/mastra/agents/campaign-analyst'
+import { LEAD_ENDPOINT_PLACEHOLDER } from '../../src/marketing/lead-token'
 
 const PAIRS: { role: string; agent: Agent; subagent: AgentControllerSubagent }[] = [
   { role: 'offer-strategist', agent: offerStrategistAgent, subagent: offerStrategistSubagent },
@@ -50,6 +51,18 @@ describe.each(PAIRS)('$role', ({ role, agent, subagent }) => {
     const phrase = REQUIRED_PHRASE[role]
     expect(phrase, `${role} is not a known marketing role`).toBeTruthy()
     expect(subagent.instructions).toContain(phrase)
+  })
+})
+
+describe('the funnel builder and the lead endpoint', () => {
+  it('is told the one action its form may carry, spelled exactly as the stamper looks for it', () => {
+    // The save tool refuses an inbound bundle whose page holds zero or two of
+    // these, so a prompt that never names the placeholder, or names a near miss,
+    // makes every inbound save refuse. Pinning the exported constant rather than
+    // the words means a typo on either side fails here.
+    const funnel = PAIRS.find(({ role }) => role === 'funnel-builder')
+    expect(funnel?.subagent.instructions).toContain(LEAD_ENDPOINT_PLACEHOLDER)
+    expect(funnel?.agent.getInstructions()).toBe(funnel?.subagent.instructions)
   })
 })
 

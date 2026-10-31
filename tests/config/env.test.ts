@@ -130,6 +130,7 @@ describe('production readiness', () => {
       MCP_REQUEST_STATE_KEY: 'b'.repeat(32),
       SUPABASE_URL: 'https://x.supabase.co',
       SUPABASE_SERVICE_ROLE_KEY: 'sr-' + 'y'.repeat(40),
+      CRUM_CLOUDFLARE_API_TOKEN: 't'.repeat(40),
     })
     expect(missingProductionSecrets(env)).toEqual([])
   })
@@ -138,6 +139,62 @@ describe('production readiness', () => {
     expect(isProduction(parseEnv({ NODE_ENV: 'production', CRUM_AUTH_MODE: 'jwt' }))).toBe(true)
     expect(isProduction(parseEnv({ NODE_ENV: 'development' }))).toBe(false)
     expect(isProduction(parseEnv({ NODE_ENV: 'test' }))).toBe(false)
+  })
+})
+
+describe('marketing slice 2 settings', () => {
+  it('leaves the page host unset rather than inventing a default', () => {
+    // The four Pages keys have no defaults on purpose: the adapters register only
+    // when every one of them is really present (pageHostConfigFromEnv), and a
+    // schema default would make a half-configured host look complete.
+    const env = parseEnv({})
+    expect(env.CRUM_CLOUDFLARE_ACCOUNT_ID).toBeUndefined()
+    expect(env.CRUM_CLOUDFLARE_PAGES_PROJECT).toBeUndefined()
+    expect(env.CRUM_CLOUDFLARE_API_TOKEN).toBeUndefined()
+    expect(env.CRUM_PAGES_PRODUCTION_BRANCH).toBeUndefined()
+    expect(env.CRUM_MARKETING_SITE_ORIGIN).toBeUndefined()
+    expect(env.CRUM_LEAD_API_ORIGIN).toBeUndefined()
+  })
+
+  it('treats a blank Pages value as absent, because an empty string is not a credential', () => {
+    expect(parseEnv({ CRUM_CLOUDFLARE_ACCOUNT_ID: '' }).CRUM_CLOUDFLARE_ACCOUNT_ID).toBeUndefined()
+  })
+
+  it('treats a blank Pages token as absent, not as a failed boot', () => {
+    // An `.env.example` placeholder line is `KEY=`, and an unconfigured install
+    // must still boot without the Pages lane.
+    expect(parseEnv({ CRUM_CLOUDFLARE_API_TOKEN: '' }).CRUM_CLOUDFLARE_API_TOKEN).toBeUndefined()
+    expect(parseEnv({ CRUM_CLOUDFLARE_API_TOKEN: '   ' }).CRUM_CLOUDFLARE_API_TOKEN).toBeUndefined()
+  })
+
+  it('treats a blank lead cap as unset, not as a cap of zero', () => {
+    expect(parseEnv({ CRUM_MARKETING_LEAD_DAILY_CAP: '' }).CRUM_MARKETING_LEAD_DAILY_CAP).toBe(200)
+    expect(parseEnv({ CRUM_MARKETING_LEAD_DAILY_CAP: '   ' }).CRUM_MARKETING_LEAD_DAILY_CAP).toBe(200)
+  })
+
+  it('rejects a Pages token too short to be a secret, like the other HMAC keys', () => {
+    expect(() => parseEnv({ CRUM_CLOUDFLARE_API_TOKEN: 'short' })).toThrowError(EnvParseError)
+    expect(parseEnv({ CRUM_CLOUDFLARE_API_TOKEN: 't'.repeat(40) }).CRUM_CLOUDFLARE_API_TOKEN)
+      .toBe('t'.repeat(40))
+  })
+
+  it('defaults the lead cap to 200 and coerces a configured one', () => {
+    expect(parseEnv({}).CRUM_MARKETING_LEAD_DAILY_CAP).toBe(200)
+    expect(parseEnv({ CRUM_MARKETING_LEAD_DAILY_CAP: '500' }).CRUM_MARKETING_LEAD_DAILY_CAP).toBe(500)
+  })
+
+  it('refuses a lead cap that would either drop every lead or let the form flood', () => {
+    // A page visitor is never shown the rate limit, so a cap of 0 would read as a
+    // working form that silently discards every lead.
+    expect(() => parseEnv({ CRUM_MARKETING_LEAD_DAILY_CAP: '0' })).toThrowError(EnvParseError)
+    expect(() => parseEnv({ CRUM_MARKETING_LEAD_DAILY_CAP: '100001' })).toThrowError(EnvParseError)
+    expect(() => parseEnv({ CRUM_MARKETING_LEAD_DAILY_CAP: '1.5' })).toThrowError(EnvParseError)
+  })
+
+  it('names the Pages token as a production-required secret', () => {
+    expect(PRODUCTION_REQUIRED_SECRETS).toContain('CRUM_CLOUDFLARE_API_TOKEN')
+    const missing = missingProductionSecrets(parseEnv({ CRUM_CLOUDFLARE_ACCOUNT_ID: 'acc' }))
+    expect(missing).toContain('CRUM_CLOUDFLARE_API_TOKEN')
   })
 })
 

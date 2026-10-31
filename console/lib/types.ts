@@ -22,6 +22,8 @@ export interface QueueItem {
     thread_id?: string
     resource_id?: string
     tool_call_ids: string[]
+    /** Display labels only; never send these as a toolCallId. */
+    tool_names: string[]
   } | null
 }
 
@@ -503,6 +505,9 @@ export interface MarketingBundleRecord {
   analysis: unknown
   promptVersion: string
   draftHash: string
+  // The credential a published page carries in its form action. Null until a
+  // save minted one, and set-once from then on.
+  leadToken: string | null
   createdAt: string
   updatedAt: string
 }
@@ -510,8 +515,8 @@ export interface MarketingBundleRecord {
 export interface MarketingArtifactRecord {
   id: string
   // Widened to `string` on purpose, exactly as objective and status are widened
-  // above: the real types are six-member literal unions (MarketingRole and
-  // MarketingArtifactKind, src/db/marketing.ts:5-25), and a console type that
+  // above: the real types are fixed literal unions (MarketingRole and
+  // MarketingArtifactKind, src/db/marketing.ts:5-26), and a console type that
   // goes stale the day a role is added breaks the build without protecting
   // anything, because this screen renders whatever the server says rather than
   // branching on the value.
@@ -526,4 +531,43 @@ export interface MarketingArtifactRecord {
 export interface MarketingBundleResponse {
   bundle: MarketingBundleRecord
   artifacts: MarketingArtifactRecord[]
+  actions: MarketingActionRecord[]
+}
+
+// The outbox row behind every publish, promotion and retry. Duplicated from
+// MarketingActionRow in src/db/marketing.ts for the same reason as the records
+// above: the console talks HTTP and never imports src/. `payload` is the
+// mapper's `Record<string, unknown>` because the console reads it by key with a
+// runtime check, never as a shape the server promised.
+export interface MarketingActionRecord {
+  id: string
+  action: string
+  status: string
+  attempts: number
+  externalId: string | null
+  lastError: string | null
+  payload: Record<string, unknown>
+  result: Record<string, unknown> | null
+  createdAt: string
+  executedAt: string | null
+}
+
+// ── Campaign metrics (slice 3) ───────────────────────────────────────────────
+//
+// Shape returned by /api/marketing/campaign-metrics and consumed by the
+// CampaignMetricsDashboard component.
+
+export interface CampaignMetrics {
+  bundleId: string
+  campaignExternalId: string
+  campaignName: string
+  adAccountId: string
+  status: 'ACTIVE' | 'PAUSED'
+  impressions: number
+  clicks: number
+  spend: number
+  leads: number
+  costPerLead: number
+  recommendation: 'scale' | 'hold' | 'kill' | null
+  lastAnalystRun: string | null
 }

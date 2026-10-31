@@ -5,15 +5,29 @@ import {
   commitBundleApproval,
   DERIVED_ACTION_NAMES,
   deriveActions,
+  HUMAN_INITIATED_ACTION_NAMES,
   isExecutable,
+  MARKETING_ACTION_NAMES,
+  pageSlugOf,
   registerActionAdapter,
+  slotProblemCheck,
   UNMAPPED_ACTION_NAMES,
   unreadPlanColumns,
 } from '@/marketing/outbox'
+import { SlugProblemError, resolveSite, siteHashOf } from '@/marketing/site'
 
 const TENANT = '11111111-1111-4111-8111-111111111111'
 const BUNDLE = '33333333-3333-4333-8333-333333333333'
 const RECEIPT = '99999999-9999-4999-8999-999999999999'
+
+// The one-page fixture these commit cases share, and the hash a stage would have
+// recorded for it. Since the approval compares the two hashes unconditionally, a
+// case that must get past the re-check hands this over; null now means the
+// staged payload identified no page at all, which refuses.
+const PAGE_TEXT = '<h1>Free scan</h1>'
+const PAGE_HASH = siteHashOf(
+  resolveSite('free-scan', [{ id: 'a1', kind: 'page_html', textContent: PAGE_TEXT }]),
+)
 
 function bundleRow(over: Record<string, unknown> = {}) {
   return {
@@ -26,13 +40,17 @@ function bundleRow(over: Record<string, unknown> = {}) {
   }
 }
 
-function clientReturning(rows: unknown[]) {
+function clientReturning(rows: unknown[], artifacts: unknown[] = []) {
   // The fake mirrors prospect-merge.test.ts's stubQueries: a plain function that
   // hands back a resolved Promise, so `await client.query(...)` sees the branch
   // taken on the SQL text. `_values` is captured only so the enqueue params are
   // recorded for assertion, hence the leading underscore the lint config allows.
   const query = vi.fn((sql: string, _values?: unknown[]): Promise<{ rows: unknown[] }> => {
     if (sql.includes('FROM marketing_bundles')) return Promise.resolve({ rows })
+    // The commit re-derives the file set inside the lock, so any case that gets
+    // past the unread check issues this SELECT. Answering it with bundle rows
+    // would make the fake derive artifacts from columns that do not exist.
+    if (sql.includes('FROM marketing_artifacts')) return Promise.resolve({ rows: artifacts })
     return Promise.resolve({ rows: [{ id: BUNDLE }] })
   })
   return { query, sqls: () => query.mock.calls.map((c) => c[0]) }
@@ -40,11 +58,19 @@ function clientReturning(rows: unknown[]) {
 
 type FakeClient = ReturnType<typeof clientReturning>
 
-async function approve(client: FakeClient): Promise<string> {
+async function approve(
+  client: FakeClient,
+  expectedSiteHash: string | null = null,
+): Promise<string> {
   return await commitBundleApproval(client as never, {
     tenantId: TENANT,
     bundleId: BUNDLE,
     receiptId: RECEIPT,
+    // Null by default: the cases that omit the second argument are about the
+    // lock and the refusals, and have no page to identify. A case whose bundle
+    // has a page passes the hash a stage recorded, because null there now means
+    // the staged payload named nothing and the approval refuses.
+    expectedSiteHash,
   })
 }
 
@@ -54,52 +80,71 @@ afterEach(() => {
 
 describe('deriveActions', () => {
   it('reads a page out of the funnel plan', () => {
-    const actions = deriveActions({
-      id: BUNDLE,
-      funnelPlan: { page: { slug: '/physio-free-scan', title: 'Free scan' } },
-      mediaPlan: null,
-    })
+    const actions = deriveActions(
+      {
+        id: BUNDLE,
+        funnelPlan: { page: { slug: 'physio-free-scan', title: 'Free scan' } },
+        mediaPlan: null,
+      },
+      [{ id: 'a1', kind: 'page_html', textContent: '<h1>Free scan</h1>' }],
+    )
     expect(actions.map((a) => a.action)).toEqual(['publish_page'])
   })
 
   it('reads a campaign out of the media plan', () => {
-    const actions = deriveActions({
-      id: BUNDLE,
-      funnelPlan: null,
-      mediaPlan: { campaigns: [{ name: 'melbourne-physio', startPaused: true }] },
-    })
+    const actions = deriveActions(
+      {
+        id: BUNDLE,
+        funnelPlan: null,
+        mediaPlan: { campaigns: [{ name: 'melbourne-physio', startPaused: true }] },
+      },
+      [],
+    )
     expect(actions.map((a) => a.action)).toEqual(['create_campaign'])
   })
 
   it('orders the page before the campaign, because a link must land somewhere', () => {
-    const actions = deriveActions({
-      id: BUNDLE,
-      funnelPlan: { page: { slug: '/free-scan' } },
-      mediaPlan: { campaigns: [{ name: 'x' }] },
-    })
+    const actions = deriveActions(
+      {
+        id: BUNDLE,
+        funnelPlan: { page: { slug: 'free-scan' } },
+        mediaPlan: { campaigns: [{ name: 'x' }] },
+      },
+      [{ id: 'a1', kind: 'page_html', textContent: '<h1>Free scan</h1>' }],
+    )
     expect(actions.map((a) => a.action)).toEqual(['publish_page', 'create_campaign'])
   })
 
   it('derives nothing from an outreach support bundle, which is why slice 1 can approve one', () => {
-    expect(deriveActions({ id: BUNDLE, funnelPlan: null, mediaPlan: null })).toEqual([])
+    expect(deriveActions({ id: BUNDLE, funnelPlan: null, mediaPlan: null }, [])).toEqual([])
   })
 
   it('ignores a plan that is not an object', () => {
-    expect(deriveActions({ id: BUNDLE, funnelPlan: 'nonsense', mediaPlan: [1, 2] })).toEqual([])
+    expect(deriveActions({ id: BUNDLE, funnelPlan: 'nonsense', mediaPlan: [1, 2] }, [])).toEqual([])
   })
 })
 
-describe('the mapped action sets', () => {
-  it('names the actions no slice 1 plan can ask for', () => {
-    expect(UNMAPPED_ACTION_NAMES).toEqual(['unpublish_page', 'set_campaign_status'])
+describe('action name vocabulary', () => {
+  it('accounts for every declared name exactly once', () => {
+    const all = [...MARKETING_ACTION_NAMES].sort()
+    const parts = [
+      ...DERIVED_ACTION_NAMES,
+      ...HUMAN_INITIATED_ACTION_NAMES,
+      ...UNMAPPED_ACTION_NAMES,
+    ].sort()
+    expect(parts).toEqual(all)
+    expect(new Set(parts).size).toBe(parts.length)
   })
 
   it('derives only actions it declared it can derive', () => {
-    const actions = deriveActions({
-      id: BUNDLE,
-      funnelPlan: { page: { slug: '/x' }, form: { fields: [] }, tracking: { pixel: 'none' } },
-      mediaPlan: { objective: 'leads', audience: 'clinics', placements: ['feed'], campaigns: [{ name: 'x' }] },
-    })
+    const actions = deriveActions(
+      {
+        id: BUNDLE,
+        funnelPlan: { page: { slug: 'x' }, form: { fields: [] }, tracking: { pixel: 'none' } },
+        mediaPlan: { objective: 'leads', audience: 'clinics', placements: ['feed'], campaigns: [{ name: 'x' }] },
+      },
+      [{ id: 'a1', kind: 'page_html', textContent: '<h1>hi</h1>' }],
+    )
     expect(actions.every((a) => DERIVED_ACTION_NAMES.includes(a.action))).toBe(true)
     expect(actions.map((a) => a.action)).toEqual(['publish_page', 'create_campaign'])
   })
@@ -164,16 +209,20 @@ describe('commitBundleApproval', () => {
   })
 
   it('refuses to approve a bundle with a page, because no publish adapter exists yet', async () => {
-    const client = clientReturning([bundleRow({ funnel_plan: { page: { slug: '/free-scan' } } })])
-    await expect(approve(client)).rejects.toThrow(/publish_page/)
+    const client = clientReturning(
+      [bundleRow({ funnel_plan: { page: { slug: 'free-scan' } } })],
+      [{ id: 'a1', kind: 'page_html', text_content: PAGE_TEXT }],
+    )
+    await expect(approve(client, PAGE_HASH)).rejects.toThrow(/publish_page/)
     expect(client.sqls().some((sql) => sql.includes("SET status = 'approved'"))).toBe(false)
   })
 
   it('names every blocked action in one message', async () => {
-    const client = clientReturning([
-      bundleRow({ funnel_plan: { page: { slug: '/free-scan' } }, media_plan: { campaigns: [{ name: 'x' }] } }),
-    ])
-    await expect(approve(client)).rejects.toThrow(/publish_page.*create_campaign|create_campaign.*publish_page/)
+    const client = clientReturning(
+      [bundleRow({ funnel_plan: { page: { slug: 'free-scan' } }, media_plan: { campaigns: [{ name: 'x' }] } })],
+      [{ id: 'a1', kind: 'page_html', text_content: PAGE_TEXT }],
+    )
+    await expect(approve(client, PAGE_HASH)).rejects.toThrow(/publish_page.*create_campaign|create_campaign.*publish_page/)
   })
 
   it('refuses a bundle whose plan it cannot read, before it asks which adapters exist', async () => {
@@ -205,21 +254,120 @@ describe('commitBundleApproval', () => {
     expect(client.sqls().some((sql) => sql.includes('INSERT INTO marketing_actions'))).toBe(false)
   })
 
+  it('approves when the bytes still hash to what the review was shown', async () => {
+    // The control for the refusal below: a re-check that refused every page
+    // bundle would pass that case without ever comparing anything.
+    const unregister = registerActionAdapter({
+      name: 'publish_page',
+      execute: () => Promise.resolve({ externalId: 'x' }),
+    })
+    try {
+      const artifacts = [{ id: 'a1', kind: 'page_html', text_content: '<h1>Free scan</h1>' }]
+      const client = clientReturning(
+        [bundleRow({ funnel_plan: { page: { slug: 'free-scan' } } })],
+        artifacts,
+      )
+      const expectedSiteHash = siteHashOf(
+        resolveSite('free-scan', [{ id: 'a1', kind: 'page_html', textContent: '<h1>Free scan</h1>' }]),
+      )
+      await expect(
+        commitBundleApproval(client as never, {
+          tenantId: TENANT,
+          bundleId: BUNDLE,
+          receiptId: RECEIPT,
+          expectedSiteHash,
+        }),
+      ).resolves.toBe(BUNDLE)
+    } finally {
+      unregister()
+    }
+  })
+
   it('enqueues each action with the receipt that authorised it, once an adapter exists', async () => {
     const unregister = registerActionAdapter({
       name: 'publish_page',
       execute: () => Promise.resolve({ externalId: 'x' }),
     })
+    const artifacts = [{ id: 'a1', kind: 'page_html', text_content: PAGE_TEXT }]
     // try/finally: an assertion failure below must not leave publish_page
     // registered for the rest of the file, where every other case expects the
     // slice 1 registry to be empty.
     try {
-      const client = clientReturning([bundleRow({ funnel_plan: { page: { slug: '/free-scan' } } })])
-      await expect(approve(client)).resolves.toBe(BUNDLE)
+      const client = clientReturning(
+        [bundleRow({ funnel_plan: { page: { slug: 'free-scan' } } })],
+        artifacts,
+      )
+      await expect(approve(client, PAGE_HASH)).resolves.toBe(BUNDLE)
       const insert = client.query.mock.calls.find((c) => c[0].includes('INSERT INTO marketing_actions'))
-      expect(insert?.[1]).toEqual([TENANT, BUNDLE, 'publish_page', JSON.stringify({ slug: '/free-scan' }), RECEIPT])
+      // The hash is computed from the fixture's bytes rather than pasted, so an
+      // outbox that enqueued a slug or a constant fails here. Same inputs the
+      // commit re-derives under the lock: path `free-scan/index.html`, those bytes.
+      const expectedPayload = {
+        bundleId: BUNDLE,
+        slug: 'free-scan',
+        siteHash: PAGE_HASH,
+      }
+      expect(insert?.[1]).toEqual([TENANT, BUNDLE, 'publish_page', JSON.stringify(expectedPayload), RECEIPT])
     } finally {
       unregister()
     }
+  })
+})
+
+describe('slice 2 derivation', () => {
+  const pageArtifact = (text: string) => ({ id: 'a1', kind: 'page_html', textContent: text })
+  const bundleWithPage = { id: 'b1', funnelPlan: { page: { slug: 'physio' } }, mediaPlan: null }
+
+  it('carries the bundle id and a hash of the bytes, never prose', () => {
+    const [publish] = deriveActions(bundleWithPage, [pageArtifact('<h1>hi</h1>')])
+    expect(publish?.action).toBe('publish_page')
+    expect(Object.keys(publish?.payload ?? {}).sort()).toEqual(['bundleId', 'siteHash', 'slug'])
+  })
+
+  it('derives no publish when the bundle has no artifacts at all', () => {
+    expect(deriveActions(bundleWithPage, [])).toEqual([])
+  })
+
+  it('publishes a thank-you page on its own, because the file set is what is approved', () => {
+    // Surprising but not wrong: derivation publishes the files resolveSite
+    // returns, and a thank_you_html is a file at <slug>/thanks/index.html. The
+    // hash the reviewer approves covers exactly that file, so nothing
+    // unapproved is published; there is simply no landing page at the slug.
+    const thanks = [{ id: 'a1', kind: 'thank_you_html', textContent: '<p>thanks</p>' }]
+    const [publish] = deriveActions(bundleWithPage, thanks)
+    expect(publish?.action).toBe('publish_page')
+    expect(publish?.payload).toEqual({
+      bundleId: 'b1',
+      slug: 'physio',
+      siteHash: siteHashOf(resolveSite('physio', thanks)),
+    })
+  })
+
+  it('answers the same siteHash for the same bytes', () => {
+    const a = deriveActions(bundleWithPage, [pageArtifact('<h1>hi</h1>')])[0]
+    const b = deriveActions(bundleWithPage, [pageArtifact('<h1>hi</h1>')])[0]
+    expect(a?.payload.siteHash).toBe(b?.payload.siteHash)
+  })
+
+  it('refuses to derive a page from a slug the site cannot publish', () => {
+    // The slug is a phrase an agent wrote. Task 3 decides what a publishable one
+    // looks like; this asserts the decision reaches derivation rather than being
+    // quoted in a comment.
+    expect(() =>
+      deriveActions(
+        { ...bundleWithPage, funnelPlan: { page: { slug: 'Free Quote' } } },
+        [pageArtifact('<h1>hi</h1>')],
+      ),
+    ).toThrow(SlugProblemError)
+  })
+
+  it('reports the slug it will publish', () => {
+    expect(pageSlugOf(bundleWithPage)).toBe('physio')
+    expect(pageSlugOf({ funnelPlan: { page: null } })).toBeNull()
+  })
+
+  it('refuses a slot holding two artifacts before it derives anything', () => {
+    const problem = slotProblemCheck([pageArtifact('<h1>old</h1>'), { id: 'a2', kind: 'page_html', textContent: '<h1>new</h1>' }])
+    expect(problem).toContain('page_html')
   })
 })

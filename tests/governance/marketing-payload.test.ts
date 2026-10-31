@@ -2,7 +2,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { loadPolicy } from '@/governance/policy'
 import { domainOf, scoreRisk } from '@/governance/risk'
-import { stagePayload, saveRiskView } from '@/marketing/payload'
+import { promotePayload, retryPayload, stagePayload, saveRiskView } from '@/marketing/payload'
 import { MARKETING_OBJECTIVES } from '@/db/marketing'
 
 const policy = loadPolicy(join(process.cwd(), 'policy'))
@@ -46,6 +46,7 @@ describe('the marketing payload rule', () => {
       artifactCount: 4,
       requestedCeilingMinor: 2500,
       actionCount: 1,
+      siteHash: HASH,
     })
     const assessment = scoreRisk(payload, risk, 'marketing.stage_bundle')
     expect(assessment.score).toBe(risk.preflight.scores.benign)
@@ -61,6 +62,7 @@ describe('the marketing payload rule', () => {
         artifactCount: 6,
         requestedCeilingMinor: 99_000,
         actionCount: 2,
+        siteHash: HASH,
       }),
       stagePayload({
         bundleId: BUNDLE,
@@ -69,6 +71,7 @@ describe('the marketing payload rule', () => {
         artifactCount: 0,
         requestedCeilingMinor: 0,
         actionCount: 0,
+        siteHash: HASH,
       }),
       // The save-side view is the one scored beside real copy, so it is swept for
       // every objective the bundle table will accept, read from the source of
@@ -111,6 +114,7 @@ describe('the marketing payload rule', () => {
       artifactCount: 1,
       requestedCeilingMinor: 100,
       actionCount: 1,
+      siteHash: HASH,
     }))).toEqual([])
   })
 
@@ -136,6 +140,7 @@ describe('the marketing payload rule', () => {
       artifactCount: 0,
       requestedCeilingMinor: 0,
       actionCount: 0,
+      siteHash: HASH,
     })
     expect(Object.keys(payload).sort()).toEqual([
       'actionCount',
@@ -144,6 +149,7 @@ describe('the marketing payload rule', () => {
       'draftHash',
       'objective',
       'requestedCeilingMinor',
+      'siteHash',
     ])
 
     // Every scored string is an identifier, a hash or a slug, so none of them can
@@ -209,11 +215,51 @@ describe('the marketing payload rule', () => {
         artifactCount: 0,
         requestedCeilingMinor: 0,
         actionCount: 0,
+        siteHash: null,
       }),
       risk,
       'marketing.stage_bundle',
     )
     expect(assessment.score).toBe(risk.preflight.scores.benign)
     expect(policy.gateFor('marketing.stage_bundle', assessment)).toBe('approval')
+  })
+
+  const promote = promotePayload({
+    bundleId: BUNDLE,
+    pageActionId: '44444444-4444-4444-8444-444444444444',
+    siteHash: HASH,
+  })
+  const retry = retryPayload({ actionId: '55555555-5555-5555-8555-555555555555', siteHash: HASH })
+
+  it('keeps the two new decision payloads free of any scored term', () => {
+    expect(forbiddenTermsIn(promote)).toEqual([])
+    expect(forbiddenTermsIn(retry)).toEqual([])
+  })
+
+  it('declares exactly the keys each decision is allowed to carry', () => {
+    expect(Object.keys(promote).sort()).toEqual(['bundleId', 'pageActionId', 'siteHash'])
+    expect(Object.keys(retry).sort()).toEqual(['actionId', 'siteHash'])
+  })
+
+  // The rule this slice nearly broke, stated as a test: a reviewer-facing URL is
+  // not a scorer-facing field. `previewUrl` would put a page slug, chosen by an
+  // agent, into a scored payload. The dangerous word stands as its own path
+  // segment because the shared tokeniser keeps hyphens inside a token, so a
+  // hyphenated compound would not produce the token `send`.
+  it('would catch a previewUrl if one were ever added', () => {
+    const tainted = { ...promote, previewUrl: 'https://x.pages.dev/send/free-quote' }
+    expect(forbiddenTermsIn(tainted)).toContain('send')
+  })
+
+  it('drops a field smuggled in on an untyped input', () => {
+    // The builders return fresh literals, so the only way an extra field reaches
+    // the scored payload is a caller whose object was widened somewhere the
+    // compiler stopped checking. Spreading into a variable is that shape: an
+    // object literal would fail the excess-property check, a widened one will
+    // not, and the builder is what has to hold the line.
+    const widened = { ...promote, previewUrl: 'https://x.pages.dev/send/free-quote' }
+    const built = promotePayload(widened)
+    expect(Object.keys(built).sort()).toEqual(['bundleId', 'pageActionId', 'siteHash'])
+    expect(forbiddenTermsIn(built)).toEqual([])
   })
 })

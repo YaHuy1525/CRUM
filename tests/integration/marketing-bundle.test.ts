@@ -138,6 +138,7 @@ describe.skipIf(!url)('marketing bundle end to end', () => {
       'draftHash',
       'objective',
       'requestedCeilingMinor',
+      'siteHash',
     ])
     expect(JSON.stringify(draft?.payload)).not.toMatch(/physio|patient|clinic/i)
 
@@ -240,6 +241,22 @@ describe.skipIf(!url)('marketing bundle end to end', () => {
       saveInput({
         brief: 'Publish a landing page for the physio campaign before anyone can render it',
         funnelPlan: { page: { slug: 'melbourne-physio', title: 'Physio in an hour' } },
+        // The publish action is derived from the stored bytes, not the slug
+        // alone, so the bundle needs a page_html row as well as a page plan.
+        artifacts: [
+          {
+            role: 'marketer-copywriter',
+            kind: 'script',
+            documentId: null,
+            textContent: 'Objection handling: price is a comparison, not a no.',
+          },
+          {
+            role: 'funnel-builder',
+            kind: 'page_html',
+            documentId: null,
+            textContent: '<h1>Physio in an hour</h1>',
+          },
+        ],
       }),
     )
 

@@ -29,6 +29,9 @@ export interface StagePayload {
   artifactCount: number
   requestedCeilingMinor: number
   actionCount: number
+  // null when the bundle carries no page. A number where a hash belongs would
+  // let a stage pass while describing nothing to re-derive at approval.
+  siteHash: string | null
 }
 
 export function stagePayload(input: StagePayload): StagePayload {
@@ -39,5 +42,30 @@ export function stagePayload(input: StagePayload): StagePayload {
     artifactCount: input.artifactCount,
     requestedCeilingMinor: input.requestedCeilingMinor,
     actionCount: input.actionCount,
+    siteHash: input.siteHash,
   }
+}
+
+export interface PromotePayload {
+  bundleId: string
+  pageActionId: string
+  siteHash: string
+}
+
+export interface RetryPayload {
+  actionId: string
+  siteHash: string
+}
+
+/**
+ * Deliberately no `previewUrl`. The reviewer needs the URL and gets it from the
+ * bundle screen, which reads the database; the scorer needs nothing from it, and
+ * a URL carries the slug, which is a phrase an agent wrote. Spec section 5.
+ */
+export function promotePayload(input: PromotePayload): PromotePayload {
+  return { bundleId: input.bundleId, pageActionId: input.pageActionId, siteHash: input.siteHash }
+}
+
+export function retryPayload(input: RetryPayload): RetryPayload {
+  return { actionId: input.actionId, siteHash: input.siteHash }
 }

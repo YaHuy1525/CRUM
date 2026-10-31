@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { Mastra } from '@mastra/core/mastra'
 import { InMemoryStore } from '@mastra/core/storage'
 import {
@@ -25,6 +25,12 @@ import {
   McpConfigError,
   resolveMcpRequestState,
 } from '../../src/mastra/mcp-guard'
+import { isExecutable, registerActionAdapter } from '../../src/marketing/outbox'
+import {
+  makePublishPageAdapter,
+  pageHostConfigFromEnv,
+  type PageHostConfig,
+} from '../../src/marketing/page-host'
 
 const REMOTE = 'postgresql://crum:secret@db.abcdefgh.supabase.co:5432/postgres'
 
@@ -316,5 +322,109 @@ describe('assertMcpRequestStateKey', () => {
 
   it('passes in production with a key', () => {
     expect(() => assertMcpRequestStateKey(parseEnv(PRODUCTION_BASE))).not.toThrow()
+  })
+})
+
+const PAGE_CONFIG: PageHostConfig = {
+  accountId: 'acc',
+  project: 'proj',
+  apiToken: 'tok',
+  productionBranch: 'main',
+  previewBranchPrefix: 'crum-preview',
+  apiBaseUrl: 'https://api.cloudflare.com/client/v4',
+}
+
+/** The four settings the adapters need, all present. */
+const PAGES_ENV: Record<string, string> = {
+  CRUM_CLOUDFLARE_ACCOUNT_ID: 'acc',
+  CRUM_CLOUDFLARE_PAGES_PROJECT: 'proj',
+  // A Cloudflare token is 40 characters; the schema holds this key to hmacSecret's
+  // .min(32) on purpose, so the fixture must be long enough to parse.
+  CRUM_CLOUDFLARE_API_TOKEN: 't'.repeat(40),
+  CRUM_PAGES_PRODUCTION_BRANCH: 'main',
+}
+
+describe('slice 2 adapter registration', () => {
+  it('treats an incomplete Pages config as no capability at all', () => {
+    expect(pageHostConfigFromEnv({
+      CRUM_CLOUDFLARE_ACCOUNT_ID: 'acc',
+      CRUM_CLOUDFLARE_PAGES_PROJECT: undefined,
+      CRUM_CLOUDFLARE_API_TOKEN: 'tok',
+      CRUM_PAGES_PRODUCTION_BRANCH: 'main',
+    })).toBeNull()
+  })
+
+  it('reads a whitespace-only Pages setting as absent, not as a credential', () => {
+    // The schema maps an empty value to undefined but leaves whitespace alone.
+    // `"   "` would otherwise register both adapters and fail only at drain time,
+    // after a human approved the bundle.
+    expect(pageHostConfigFromEnv({
+      CRUM_CLOUDFLARE_ACCOUNT_ID: '   ',
+      CRUM_CLOUDFLARE_PAGES_PROJECT: 'proj',
+      CRUM_CLOUDFLARE_API_TOKEN: 'tok',
+      CRUM_PAGES_PRODUCTION_BRANCH: 'main',
+    })).toBeNull()
+  })
+
+  it('builds a config when all four are present', () => {
+    expect(pageHostConfigFromEnv({
+      CRUM_CLOUDFLARE_ACCOUNT_ID: 'acc',
+      CRUM_CLOUDFLARE_PAGES_PROJECT: 'proj',
+      CRUM_CLOUDFLARE_API_TOKEN: 'tok',
+      CRUM_PAGES_PRODUCTION_BRANCH: 'main',
+    })).toEqual({
+      accountId: 'acc', project: 'proj', apiToken: 'tok',
+      productionBranch: 'main', previewBranchPrefix: 'crum-preview',
+      apiBaseUrl: 'https://api.cloudflare.com/client/v4',
+    })
+  })
+
+  it('leaves publish_page unexecutable when nothing registered, and executable after', () => {
+    // The title's first half. Stated rather than assumed, so a test that ran
+    // after the boot registration below fails here instead of passing vacuously.
+    expect(isExecutable('publish_page')).toBe(false)
+    const unregister = registerActionAdapter(makePublishPageAdapter(PAGE_CONFIG))
+    expect(isExecutable('publish_page')).toBe(true)
+    unregister()
+    expect(isExecutable('publish_page')).toBe(false)
+  })
+
+  // These last two tests boot with Pages config, and createCrumMastra registers
+  // into the process-wide outbox registry without handing back an unregister, so
+  // they leave it registered. Both directions live in one test so their order is
+  // explicit: three of four settings must register nothing, four of four must
+  // register both adapters.
+  it('registers both page adapters at boot only when every Pages setting is present', () => {
+    const { CRUM_CLOUDFLARE_PAGES_PROJECT: _omitted, ...incomplete } = PAGES_ENV
+    createCrumMastra(envWith(incomplete), { storage: testStore() })
+    expect(isExecutable('publish_page')).toBe(false)
+    expect(isExecutable('promote_page')).toBe(false)
+
+    createCrumMastra(envWith({ ...PAGES_ENV, CRUM_CLOUDFLARE_ACCOUNT_ID: '   ' }), { storage: testStore() })
+    expect(isExecutable('publish_page')).toBe(false)
+    expect(isExecutable('promote_page')).toBe(false)
+
+    createCrumMastra(envWith(PAGES_ENV), { storage: testStore() })
+    expect(isExecutable('publish_page')).toBe(true)
+    expect(isExecutable('promote_page')).toBe(true)
+    // Registering the page adapters must not make every marketing action runnable.
+    expect(isExecutable('unpublish_page')).toBe(false)
+  })
+
+  it('logs the lane once per change, not once per construction', () => {
+    // Settle the module's remembered lane first, so the capture starts from a
+    // known state however the tests above left it.
+    createCrumMastra(envWith(), { storage: testStore() })
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      createCrumMastra(envWith(PAGES_ENV), { storage: testStore() })
+      createCrumMastra(envWith(PAGES_ENV), { storage: testStore() })
+      const laneLines = log.mock.calls
+        .map((args) => String(args[0]))
+        .filter((line) => line.includes('marketing page adapters'))
+      expect(laneLines).toEqual(['[CRUM] marketing page adapters registered'])
+    } finally {
+      log.mockRestore()
+    }
   })
 })

@@ -15,6 +15,14 @@ const optionalString = z
   .transform((v) => (v.trim() === '' ? undefined : v))
   .optional()
 
+// `KEY=` in an env file is an unset key, not a failed boot. optionalString
+// already reads it that way; a key that carries a constraint needs the blank
+// mapped to undefined before the constraint runs, which is what preprocess is
+// for.
+function blankAsUnset(value: unknown): unknown {
+  return typeof value === 'string' && value.trim() === '' ? undefined : value
+}
+
 const hmacSecret = z.string().min(32, 'must be at least 32 bytes').optional()
 
 const booleanish = z
@@ -132,6 +140,47 @@ export const EnvSchema = z.object({
   VIDEO_TWITCH_CLIENT_ID: optionalString,
   VIDEO_TWITCH_CLIENT_SECRET: optionalString,
   VIDEO_TWITCH_REDIRECT_URI: optionalString,
+
+  // Marketing slice 2: the page host and the inbound lead lane. Every one of
+  // these is optional here, and the page adapters register at boot only when the
+  // account, project, token and branch are all present — an action must not be
+  // approvable before it is executable, and a half-configured host would stage a
+  // publish that can never run.
+  CRUM_CLOUDFLARE_ACCOUNT_ID: optionalString,
+  CRUM_CLOUDFLARE_PAGES_PROJECT: optionalString,
+  // A secret: the injection guard fails open when an expected key is absent, and
+  // a marketing agent reading untrusted page copy is where that matters. Blank is
+  // unset, because an .env.example placeholder line must not stop an
+  // unconfigured install from booting.
+  CRUM_CLOUDFLARE_API_TOKEN: z.preprocess(
+    blankAsUnset,
+    z.string().trim().min(32, 'must be at least 32 bytes').optional(),
+  ),
+  CRUM_PAGES_PRODUCTION_BRANCH: optionalString,
+  // Unset means the documented Cloudflare endpoint. A test or a local stand-in
+  // points the adapters elsewhere without a code change.
+  CRUM_PAGES_API_BASE_URL: optionalString,
+  CRUM_MARKETING_SITE_ORIGIN: optionalString,
+  CRUM_LEAD_API_ORIGIN: optionalString,
+  // Blank means unset, so the default cap applies instead of a coerced 0 that
+  // fails min(1).
+  CRUM_MARKETING_LEAD_DAILY_CAP: z.preprocess(
+    blankAsUnset,
+    z.coerce.number().int().min(1).max(100_000).default(200),
+  ),
+
+  // Slice 3 spec section 7: Conversions API. Both must be present for the
+  // sender to register; either absent means the lead route skips the API call
+  // and logs a warning, so a half-configured install never fails intake.
+  CRUM_META_PIXEL_ID: optionalString,
+  CRUM_META_ADS_ACCESS_TOKEN: z.preprocess(
+    blankAsUnset,
+    z.string().trim().min(1).optional(),
+  ),
+  // Slice 3 spec section 5.4: the ad accounts the create_campaign adapter
+  // accepts. Parsed as a JSON array of strings at boot; absent means the Meta
+  // Ads adapters stay unmapped and staging refuses.
+  CRUM_META_AD_ACCOUNTS: optionalString,
 })
 
 export type CrumEnv = z.infer<typeof EnvSchema>
@@ -168,6 +217,13 @@ export const PRODUCTION_REQUIRED_SECRETS: readonly string[] = [
   'MCP_REQUEST_STATE_KEY',
   'SUPABASE_URL',
   'SUPABASE_SERVICE_ROLE_KEY',
+  // Required only for a production install that publishes pages. A Pages-free
+  // production boot is legitimate, so whoever wires this list into boot must not
+  // make the entry fatal on its own: the adapters simply stay unregistered and
+  // staging refuses. A deployment that does publish, though, must not lose the
+  // token quietly, and the injection guard fails open when an expected key is
+  // absent.
+  'CRUM_CLOUDFLARE_API_TOKEN',
 ]
 
 export function parseEnv(raw: NodeJS.ProcessEnv = process.env): CrumEnv {

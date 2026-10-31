@@ -117,6 +117,31 @@ export function ApprovalQueue() {
     }
   }
 
+  async function resumeRun(item: QueueItem, runId: string, toolCallId: string) {
+    setPending((p) => ({ ...p, [item.id]: true }))
+    setFeedback((f) => ({ ...f, [item.id]: undefined }))
+    try {
+      const result = await post<{ text?: string; still_suspended?: boolean }>(
+        `/api/approvals/${encodeURIComponent(runId)}/decision`,
+        { approved: true, toolCallId },
+      )
+      setFeedback((f) => ({
+        ...f,
+        [item.id]: {
+          kind: 'ok',
+          text: result.still_suspended
+            ? 'Resumed; the run suspends again on the next tool, so there is another one waiting.'
+            : `Resumed. ${result.text ?? 'The run continued.'}`,
+        },
+      }))
+      await load()
+    } catch (err) {
+      setFeedback((f) => ({ ...f, [item.id]: { kind: 'bad', text: describeError(err) } }))
+    } finally {
+      setPending((p) => ({ ...p, [item.id]: false }))
+    }
+  }
+
   return (
     <div className="mx-auto w-full max-w-4xl px-4 py-6 md:px-8 md:py-10">
       <PageHeader
@@ -202,6 +227,22 @@ export function ApprovalQueue() {
                         )}
                       </span>
                       {item.suspension ? <span>Suspended run {item.suspension.run_id}</span> : null}
+                      {item.suspension ? (
+                        item.suspension.tool_call_ids.length > 0 ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={pending[item.id] === true}
+                            onClick={() => void resumeRun(item, item.suspension!.run_id, item.suspension!.tool_call_ids[0]!)}
+                          >
+                            Resume {item.suspension.tool_names[0] ?? 'run'}
+                          </Button>
+                        ) : (
+                          <p className="mt-1 text-xs text-warning">
+                            This run reports no resumable tool call, so the queue cannot resume it.
+                          </p>
+                        )
+                      ) : null}
                     </div>
                   ) : (
                     <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-muted">

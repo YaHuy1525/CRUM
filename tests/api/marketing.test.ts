@@ -1,11 +1,28 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Hono } from 'hono'
 
-const db = vi.hoisted(() => ({ getMarketingBundle: vi.fn(), listMarketingArtifacts: vi.fn() }))
+const db = vi.hoisted(() => ({
+  getMarketingBundle: vi.fn(),
+  listMarketingArtifacts: vi.fn(),
+  listMarketingActions: vi.fn(),
+}))
 
 vi.mock('../../src/db/marketing', () => ({
   getMarketingBundle: db.getMarketingBundle,
   listMarketingArtifacts: db.listMarketingArtifacts,
+  listMarketingActions: db.listMarketingActions,
+}))
+
+// The router imports the stagers from this module, and while marketing-writes is
+// being evaluated it reads `MARKETING_ROLES`, `MARKETING_OBJECTIVES` and
+// `ARTIFACT_KINDS` from `src/db/marketing` for its `z.enum(...)` schemas. The
+// partial db mock above exports none of the three, so the real module cannot
+// load against it. Nothing in a GET-route test calls a stager, so the whole
+// module is mocked rather than half-loading it through a db shape it does not
+// expect.
+vi.mock('../../src/mastra/tools/marketing-writes', () => ({
+  stagePromotion: vi.fn(),
+  stageRetry: vi.fn(),
 }))
 
 import { createMarketingRouter } from '../../src/api/marketing'
@@ -30,22 +47,26 @@ beforeEach(() => {
 })
 
 describe('GET /api/marketing/bundles/:id', () => {
-  it('answers with the bundle and its artifacts', async () => {
+  it('answers with the bundle, its artifacts and its actions', async () => {
     db.getMarketingBundle.mockResolvedValue({ id: BUNDLE, tenantId: TENANT, status: 'staged' })
     db.listMarketingArtifacts.mockResolvedValue([{ id: 'a1', role: 'marketer-copywriter' }])
+    db.listMarketingActions.mockResolvedValue([{ id: 'm1', action: 'publish_page' }])
     const res = await fetchBundle()
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({
       bundle: { id: BUNDLE, tenantId: TENANT, status: 'staged' },
       artifacts: [{ id: 'a1', role: 'marketer-copywriter' }],
+      actions: [{ id: 'm1', action: 'publish_page' }],
     })
     expect(db.getMarketingBundle).toHaveBeenCalledWith(TENANT, BUNDLE)
+    expect(db.listMarketingActions).toHaveBeenCalledWith(TENANT, BUNDLE)
   })
 
   it('401s before looking at the path when the identity is rejected', async () => {
     const res = await fetchBundle(BUNDLE, { 'x-user-role': 'auditor' })
     expect(res.status).toBe(401)
     expect(db.getMarketingBundle).not.toHaveBeenCalled()
+    expect(db.listMarketingActions).not.toHaveBeenCalled()
   })
 
   it('400s a id that is not a uuid, without touching the database', async () => {

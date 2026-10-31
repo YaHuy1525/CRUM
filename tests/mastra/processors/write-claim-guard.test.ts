@@ -47,7 +47,9 @@ describe('WriteClaimGuardProcessor', () => {
     expect(MUTATING_TOOL_IDS).toContain('mail.draft')
     expect(MUTATING_TOOL_IDS).toContain('marketing.save_bundle')
     expect(MUTATING_TOOL_IDS).toContain('marketing.stage_bundle')
-    expect(MUTATING_TOOL_IDS).toHaveLength(12)
+    expect(MUTATING_TOOL_IDS).toContain('marketing.promote_bundle')
+    expect(MUTATING_TOOL_IDS).toContain('marketing.retry_publish')
+    expect(MUTATING_TOOL_IDS).toHaveLength(14)
   })
 })
 

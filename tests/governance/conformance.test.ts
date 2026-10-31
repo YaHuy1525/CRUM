@@ -50,6 +50,9 @@ const SPEC_TOOL_SURFACE: ReadonlyArray<readonly [name: string, klass: string, id
   ['crm.resolve_merge_candidate', 'approval', 'correlationId'],
   ['marketing.save_bundle', 'auto', 'draftHash'],
   ['marketing.stage_bundle', 'approval', 'draftHash'],
+  ['marketing.promote_bundle', 'approval', 'siteHash'],
+  ['marketing.retry_publish', 'approval', 'actionId'],
+  ['marketing.set_campaign_status', 'approval', 'draftHash'],
 ]
 
 /**
@@ -88,7 +91,7 @@ describe('tools.yaml conforms to §4.6.2', () => {
     expect(extra).toEqual([])
   })
 
-  it('has exactly the thirty-nine spec tools plus run.side-effect', () => {
+  it('has exactly the forty-two spec tools plus run.side-effect', () => {
     expect(policy.tools.tools).toHaveLength(SPEC_TOOL_SURFACE.length + TEMPLATE_TOOLS.size)
   })
 })

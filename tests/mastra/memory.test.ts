@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { Memory } from '@mastra/memory'
 import { buildCrumMemory } from '../../src/mastra/memory'
 import { buildMastraStorage } from '../../src/mastra/storage'
@@ -115,5 +115,47 @@ describe('buildCrumMemory', () => {
     // to an object. Pin the model identity (this file's convention: the recall
     // test pins concrete values) so an accidental switch off the light model fails.
     expect(config.generateTitle).toMatchObject({ model: CRUM_LIGHT_MODEL })
+  })
+
+  it('builds the recall processor without touching the embedder once the dimension is declared', async () => {
+    // Regression for the 2026-10-30 outage. Both processor builders call
+    // getEmbeddingDimension() on EVERY turn (agent-tuAMgHe3.js:22015, :22114), and
+    // a probe failure throws MASTRA_MEMORY_GET_EMBEDDING_DIMENSION_FAILED from the
+    // builder itself — outside SemanticRecall's own try/catch (:23061-23077,
+    // :23344-23348), so one unreachable embedding endpoint aborted all chat.
+    // A declared dimension short-circuits the probe (:21778); embedding failures
+    // then only happen inside the processor, where they degrade to no recall.
+    const probe = vi.fn(() =>
+      Promise.reject(new Error('connect ECONNREFUSED 127.0.0.1:20128')),
+    )
+    const env = parseEnv({ CRUM_OM_ENABLED: 'false', CRUM_RECALL_ENABLED: 'true' })
+    const memory = buildCrumMemory(buildMastraStorage(env), env, {
+      vector: { isSelfEmbedding: false },
+      embedder: { modelId: 'text-embedding-3-small', doEmbed: probe },
+      embeddingDimension: 1536,
+    } as unknown as RecallDeps)
+
+    // `embeddingDimension` is protected on MastraMemory, so the contract is proven
+    // through the probe, which is the behaviour that actually matters.
+    await expect(memory.getInputProcessors()).resolves.toContainEqual(
+      expect.objectContaining({ id: 'semantic-recall' }),
+    )
+    expect(probe).not.toHaveBeenCalled()
+  })
+
+  it('probes the embedder, and fails the turn, when no dimension is declared', async () => {
+    // Pins the causal link the test above hardens against: with no
+    // embeddingDimension the builder reaches the network, and an unreachable
+    // endpoint rejects before any processor runs. This is why buildRecallDeps must
+    // not leave the field undefined for a model it can resolve.
+    const probe = vi.fn(() => Promise.reject(new Error('embedder unreachable')))
+    const env = parseEnv({ CRUM_OM_ENABLED: 'false', CRUM_RECALL_ENABLED: 'true' })
+    const memory = buildCrumMemory(buildMastraStorage(env), env, {
+      vector: { isSelfEmbedding: false },
+      embedder: { modelId: 'text-embedding-3-small', doEmbed: probe },
+    } as unknown as RecallDeps)
+
+    await expect(memory.getInputProcessors()).rejects.toThrow()
+    expect(probe).toHaveBeenCalledTimes(1)
   })
 })

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { computeBundleHash } from '../../src/marketing/hash'
+import { LEAD_ENDPOINT_PLACEHOLDER } from '../../src/marketing/lead-token'
 
 const mockQuery = vi.fn()
 const mockClient = { query: mockQuery, release: vi.fn() }
@@ -26,6 +27,9 @@ const TENANT = rc.tenantId
 const BUNDLE_ID = '33333333-3333-4333-8333-333333333333'
 const DRAFT_ID = '44444444-4444-4444-8444-444444444444'
 const DOCUMENT_ID = '55555555-5555-4555-8555-555555555555'
+// The credential a bundle carries once its page has been published: a uuid,
+// because gen_random_uuid() is the column default and a mint has to match it.
+const LEAD_TOKEN = '88888888-8888-4888-8888-888888888888'
 
 type Row = Record<string, unknown>
 
@@ -150,6 +154,7 @@ function bundleRow(over: Row = {}): Row {
     analysis: null,
     prompt_version: 'marketing-v1',
     draft_hash: 'saved-hash',
+    lead_token: null,
     created_at: '2026-10-30T00:00:00.000Z',
     updated_at: '2026-10-30T00:00:00.000Z',
     ...over,
@@ -160,6 +165,24 @@ function stagedInsert(): Record<string, unknown> {
   const insert = call('INSERT INTO pending_writes')
   if (!insert) throw new Error('no pending_writes insert was issued')
   return JSON.parse(insert.params[6] as string) as Record<string, unknown>
+}
+
+/**
+ * One stored artifact row, shaped as listMarketingArtifacts selects it. The
+ * stage tool reads rows rather than a count, so every stage fixture needs the
+ * select answered, and a page fixture needs a page_html to derive a publish from.
+ */
+function artifactRow(over: Row = {}): Row {
+  return {
+    id: '77777777-7777-4777-8777-777777777777',
+    role: 'funnel-builder',
+    kind: 'page_html',
+    document_id: null,
+    text_content: '<h1>Physio in an hour</h1>',
+    status: 'active',
+    created_at: '2026-10-30T00:00:00.000Z',
+    ...over,
+  }
 }
 
 interface StageResult {
@@ -185,6 +208,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.clearAllMocks()
+  vi.unstubAllEnvs()
 })
 
 describe('marketing.save_bundle', () => {
@@ -379,12 +403,204 @@ describe('marketing.save_bundle', () => {
     ).rejects.toBe(dbFault)
     expect(call('INSERT INTO pending_writes')).toBeUndefined()
   })
+
+  /**
+   * The lead credential at save. An inbound bundle without a page has no form
+   * to post the credential to, a page without the placeholder would publish a
+   * dead form, and a page with the placeholder gets one minted endpoint written
+   * into the bytes that are stored and later hashed. The last two cases are the
+   * one-way door: the credential is set once, per bundle, and a re-save of one
+   * that already has it is refused before it can write a second page.
+   */
+  it('refuses an inbound_leads bundle with no landing page, before staging anything', async () => {
+    await expect(save(bundleInput({ objective: 'inbound_leads' }))).rejects.toThrow(/needs_page_html/)
+    expect(call('INSERT INTO pending_writes')).toBeUndefined()
+  })
+
+  it('refuses a landing page whose form holds no lead placeholder, before staging anything', async () => {
+    vi.stubEnv('CRUM_LEAD_API_ORIGIN', 'https://api.example.test')
+    await expect(
+      save(
+        bundleInput({
+          objective: 'inbound_leads',
+          artifacts: [
+            {
+              role: 'funnel-builder',
+              kind: 'page_html',
+              documentId: null,
+              textContent: '<form action="/nowhere" method="post"></form>',
+            },
+          ],
+        }),
+      ),
+    ).rejects.toThrow(/lead_endpoint_missing_placeholder/)
+    expect(call('INSERT INTO pending_writes')).toBeUndefined()
+    expect(call('INSERT INTO marketing_artifacts')).toBeUndefined()
+  })
+
+  it('stamps the minted endpoint into the stored page and stores that same token on the bundle', async () => {
+    vi.stubEnv('CRUM_LEAD_API_ORIGIN', 'https://api.example.test/')
+    stubQueries({
+      'INSERT INTO pending_writes': [pendingWriteRow()],
+      'SELECT * FROM pending_writes': [],
+      'INSERT INTO marketing_bundles': [{ id: BUNDLE_ID }],
+      'UPDATE pending_writes SET committed_at': [{ id: DRAFT_ID }],
+      // The early read after the commit: a row that carries no credential yet is
+      // the first save of this bundle, so the stamp and the insert go ahead.
+      'FROM marketing_bundles': [bundleRow()],
+      'INSERT INTO marketing_artifacts': [{ id: 'a' }],
+      'SET lead_token': [{ id: BUNDLE_ID }],
+    })
+    await save(
+      bundleInput({
+        objective: 'inbound_leads',
+        artifacts: [
+          {
+            role: 'funnel-builder',
+            kind: 'page_html',
+            documentId: null,
+            textContent: `<form action="${LEAD_ENDPOINT_PLACEHOLDER}" method="post"><input name="email"></form>`,
+          },
+        ],
+      }),
+    )
+
+    const tokenUpdate = call('SET lead_token')
+    const token = String(tokenUpdate?.params[2])
+    expect(token).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+    expect(tokenUpdate?.params).toEqual([BUNDLE_ID, TENANT, token])
+    // Set-once: the predicate is what makes a token immutable, not the caller.
+    expect(tokenUpdate?.sql).toContain('lead_token IS NULL')
+
+    // The endpoint in the stored bytes carries the token the row now holds, so
+    // the page and its credential are one save, not two writes that agree.
+    const artifact = call('INSERT INTO marketing_artifacts')
+    const storedHtml = String(artifact?.params[6])
+    expect(artifact?.params.slice(1, 6)).toEqual([TENANT, BUNDLE_ID, 'funnel-builder', 'page_html', null])
+    expect(storedHtml).toContain(`https://api.example.test/api/marketing/leads?t=${token}`)
+    expect(storedHtml).not.toContain(LEAD_ENDPOINT_PLACEHOLDER)
+  })
+
+  /**
+   * A replay of the same role columns lands on the same bundle id, and a second
+   * save mints a second token, which stamps different bytes and derives a
+   * different content-addressed page id. Writing the artifacts first left the
+   * bundle holding two page_html rows while the set-once UPDATE then refused the
+   * save: `slotProblemCheck` will not derive a page from an ambiguous slot, so
+   * that bundle could never be staged again without manual SQL. The refusal
+   * therefore comes from a read after the commit and before the insert.
+   */
+  it('refuses a re-save of a credentialed bundle before it writes a second page', async () => {
+    vi.stubEnv('CRUM_LEAD_API_ORIGIN', 'https://api.example.test')
+    stubQueries({
+      'INSERT INTO pending_writes': [pendingWriteRow()],
+      'SELECT * FROM pending_writes': [],
+      'INSERT INTO marketing_bundles': [{ id: BUNDLE_ID }],
+      'UPDATE pending_writes SET committed_at': [{ id: DRAFT_ID }],
+      'FROM marketing_bundles': [bundleRow({ lead_token: LEAD_TOKEN })],
+    })
+    await expect(
+      save(
+        bundleInput({
+          objective: 'inbound_leads',
+          artifacts: [
+            {
+              role: 'funnel-builder',
+              kind: 'page_html',
+              documentId: null,
+              textContent: `<form action="${LEAD_ENDPOINT_PLACEHOLDER}" method="post"></form>`,
+            },
+          ],
+        }),
+      ),
+    ).rejects.toThrow(/lead_token_locked/)
+    // The assertion that makes this "before it writes", not merely "it threw":
+    // the harness answers an unhandled statement with its own error, so asserting
+    // only on the rejection would pass just as well for a late refusal. Neither
+    // the artifact insert nor the token update was issued at all.
+    expect(call('INSERT INTO marketing_artifacts')).toBeUndefined()
+    expect(call('SET lead_token')).toBeUndefined()
+  })
+
+  /**
+   * The read narrows the window but cannot close it: two saves can both see a
+   * null lead_token and both reach the update. The predicate on the UPDATE is
+   * what makes the credential set-once, so a false return still has to surface
+   * rather than leave a caller believing a second credential was minted.
+   */
+  it('refuses the save whose set-once update lost the race', async () => {
+    vi.stubEnv('CRUM_LEAD_API_ORIGIN', 'https://api.example.test')
+    stubQueries({
+      'INSERT INTO pending_writes': [pendingWriteRow()],
+      'SELECT * FROM pending_writes': [],
+      'INSERT INTO marketing_bundles': [{ id: BUNDLE_ID }],
+      'UPDATE pending_writes SET committed_at': [{ id: DRAFT_ID }],
+      // Null at read time: the other save had not committed its token yet.
+      'FROM marketing_bundles': [bundleRow()],
+      'INSERT INTO marketing_artifacts': [{ id: 'a' }],
+      'SET lead_token': [],
+    })
+    await expect(
+      save(
+        bundleInput({
+          objective: 'inbound_leads',
+          artifacts: [
+            {
+              role: 'funnel-builder',
+              kind: 'page_html',
+              documentId: null,
+              textContent: `<form action="${LEAD_ENDPOINT_PLACEHOLDER}" method="post"></form>`,
+            },
+          ],
+        }),
+      ),
+    ).rejects.toThrow(/lead_token_locked/)
+  })
+})
+
+async function saveSchema() {
+  const { saveBundleTool } = await import('../../src/mastra/tools/marketing-writes')
+  const schema = saveBundleTool.inputSchema
+  if (!schema) throw new Error('marketing.save_bundle has no input schema')
+  return schema
+}
+
+describe('marketing.save_bundle input schema', () => {
+  /**
+   * `execute` below is called directly in every other case, so none of them runs
+   * the tool's zod input schema. This is the one place the kind enum is asked,
+   * and it is the question that matters: migration 0019 admits a thank-you
+   * artifact, so a schema built from a stale list would reject every one.
+   */
+  it('admits a thank-you artifact, the seventh kind migration 0019 allows', async () => {
+    const schema = await saveSchema()
+    const result = await schema['~standard'].validate(
+      bundleInput({
+        artifacts: [
+          { role: 'funnel-builder', kind: 'thank_you_html', documentId: null, textContent: '<p>thanks</p>' },
+        ],
+      }),
+    )
+    expect(result.issues).toBeUndefined()
+  })
+
+  it('still refuses a kind the artifact table does not admit', async () => {
+    const schema = await saveSchema()
+    const result = await schema['~standard'].validate(
+      bundleInput({
+        artifacts: [
+          { role: 'funnel-builder', kind: 'landing_html', documentId: null, textContent: '<p>hi</p>' },
+        ],
+      }),
+    )
+    expect(result.issues).toBeDefined()
+  })
 })
 
 describe('marketing.stage_bundle', () => {
-  const stageHandlers = (row: Row): Record<string, Row[]> => ({
+  const stageHandlers = (row: Row, artifacts: Row[] = []): Record<string, Row[]> => ({
     'FROM marketing_bundles': [row],
-    'SELECT count(*) AS count FROM marketing_artifacts': [{ count: 3 }],
+    'FROM marketing_artifacts': artifacts,
     'INSERT INTO pending_writes': [pendingWriteRow({ object_type: 'marketing_stage', gate: 'approval' })],
     'UPDATE marketing_bundles': [{ id: BUNDLE_ID }],
   })
@@ -399,11 +615,35 @@ describe('marketing.stage_bundle', () => {
       'draftHash',
       'objective',
       'requestedCeilingMinor',
+      'siteHash',
     ])
     expect(stagedInsert().requestedCeilingMinor).toBe(2500)
     expect(stagedInsert().actionCount).toBe(0)
     expect(stagedInsert().objective).toBe('outreach_support')
+    // An empty artifact list: no rows, so no bytes to hash and nothing to
+    // publish. This case is about the key set, and siteHash's null branch is the
+    // one a bundle with no page records.
+    expect(stagedInsert().artifactCount).toBe(0)
+    expect(stagedInsert().siteHash).toBeNull()
+  })
+
+  it('counts the artifact rows it read, rather than echoing zero', async () => {
+    // The count used to come from countMarketingArtifacts; it is artifacts.length
+    // now. Three rows that claim no site slot keep siteHash null while making the
+    // number impossible to pass with a constant.
+    stubQueries(
+      stageHandlers(bundleRow(), [
+        artifactRow({ id: 'a1', kind: 'script', text_content: 'Objection handling: price is a comparison' }),
+        artifactRow({ id: 'a2', role: 'campaign-analyst', kind: 'report', text_content: 'Week one results' }),
+        artifactRow({ id: 'a3', kind: 'script', text_content: 'Follow-up call script' }),
+      ]),
+    )
+    const result = await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
     expect(stagedInsert().artifactCount).toBe(3)
+    expect(stagedInsert().siteHash).toBeNull()
+    // The number the reviewer is told comes from the same rows the hash would
+    // cover, so the payload and the message cannot disagree.
+    expect(result.message).toContain('3 asset(s)')
   })
 
   it('keys the draft on the bundle id and the hash recomputed from the stored row', async () => {
@@ -426,8 +666,11 @@ describe('marketing.stage_bundle', () => {
 
   it('refuses a bundle whose plan asks for something nothing can execute, and stages nothing', async () => {
     stubQueries({
-      'FROM marketing_bundles': [bundleRow({ funnel_plan: { page: { slug: '/free-scan' } }, objective: 'inbound_leads' })],
-      'SELECT count(*) AS count FROM marketing_artifacts': [{ count: 1 }],
+      'FROM marketing_bundles': [bundleRow({ funnel_plan: { page: { slug: 'free-scan' } }, objective: 'inbound_leads' })],
+      // A publishable slug is not enough on its own any more: the action is only
+      // derived when there are bytes to publish, so the refusal is only about the
+      // adapter when a page_html row exists.
+      'FROM marketing_artifacts': [artifactRow()],
       'INSERT INTO human_tasks': [{ id: '66666666-6666-4666-8666-666666666666' }],
     })
     const result = await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
@@ -451,7 +694,7 @@ describe('marketing.stage_bundle', () => {
   it('refuses a plan it cannot read, before it reports an action count of zero', async () => {
     stubQueries({
       'FROM marketing_bundles': [bundleRow({ funnel_plan: { page: { title: 'Free scan' } }, objective: 'inbound_leads' })],
-      'SELECT count(*) AS count FROM marketing_artifacts': [{ count: 1 }],
+      'FROM marketing_artifacts': [],
       'INSERT INTO human_tasks': [{ id: '66666666-6666-4666-8666-666666666666' }],
     })
     const result = await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
@@ -477,7 +720,7 @@ describe('marketing.stage_bundle', () => {
       'FROM marketing_bundles': [
         bundleRow({ media_plan: { campaigns: [{ name: 'melbourne-physio-awareness' }] }, objective: 'inbound_leads' }),
       ],
-      'SELECT count(*) AS count FROM marketing_artifacts': [{ count: 2 }],
+      'FROM marketing_artifacts': [],
       'INSERT INTO human_tasks': [{ id: '66666666-6666-4666-8666-666666666666' }],
     })
     const result = await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
@@ -486,6 +729,42 @@ describe('marketing.stage_bundle', () => {
     expect(String(call('INSERT INTO human_tasks')?.params[4])).toContain('create_campaign')
     expect(call('INSERT INTO pending_writes')).toBeUndefined()
     expect(call('UPDATE marketing_bundles')).toBeUndefined()
+  })
+
+  /**
+   * deriveActions throws SlugProblemError on a slug the site cannot publish, and a
+   * throw inside an agent turn is not a refusal a human can act on. The queue entry
+   * is, so the tool asks slugProblem first and never hands the bad slug to
+   * derivation.
+   */
+  it('refuses an unusable page slug as a queue entry, not as a throw', async () => {
+    stubQueries({
+      'FROM marketing_bundles': [
+        bundleRow({ funnel_plan: { page: { slug: 'Free Quote' } }, objective: 'inbound_leads' }),
+      ],
+      'FROM marketing_artifacts': [artifactRow()],
+      'INSERT INTO human_tasks': [{ id: '66666666-6666-4666-8666-666666666666' }],
+    })
+    const result = await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
+    expect(result).toMatchObject({ proceed: false })
+    expect(String(result.reason)).toContain('unusable page slug')
+    expect(String(result.reason)).toContain('Free Quote')
+    expect(call('INSERT INTO pending_writes')).toBeUndefined()
+  })
+
+  it('refuses a slot two artifacts claim, before anything is hashed', async () => {
+    stubQueries({
+      'FROM marketing_bundles': [
+        bundleRow({ funnel_plan: { page: { slug: 'free-scan' } }, objective: 'inbound_leads' }),
+      ],
+      'FROM marketing_artifacts': [artifactRow({ id: 'a1' }), artifactRow({ id: 'a2' })],
+      'INSERT INTO human_tasks': [{ id: '66666666-6666-4666-8666-666666666666' }],
+    })
+    const result = await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
+    expect(result).toMatchObject({ proceed: false })
+    expect(String(result.reason)).toContain('ambiguous page slot')
+    expect(String(result.reason)).toContain('page_html')
+    expect(call('INSERT INTO pending_writes')).toBeUndefined()
   })
 
   it('refuses a bundle that is already approved, rather than double-approving it', async () => {
@@ -556,7 +835,7 @@ describe('marketing.stage_bundle', () => {
   it('reports the ceiling the open draft holds when the key already exists', async () => {
     stubQueries({
       'FROM marketing_bundles': [bundleRow()],
-      'SELECT count(*) AS count FROM marketing_artifacts': [{ count: 3 }],
+      'FROM marketing_artifacts': [],
       'INSERT INTO pending_writes': [
         pendingWriteRow({
           object_type: 'marketing_stage',

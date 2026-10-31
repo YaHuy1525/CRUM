@@ -89,7 +89,7 @@ describe('ApprovalQueue', () => {
     mount([
       route(
         '/api/approvals/pending',
-        queue([item({ suspension: { run_id: RUN_ID, thread_id: 'thread-1', resource_id: 'tenant-1:user-1', tool_call_ids: ['call-1'] } })]),
+        queue([item({ suspension: { run_id: RUN_ID, thread_id: 'thread-1', resource_id: 'tenant-1:user-1', tool_call_ids: ['call-1'], tool_names: ['crm.create_contact'] } })]),
       ),
     ])
     render(<ApprovalQueue />)
@@ -275,5 +275,25 @@ describe('ApprovalQueue', () => {
 
     expect(await screen.findByText('Risk: 72')).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'Read the bundle this approves' })).toBeNull()
+  })
+
+  it('resumes a suspended run through the run-level decision route', async () => {
+    const user = userEvent.setup()
+    mount([
+      route(
+        '/api/approvals/pending',
+        queue([item({ run_id: RUN_ID, suspension: { run_id: RUN_ID, thread_id: 'thread-1', resource_id: 'tenant-1:user-1', tool_call_ids: ['call-1'], tool_names: ['crm.create_contact'] } })]),
+      ),
+      route('/decision', { status: 200, body: { run_id: RUN_ID, tool_call_id: 'call-1', approved: true, finish_reason: 'stop', still_suspended: false, text: 'Bundle staged.' } }),
+    ])
+    render(<ApprovalQueue />)
+
+    await user.click(await screen.findByRole('button', { name: /resume crm.create_contact/i }))
+
+    const call = server.last('/decision')
+    // The run id in the path, not the draft id: this decides the agent's
+    // suspension, and the draft still needs its own Approve click.
+    expect(call?.url).toBe(`/api/approvals/${RUN_ID}/decision`)
+    expect(call?.body).toEqual({ approved: true, toolCallId: 'call-1' })
   })
 })

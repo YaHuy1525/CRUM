@@ -1,17 +1,38 @@
 import type { MarketingBundleRow } from '../db/marketing'
+import {
+  SlugProblemError,
+  resolveSite,
+  siteHashOf,
+  slotProblem,
+  type SiteArtifact,
+} from './site'
 
 export const MARKETING_ACTION_NAMES = [
   'publish_page',
   'unpublish_page',
   'create_campaign',
   'set_campaign_status',
+  'promote_page',
 ] as const
 
 export type MarketingActionName = (typeof MARKETING_ACTION_NAMES)[number]
 
+/**
+ * Declared, executable in this build, and never produced by a plan. A media or
+ * funnel plan can ask for a page; nothing in a plan can ask for that page to be
+ * put on the owner's domain, because that is the decision the owner reserved.
+ * Computed apart from DERIVED so the conformance test below cannot pass by
+ * hiding a name in the wrong list.
+ */
+export const HUMAN_INITIATED_ACTION_NAMES: readonly MarketingActionName[] = ['promote_page']
+
 export interface DerivedAction {
   action: MarketingActionName
   payload: Record<string, unknown>
+}
+
+export interface ActionContext {
+  tenantId: string
 }
 
 export interface MarketingActionAdapter {
@@ -20,9 +41,14 @@ export interface MarketingActionAdapter {
    * Called by the drainer after the approval transaction has committed. It must
    * never be called from inside one: an approval that signs a receipt for a page
    * the provider never received is the exact failure the outbox exists to make
-   * impossible (spec section 5).
+   * impossible (spec section 5). The context carries the tenant because the
+   * action carries only a bundle id and nothing in it tenant-scopes that id; the
+   * claimed row is the only place the tenant is known.
    */
-  execute: (action: DerivedAction) => Promise<{ externalId: string }>
+  execute: (
+    action: DerivedAction,
+    context: ActionContext,
+  ) => Promise<{ externalId: string; url?: string; fileCount?: number }>
 }
 
 /**
@@ -52,6 +78,16 @@ export function isExecutable(action: MarketingActionName): boolean {
   return adapters.has(action)
 }
 
+/**
+ * The same map `isExecutable` reads, so the two questions cannot disagree: a row
+ * the drainer decides it can run is a row it can also hand to an adapter. Null
+ * rather than a throw, because the caller's answer to a missing adapter is to
+ * record a failure naming the action, not to crash the pass.
+ */
+export function actionAdapter(name: MarketingActionName): MarketingActionAdapter | null {
+  return adapters.get(name) ?? null
+}
+
 export function blockedActions(actions: readonly DerivedAction[]): MarketingActionName[] {
   return actions.filter((action) => !isExecutable(action.action)).map((action) => action.action)
 }
@@ -62,39 +98,56 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null
 }
 
+export function pageSlugOf(bundle: Pick<MarketingBundleRow, 'funnelPlan'>): string | null {
+  const funnel = asRecord(bundle.funnelPlan)
+  const page = funnel ? asRecord(funnel['page']) : null
+  const slug = page?.['slug']
+  return typeof slug === 'string' && slug.length > 0 ? slug : null
+}
+
+export function slotProblemCheck(artifacts: readonly SiteArtifact[]): string | null {
+  return slotProblem(artifacts)
+}
+
 /**
- * The action list is derived from the stored bundle rather than passed in by the
- * caller, for the same reason send_outreach reads the body from the row instead
- * of trusting a resubmitted copy: the approver must be approving what the data
- * actually says, and a caller must not be able to stage fewer actions than the
- * plan asks for.
+ * The bytes, not just the intent: `slug` alone cannot build a manifest, and a
+ * publisher that resolved the file set later would be publishing bytes the
+ * reviewer never saw. `siteHash` here is the same value the stage payload shows
+ * and the same value the approval recomputes under the row lock.
  */
 export function deriveActions(
   bundle: Pick<MarketingBundleRow, 'id' | 'funnelPlan' | 'mediaPlan'>,
+  artifacts: readonly SiteArtifact[],
 ): DerivedAction[] {
   const actions: DerivedAction[] = []
-  const funnel = asRecord(bundle.funnelPlan)
-  const page = funnel ? asRecord(funnel['page']) : null
-  if (page && typeof page['slug'] === 'string' && page['slug'].length > 0) {
-    actions.push({ action: 'publish_page', payload: { slug: page['slug'] } })
+  const slug = pageSlugOf(bundle)
+  if (slug !== null && slotProblem(artifacts) === null) {
+    const files = resolveSite(slug, artifacts)
+    if (files.length > 0) {
+      actions.push({
+        action: 'publish_page',
+        payload: { bundleId: bundle.id, slug, siteHash: siteHashOf(files) },
+      })
+    }
   }
   const media = asRecord(bundle.mediaPlan)
   const campaigns = media?.['campaigns']
   if (Array.isArray(campaigns) && campaigns.length > 0) {
-    actions.push({ action: 'create_campaign', payload: { bundleId: bundle.id, campaignCount: campaigns.length } })
+    actions.push({
+      action: 'create_campaign',
+      payload: { bundleId: bundle.id, campaignCount: campaigns.length },
+    })
   }
   return actions
 }
 
-/** The action names `deriveActions` can produce from a stored plan. Slice 2 extends this list at
- * the same moment it extends the derivation, and the test below fails if either moves alone. */
 export const DERIVED_ACTION_NAMES: readonly MarketingActionName[] = ['publish_page', 'create_campaign']
 
 /** Declared in the database and in this build's vocabulary, but no plan shape that our roles emit
  * can express them yet. Computed rather than hand-copied so widening MARKETING_ACTION_NAMES lands
  * here instead of disappearing into a derivation that will never fire. */
 export const UNMAPPED_ACTION_NAMES: MarketingActionName[] = MARKETING_ACTION_NAMES.filter(
-  (name) => !DERIVED_ACTION_NAMES.includes(name),
+  (name) => !DERIVED_ACTION_NAMES.includes(name) && !HUMAN_INITIATED_ACTION_NAMES.includes(name),
 )
 
 /**
@@ -137,9 +190,20 @@ interface BundleLockRow {
   media_plan: unknown
 }
 
+interface ArtifactSqlRow {
+  id: string
+  kind: string
+  text_content: string | null
+}
+
 export async function commitBundleApproval(
   client: { query: <T = Record<string, unknown>>(text: string, values?: unknown[]) => Promise<{ rows: T[] }> },
-  params: { tenantId: string; bundleId: string; receiptId: string | null },
+  params: {
+    tenantId: string
+    bundleId: string
+    receiptId: string | null
+    expectedSiteHash: string | null
+  },
 ): Promise<string> {
   const locked = await client.query<BundleLockRow>(
     `SELECT id, status, funnel_plan, media_plan
@@ -172,11 +236,65 @@ export async function commitBundleApproval(
     )
   }
 
-  const actions = deriveActions({
-    id: row.id,
-    funnelPlan: row.funnel_plan,
-    mediaPlan: row.media_plan,
-  })
+  // The bytes the reviewer approved are identified by a hash in the staged
+  // payload. Nothing else in this transaction knows what the human looked at, so
+  // the lock is the last place that can still ask. Artifacts are read here rather
+  // than passed in: they live in rows the FOR UPDATE lock does not cover, and a
+  // re-read inside the transaction is the only version the commit may rely on.
+  const artifactResult = await client.query<ArtifactSqlRow>(
+    `SELECT id, kind, text_content
+       FROM marketing_artifacts
+      WHERE tenant_id = $1 AND bundle_id = $2
+      ORDER BY created_at ASC`,
+    [params.tenantId, row.id],
+  )
+  const artifacts: SiteArtifact[] = artifactResult.rows.map((a) => ({
+    id: a.id,
+    kind: a.kind,
+    textContent: a.text_content,
+  }))
+
+  const problem = slotProblem(artifacts)
+  if (problem !== null) {
+    throw new BundleNotApprovableError(
+      `marketing bundle ${row.id} cannot be approved: ${problem}`,
+    )
+  }
+
+  // A bundle with an unusable slug should never reach here, because the stage tool
+  // refuses it. If one does — an older row, or a plan edited after staging — the
+  // approval still fails closed: no receipt over a page whose path nobody can
+  // publish. resolveSite throws SlugProblemError, which is translated below to the
+  // refusal type applyDraft turns into an unapprovable answer; a raw throw would
+  // surface as a 500 instead.
+  let actions: DerivedAction[]
+  try {
+    actions = deriveActions(
+      { id: row.id, funnelPlan: row.funnel_plan, mediaPlan: row.media_plan },
+      artifacts,
+    )
+  } catch (err) {
+    if (err instanceof SlugProblemError) {
+      throw new BundleNotApprovableError(err.message)
+    }
+    throw err
+  }
+
+  const publish = actions.find((a) => a.action === 'publish_page')
+  const liveHash = typeof publish?.payload['siteHash'] === 'string' ? publish.payload['siteHash'] : null
+  // No null escape on either side. A payload that identified no page cannot
+  // approve a bundle that now has one, and a page that lost its bytes is the
+  // same refusal in the other direction. Null on both sides means neither the
+  // review nor this commit had a page to publish, which is the one case with
+  // nothing to compare.
+  if (liveHash !== params.expectedSiteHash) {
+    throw new BundleNotApprovableError(
+      `marketing bundle ${row.id} no longer hashes to the bytes this review was shown ` +
+        `(${params.expectedSiteHash ?? 'nothing'} staged, ${liveHash ?? 'nothing'} now). ` +
+        'Approve nothing; re-save and re-stage.',
+    )
+  }
+
   const blocked = blockedActions(actions)
   if (blocked.length > 0) {
     throw new BundleNotApprovableError(
