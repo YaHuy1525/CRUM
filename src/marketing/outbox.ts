@@ -247,10 +247,16 @@ export async function commitBundleApproval(
 
   const publish = actions.find((a) => a.action === 'publish_page')
   const liveHash = typeof publish?.payload['siteHash'] === 'string' ? publish.payload['siteHash'] : null
-  if (params.expectedSiteHash !== null && liveHash !== params.expectedSiteHash) {
+  // No null escape on either side. A payload that identified no page cannot
+  // approve a bundle that now has one, and a page that lost its bytes is the
+  // same refusal in the other direction. Null on both sides means neither the
+  // review nor this commit had a page to publish, which is the one case with
+  // nothing to compare.
+  if (liveHash !== params.expectedSiteHash) {
     throw new BundleNotApprovableError(
       `marketing bundle ${row.id} no longer hashes to the bytes this review was shown ` +
-        `(${params.expectedSiteHash} staged, ${liveHash ?? 'nothing'} now). Approve nothing; re-save and re-stage.`,
+        `(${params.expectedSiteHash ?? 'nothing'} staged, ${liveHash ?? 'nothing'} now). ` +
+        'Approve nothing; re-save and re-stage.',
     )
   }
 

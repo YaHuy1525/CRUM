@@ -20,6 +20,15 @@ const TENANT = '11111111-1111-4111-8111-111111111111'
 const BUNDLE = '33333333-3333-4333-8333-333333333333'
 const RECEIPT = '99999999-9999-4999-8999-999999999999'
 
+// The one-page fixture these commit cases share, and the hash a stage would have
+// recorded for it. Since the approval compares the two hashes unconditionally, a
+// case that must get past the re-check hands this over; null now means the
+// staged payload identified no page at all, which refuses.
+const PAGE_TEXT = '<h1>Free scan</h1>'
+const PAGE_HASH = siteHashOf(
+  resolveSite('free-scan', [{ id: 'a1', kind: 'page_html', textContent: PAGE_TEXT }]),
+)
+
 function bundleRow(over: Record<string, unknown> = {}) {
   return {
     id: BUNDLE,
@@ -49,14 +58,19 @@ function clientReturning(rows: unknown[], artifacts: unknown[] = []) {
 
 type FakeClient = ReturnType<typeof clientReturning>
 
-async function approve(client: FakeClient): Promise<string> {
+async function approve(
+  client: FakeClient,
+  expectedSiteHash: string | null = null,
+): Promise<string> {
   return await commitBundleApproval(client as never, {
     tenantId: TENANT,
     bundleId: BUNDLE,
     receiptId: RECEIPT,
-    // These cases are about the lock and the refusals, not about the re-check;
-    // null is what a stage with no page records.
-    expectedSiteHash: null,
+    // Null by default: the cases that omit the second argument are about the
+    // lock and the refusals, and have no page to identify. A case whose bundle
+    // has a page passes the hash a stage recorded, because null there now means
+    // the staged payload named nothing and the approval refuses.
+    expectedSiteHash,
   })
 }
 
@@ -197,18 +211,18 @@ describe('commitBundleApproval', () => {
   it('refuses to approve a bundle with a page, because no publish adapter exists yet', async () => {
     const client = clientReturning(
       [bundleRow({ funnel_plan: { page: { slug: 'free-scan' } } })],
-      [{ id: 'a1', kind: 'page_html', text_content: '<h1>Free scan</h1>' }],
+      [{ id: 'a1', kind: 'page_html', text_content: PAGE_TEXT }],
     )
-    await expect(approve(client)).rejects.toThrow(/publish_page/)
+    await expect(approve(client, PAGE_HASH)).rejects.toThrow(/publish_page/)
     expect(client.sqls().some((sql) => sql.includes("SET status = 'approved'"))).toBe(false)
   })
 
   it('names every blocked action in one message', async () => {
     const client = clientReturning(
       [bundleRow({ funnel_plan: { page: { slug: 'free-scan' } }, media_plan: { campaigns: [{ name: 'x' }] } })],
-      [{ id: 'a1', kind: 'page_html', text_content: '<h1>Free scan</h1>' }],
+      [{ id: 'a1', kind: 'page_html', text_content: PAGE_TEXT }],
     )
-    await expect(approve(client)).rejects.toThrow(/publish_page.*create_campaign|create_campaign.*publish_page/)
+    await expect(approve(client, PAGE_HASH)).rejects.toThrow(/publish_page.*create_campaign|create_campaign.*publish_page/)
   })
 
   it('refuses a bundle whose plan it cannot read, before it asks which adapters exist', async () => {
@@ -274,7 +288,7 @@ describe('commitBundleApproval', () => {
       name: 'publish_page',
       execute: () => Promise.resolve({ externalId: 'x' }),
     })
-    const artifacts = [{ id: 'a1', kind: 'page_html', text_content: '<h1>Free scan</h1>' }]
+    const artifacts = [{ id: 'a1', kind: 'page_html', text_content: PAGE_TEXT }]
     // try/finally: an assertion failure below must not leave publish_page
     // registered for the rest of the file, where every other case expects the
     // slice 1 registry to be empty.
@@ -283,7 +297,7 @@ describe('commitBundleApproval', () => {
         [bundleRow({ funnel_plan: { page: { slug: 'free-scan' } } })],
         artifacts,
       )
-      await expect(approve(client)).resolves.toBe(BUNDLE)
+      await expect(approve(client, PAGE_HASH)).resolves.toBe(BUNDLE)
       const insert = client.query.mock.calls.find((c) => c[0].includes('INSERT INTO marketing_actions'))
       // The hash is computed from the fixture's bytes rather than pasted, so an
       // outbox that enqueued a slug or a constant fails here. Same inputs the
@@ -291,7 +305,7 @@ describe('commitBundleApproval', () => {
       const expectedPayload = {
         bundleId: BUNDLE,
         slug: 'free-scan',
-        siteHash: siteHashOf(resolveSite('free-scan', [{ id: 'a1', kind: 'page_html', textContent: '<h1>Free scan</h1>' }])),
+        siteHash: PAGE_HASH,
       }
       expect(insert?.[1]).toEqual([TENANT, BUNDLE, 'publish_page', JSON.stringify(expectedPayload), RECEIPT])
     } finally {
