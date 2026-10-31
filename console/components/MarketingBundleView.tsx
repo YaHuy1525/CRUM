@@ -127,8 +127,8 @@ function Artifact({ artifact }: { artifact: MarketingArtifactRecord }) {
           >
             {artifact.documentId.slice(0, 8)}
           </a>
-          . Slice 1 has no renderer for generated images, so the bytes are read
-          from the document record rather than shown here.
+          . Slice 1 renders no image: this link reads the document's JSON record,
+          and nothing in the plane serves the stored bytes yet.
         </p>
       ) : (
         <p className="mt-2 text-sm text-text-muted">No content recorded.</p>
@@ -156,6 +156,16 @@ export function MarketingBundleView({ bundleId }: MarketingBundleViewProps) {
       const data = await get<MarketingBundleResponse>(
         `/api/marketing/bundles/${encodeURIComponent(bundleId)}`,
       )
+      // A 200 is not the same thing as a readable bundle. The console never
+      // imports src/, so a renamed envelope key is drift this screen can only
+      // notice at runtime — and an empty div would read as an empty bundle rather
+      // than as the two halves of the product disagreeing.
+      if (!data || typeof data !== 'object' || !data.bundle) {
+        setBundle(null)
+        setArtifacts([])
+        setError('The bundle request came back without a bundle in it.')
+        return
+      }
       setBundle(data.bundle)
       setArtifacts(data.artifacts ?? [])
     } catch (err) {
@@ -249,7 +259,14 @@ export function MarketingBundleView({ bundleId }: MarketingBundleViewProps) {
             )}
           </section>
         </>
-      ) : null}
+      ) : (
+        <div
+          role="alert"
+          className="rounded-md border border-danger-line bg-danger-soft px-3 py-2 text-sm text-danger"
+        >
+          Nothing in this response can be shown as a bundle.
+        </div>
+      )}
     </div>
   )
 }

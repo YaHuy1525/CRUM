@@ -34,7 +34,7 @@ function bundleResponse(over: Partial<MarketingBundleResponse> = {}): MarketingB
         kind: 'script',
         documentId: null,
         textContent: 'Objection handling: price is a comparison, not a no.',
-        status: 'ready',
+        status: 'pending_review',
         createdAt: '2026-10-30T02:00:00.000Z',
       },
     ],
@@ -97,7 +97,7 @@ describe('MarketingBundleView', () => {
           kind: 'image',
           documentId: DOCUMENT_ID,
           textContent: null,
-          status: 'ready',
+          status: 'pending_review',
           createdAt: '2026-10-30T02:00:00.000Z',
         },
       ],
@@ -106,7 +106,7 @@ describe('MarketingBundleView', () => {
 
     const link = await screen.findByRole('link', { name: DOCUMENT_ID.slice(0, 8) })
     expect(link).toHaveAttribute('href', `/api/documents/${DOCUMENT_ID}`)
-    expect(screen.getByText(/no renderer for generated images/)).toBeInTheDocument()
+    expect(screen.getByText(/renders no image/)).toBeInTheDocument()
   })
 
   it('says nothing recorded for the blocks a bundle does not carry', async () => {
@@ -150,5 +150,29 @@ describe('MarketingBundleView', () => {
     await user.click(screen.getByRole('button', { name: 'Retry' }))
     expect(await screen.findByText('Book more physio assessments in Melbourne')).toBeInTheDocument()
     expect(server.count('/api/marketing/bundles/')).toBe(2)
+  })
+
+  it('a 200 whose envelope has no bundle is an error, not a blank screen', async () => {
+    // The shape the console type says is impossible, which is the point: the type
+    // lives in console/lib/types.ts and is not checked against src/ at build time.
+    mount([
+      route('/api/marketing/bundles/', {
+        status: 200,
+        body: { artifacts: [] } as unknown as MarketingBundleResponse,
+      }),
+    ])
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('without a bundle')
+    expect(screen.queryByText('Media plan')).toBeNull()
+  })
+
+  it('announces the loading state before any answer arrives', () => {
+    // Sync body, no await: the fetch resolves on a later microtask, so the only
+    // state this can observe is the loading branch. If a refactor dropped it, the
+    // a11y node the brief asks for would vanish with no test noticing.
+    server = stubFetch([route('/api/marketing/bundles/', ok(bundleResponse()))])
+    render(<MarketingBundleView bundleId={BUNDLE_ID} />)
+    expect(screen.getByRole('status')).toHaveTextContent('Loading bundle')
+    expect(screen.queryByText('Media plan')).toBeNull()
   })
 })

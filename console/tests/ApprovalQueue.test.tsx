@@ -260,6 +260,13 @@ describe('ApprovalQueue', () => {
     // in this payload, which is the rule the link exists to work around.
     expect(screen.getByText(/"artifactCount": 3/)).toBeInTheDocument()
     expect(screen.queryByText(/physio/)).toBeNull()
+    // The falsifiable version of the same rule: /physio/ can never reach this
+    // page, because the queue does not fetch the bundle. These two can: inlining
+    // the bundle view into a queue row would put its section headings on screen,
+    // and that is exactly the move that would make a reviewer approve copy they
+    // were never shown in the payload.
+    expect(screen.queryByText('Strategy')).toBeNull()
+    expect(screen.queryByText('Media plan')).toBeNull()
   })
 
   it('a non-marketing draft gets no bundle link', async () => {
