@@ -81,6 +81,17 @@ function checkArtifactShape(artifacts: readonly ArtifactInput[]): void {
   }
 }
 
+/**
+ * One wording for a spent credential, because the early read and the set-once
+ * update are the same refusal seen at two moments: the owner is told the page
+ * was already published once and that a new bundle is the way forward.
+ */
+function leadTokenLocked(bundleId: string): Error {
+  return new Error(
+    `lead_token_locked: bundle ${bundleId} already carries a credential, so this page was already published once. Save a new bundle.`,
+  )
+}
+
 async function assertDocumentsVisible(tenantId: string, artifacts: readonly ArtifactInput[]): Promise<void> {
   const ids = artifacts.map((a) => a.documentId).filter((id): id is string => id !== null)
   for (const id of ids) {
@@ -231,6 +242,21 @@ export const saveBundleTool = createTool({
 
       const applied = await commitAutoWrite(draft)
       const bundleId = applied.committedRecordId ?? draft.id
+
+      // A credentialed bundle is spent. A re-save of it mints a new token, so
+      // the page bytes differ and the content-addressed artifact id differs
+      // too: inserting first would leave a second page_html row behind on a
+      // bundle whose token then refuses the update, and `slotProblem` will not
+      // derive a page from an ambiguous slot, so that bundle could never be
+      // staged again. Refusing before the write keeps the one page it had. The
+      // read is the early refusal; the conditional update below stays the
+      // enforcement when two saves race past it. No row right after a commit is
+      // not this refusal, so the path carries on.
+      if (pendingLeadToken !== null) {
+        const existing = await getMarketingBundle(rc.tenantId, bundleId)
+        if (existing !== null && existing.leadToken !== null) throw leadTokenLocked(bundleId)
+      }
+
       // `inserted` counts rows this call newly wrote: an idempotent replay of a
       // save whose artifacts already exist reports 0, not the size of the input.
       const inserted = await insertMarketingArtifacts({
@@ -245,11 +271,7 @@ export const saveBundleTool = createTool({
           bundleId,
           token: pendingLeadToken,
         })
-        if (!stored) {
-          throw new Error(
-            `lead_token_locked: bundle ${bundleId} already carries a credential, so this page was already published once. Save a new bundle.`,
-          )
-        }
+        if (!stored) throw leadTokenLocked(bundleId)
       }
 
       return {

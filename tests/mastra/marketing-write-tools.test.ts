@@ -27,6 +27,9 @@ const TENANT = rc.tenantId
 const BUNDLE_ID = '33333333-3333-4333-8333-333333333333'
 const DRAFT_ID = '44444444-4444-4444-8444-444444444444'
 const DOCUMENT_ID = '55555555-5555-4555-8555-555555555555'
+// The credential a bundle carries once its page has been published: a uuid,
+// because gen_random_uuid() is the column default and a mint has to match it.
+const LEAD_TOKEN = '88888888-8888-4888-8888-888888888888'
 
 type Row = Record<string, unknown>
 
@@ -151,6 +154,7 @@ function bundleRow(over: Row = {}): Row {
     analysis: null,
     prompt_version: 'marketing-v1',
     draft_hash: 'saved-hash',
+    lead_token: null,
     created_at: '2026-10-30T00:00:00.000Z',
     updated_at: '2026-10-30T00:00:00.000Z',
     ...over,
@@ -404,8 +408,9 @@ describe('marketing.save_bundle', () => {
    * The lead credential at save. An inbound bundle without a page has no form
    * to post the credential to, a page without the placeholder would publish a
    * dead form, and a page with the placeholder gets one minted endpoint written
-   * into the bytes that are stored and later hashed. The last case is the
-   * one-way door: the credential is set once, per bundle.
+   * into the bytes that are stored and later hashed. The last two cases are the
+   * one-way door: the credential is set once, per bundle, and a re-save of one
+   * that already has it is refused before it can write a second page.
    */
   it('refuses an inbound_leads bundle with no landing page, before staging anything', async () => {
     await expect(save(bundleInput({ objective: 'inbound_leads' }))).rejects.toThrow(/needs_page_html/)
@@ -440,6 +445,9 @@ describe('marketing.save_bundle', () => {
       'SELECT * FROM pending_writes': [],
       'INSERT INTO marketing_bundles': [{ id: BUNDLE_ID }],
       'UPDATE pending_writes SET committed_at': [{ id: DRAFT_ID }],
+      // The early read after the commit: a row that carries no credential yet is
+      // the first save of this bundle, so the stamp and the insert go ahead.
+      'FROM marketing_bundles': [bundleRow()],
       'INSERT INTO marketing_artifacts': [{ id: 'a' }],
       'SET lead_token': [{ id: BUNDLE_ID }],
     })
@@ -474,17 +482,61 @@ describe('marketing.save_bundle', () => {
   })
 
   /**
-   * A replay of the same role columns lands on the same bundle id, and the
-   * set-once UPDATE then matches no row. The refusal has to surface rather than
-   * leave a caller believing a second credential was minted.
+   * A replay of the same role columns lands on the same bundle id, and a second
+   * save mints a second token, which stamps different bytes and derives a
+   * different content-addressed page id. Writing the artifacts first left the
+   * bundle holding two page_html rows while the set-once UPDATE then refused the
+   * save: `slotProblemCheck` will not derive a page from an ambiguous slot, so
+   * that bundle could never be staged again without manual SQL. The refusal
+   * therefore comes from a read after the commit and before the insert.
    */
-  it('refuses a re-save onto a bundle that already carries a credential', async () => {
+  it('refuses a re-save of a credentialed bundle before it writes a second page', async () => {
     vi.stubEnv('CRUM_LEAD_API_ORIGIN', 'https://api.example.test')
     stubQueries({
       'INSERT INTO pending_writes': [pendingWriteRow()],
       'SELECT * FROM pending_writes': [],
       'INSERT INTO marketing_bundles': [{ id: BUNDLE_ID }],
       'UPDATE pending_writes SET committed_at': [{ id: DRAFT_ID }],
+      'FROM marketing_bundles': [bundleRow({ lead_token: LEAD_TOKEN })],
+    })
+    await expect(
+      save(
+        bundleInput({
+          objective: 'inbound_leads',
+          artifacts: [
+            {
+              role: 'funnel-builder',
+              kind: 'page_html',
+              documentId: null,
+              textContent: `<form action="${LEAD_ENDPOINT_PLACEHOLDER}" method="post"></form>`,
+            },
+          ],
+        }),
+      ),
+    ).rejects.toThrow(/lead_token_locked/)
+    // The assertion that makes this "before it writes", not merely "it threw":
+    // the harness answers an unhandled statement with its own error, so asserting
+    // only on the rejection would pass just as well for a late refusal. Neither
+    // the artifact insert nor the token update was issued at all.
+    expect(call('INSERT INTO marketing_artifacts')).toBeUndefined()
+    expect(call('SET lead_token')).toBeUndefined()
+  })
+
+  /**
+   * The read narrows the window but cannot close it: two saves can both see a
+   * null lead_token and both reach the update. The predicate on the UPDATE is
+   * what makes the credential set-once, so a false return still has to surface
+   * rather than leave a caller believing a second credential was minted.
+   */
+  it('refuses the save whose set-once update lost the race', async () => {
+    vi.stubEnv('CRUM_LEAD_API_ORIGIN', 'https://api.example.test')
+    stubQueries({
+      'INSERT INTO pending_writes': [pendingWriteRow()],
+      'SELECT * FROM pending_writes': [],
+      'INSERT INTO marketing_bundles': [{ id: BUNDLE_ID }],
+      'UPDATE pending_writes SET committed_at': [{ id: DRAFT_ID }],
+      // Null at read time: the other save had not committed its token yet.
+      'FROM marketing_bundles': [bundleRow()],
       'INSERT INTO marketing_artifacts': [{ id: 'a' }],
       'SET lead_token': [],
     })
