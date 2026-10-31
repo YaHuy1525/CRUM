@@ -226,6 +226,13 @@ describe.skipIf(!url)('inbound lead intake', () => {
     )
     expect(prospects.rows[0]?.n).toBe('1')
 
+    const channels = await db.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM prospect_channels
+        WHERE tenant_id = $1 AND platform = 'email' AND handle_normalized = $2`,
+      [TENANT, normalizeEmail('A@Example.COM ')],
+    )
+    expect(channels.rows[0]?.n).toBe('1')
+
     const consents = await db.query<{ n: string }>(
       `SELECT count(*)::text AS n FROM prospect_consents
         WHERE tenant_id = $1 AND prospect_id = $2`,
@@ -251,6 +258,60 @@ describe.skipIf(!url)('inbound lead intake', () => {
       [TENANT, bundleId],
     )
     expect(leads.rows[0]?.n).toBe('2')
+  })
+
+  it('leaves one of each row when two first submissions of one address race', async () => {
+    const db = getDbClient()
+    // Two idle clients, so both submissions start together rather than one
+    // queueing while the other opens a connection.
+    const warm = await Promise.all([db.connect(), db.connect()])
+    warm.forEach((client) => client.release())
+
+    const racer = { name: 'Le Van C', email: 'race@example.com' }
+    // The second submission starts while the first is still writing, which is
+    // the shape of the race this queue is built for.
+    const first = recordLead(lead(racer))
+    await new Promise((resolve) => setTimeout(resolve, 2))
+    const [a, b] = await Promise.all([first, recordLead(lead(racer))])
+
+    // Exactly one submission wins the lead, and the other must name the winner's
+    // prospect rather than a row of its own that nothing points at.
+    const winner = a.duplicate ? b : a
+    const loser = a.duplicate ? a : b
+    expect(winner.duplicate).toBe(false)
+    expect(loser.duplicate).toBe(true)
+    expect(loser.leadId).toBe(winner.leadId)
+    expect(loser.prospectId).toBe(winner.prospectId)
+
+    const email = normalizeEmail(racer.email)
+    const prospects = await db.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM prospects
+        WHERE tenant_id = $1 AND name_normalized = 'le van c'`,
+      [TENANT],
+    )
+    expect(prospects.rows[0]?.n).toBe('1')
+
+    const channels = await db.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM prospect_channels
+        WHERE tenant_id = $1 AND platform = 'email' AND handle_normalized = $2`,
+      [TENANT, email],
+    )
+    expect(channels.rows[0]?.n).toBe('1')
+
+    const consents = await db.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM prospect_consents
+        WHERE tenant_id = $1 AND prospect_id = $2`,
+      [TENANT, winner.prospectId],
+    )
+    expect(consents.rows[0]?.n).toBe('1')
+
+    const leads = await db.query<{ id: string; prospect_id: string }>(
+      `SELECT id, prospect_id FROM marketing_leads
+        WHERE tenant_id = $1 AND bundle_id = $2 AND email_normalized = $3`,
+      [TENANT, bundleId, email],
+    )
+    expect(leads.rows).toHaveLength(1)
+    expect(leads.rows[0]).toMatchObject({ id: winner.leadId, prospect_id: winner.prospectId })
   })
 
   it('names the serving page for a stamped token, and follows a promotion to the live URL', async () => {
