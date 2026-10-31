@@ -51,7 +51,7 @@ function ofKind(artifacts: readonly SiteArtifact[], kind: SiteSlotKind): SiteArt
   return artifacts.filter((a) => a.kind === kind && a.textContent !== null)
 }
 
-const SLOT_KINDS: readonly string[] = SITE_SLOTS.map((slot) => slot.kind)
+const SLOT_KINDS: readonly SiteSlotKind[] = SITE_SLOTS.map((slot) => slot.kind)
 
 /**
  * The question in text rather than as a throw, because the stage tool wants to
@@ -60,7 +60,7 @@ const SLOT_KINDS: readonly string[] = SITE_SLOTS.map((slot) => slot.kind)
  */
 export function slotProblem(artifacts: readonly SiteArtifact[]): string | null {
   for (const kind of SLOT_KINDS) {
-    const rows = ofKind(artifacts, kind as SiteSlotKind)
+    const rows = ofKind(artifacts, kind)
     if (rows.length > 1) return new SlotProblemError(kind, rows.map((r) => r.id)).message
   }
   return null
