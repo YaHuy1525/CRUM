@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { computeBundleHash } from '../../src/marketing/hash'
+import { LEAD_ENDPOINT_PLACEHOLDER } from '../../src/marketing/lead-token'
 
 const mockQuery = vi.fn()
 const mockClient = { query: mockQuery, release: vi.fn() }
@@ -203,6 +204,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.clearAllMocks()
+  vi.unstubAllEnvs()
 })
 
 describe('marketing.save_bundle', () => {
@@ -396,6 +398,111 @@ describe('marketing.save_bundle', () => {
       ),
     ).rejects.toBe(dbFault)
     expect(call('INSERT INTO pending_writes')).toBeUndefined()
+  })
+
+  /**
+   * The lead credential at save. An inbound bundle without a page has no form
+   * to post the credential to, a page without the placeholder would publish a
+   * dead form, and a page with the placeholder gets one minted endpoint written
+   * into the bytes that are stored and later hashed. The last case is the
+   * one-way door: the credential is set once, per bundle.
+   */
+  it('refuses an inbound_leads bundle with no landing page, before staging anything', async () => {
+    await expect(save(bundleInput({ objective: 'inbound_leads' }))).rejects.toThrow(/needs_page_html/)
+    expect(call('INSERT INTO pending_writes')).toBeUndefined()
+  })
+
+  it('refuses a landing page whose form holds no lead placeholder, before staging anything', async () => {
+    vi.stubEnv('CRUM_LEAD_API_ORIGIN', 'https://api.example.test')
+    await expect(
+      save(
+        bundleInput({
+          objective: 'inbound_leads',
+          artifacts: [
+            {
+              role: 'funnel-builder',
+              kind: 'page_html',
+              documentId: null,
+              textContent: '<form action="/nowhere" method="post"></form>',
+            },
+          ],
+        }),
+      ),
+    ).rejects.toThrow(/lead_endpoint_missing_placeholder/)
+    expect(call('INSERT INTO pending_writes')).toBeUndefined()
+    expect(call('INSERT INTO marketing_artifacts')).toBeUndefined()
+  })
+
+  it('stamps the minted endpoint into the stored page and stores that same token on the bundle', async () => {
+    vi.stubEnv('CRUM_LEAD_API_ORIGIN', 'https://api.example.test/')
+    stubQueries({
+      'INSERT INTO pending_writes': [pendingWriteRow()],
+      'SELECT * FROM pending_writes': [],
+      'INSERT INTO marketing_bundles': [{ id: BUNDLE_ID }],
+      'UPDATE pending_writes SET committed_at': [{ id: DRAFT_ID }],
+      'INSERT INTO marketing_artifacts': [{ id: 'a' }],
+      'SET lead_token': [{ id: BUNDLE_ID }],
+    })
+    await save(
+      bundleInput({
+        objective: 'inbound_leads',
+        artifacts: [
+          {
+            role: 'funnel-builder',
+            kind: 'page_html',
+            documentId: null,
+            textContent: `<form action="${LEAD_ENDPOINT_PLACEHOLDER}" method="post"><input name="email"></form>`,
+          },
+        ],
+      }),
+    )
+
+    const tokenUpdate = call('SET lead_token')
+    const token = String(tokenUpdate?.params[2])
+    expect(token).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+    expect(tokenUpdate?.params).toEqual([BUNDLE_ID, TENANT, token])
+    // Set-once: the predicate is what makes a token immutable, not the caller.
+    expect(tokenUpdate?.sql).toContain('lead_token IS NULL')
+
+    // The endpoint in the stored bytes carries the token the row now holds, so
+    // the page and its credential are one save, not two writes that agree.
+    const artifact = call('INSERT INTO marketing_artifacts')
+    const storedHtml = String(artifact?.params[6])
+    expect(artifact?.params.slice(1, 6)).toEqual([TENANT, BUNDLE_ID, 'funnel-builder', 'page_html', null])
+    expect(storedHtml).toContain(`https://api.example.test/api/marketing/leads?t=${token}`)
+    expect(storedHtml).not.toContain(LEAD_ENDPOINT_PLACEHOLDER)
+  })
+
+  /**
+   * A replay of the same role columns lands on the same bundle id, and the
+   * set-once UPDATE then matches no row. The refusal has to surface rather than
+   * leave a caller believing a second credential was minted.
+   */
+  it('refuses a re-save onto a bundle that already carries a credential', async () => {
+    vi.stubEnv('CRUM_LEAD_API_ORIGIN', 'https://api.example.test')
+    stubQueries({
+      'INSERT INTO pending_writes': [pendingWriteRow()],
+      'SELECT * FROM pending_writes': [],
+      'INSERT INTO marketing_bundles': [{ id: BUNDLE_ID }],
+      'UPDATE pending_writes SET committed_at': [{ id: DRAFT_ID }],
+      'INSERT INTO marketing_artifacts': [{ id: 'a' }],
+      'SET lead_token': [],
+    })
+    await expect(
+      save(
+        bundleInput({
+          objective: 'inbound_leads',
+          artifacts: [
+            {
+              role: 'funnel-builder',
+              kind: 'page_html',
+              documentId: null,
+              textContent: `<form action="${LEAD_ENDPOINT_PLACEHOLDER}" method="post"></form>`,
+            },
+          ],
+        }),
+      ),
+    ).rejects.toThrow(/lead_token_locked/)
   })
 })
 

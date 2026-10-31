@@ -52,6 +52,9 @@ export interface MarketingBundleRow {
   analysis: unknown
   promptVersion: string
   draftHash: string
+  // The credential a published page carries in its form action. Null until a
+  // save that minted one; set-once from then on.
+  leadToken: string | null
   createdAt: string
   updatedAt: string
 }
@@ -87,6 +90,7 @@ interface BundleSqlRow {
   analysis: unknown
   prompt_version: string
   draft_hash: string
+  lead_token: string | null
   created_at: string
   updated_at: string
 }
@@ -106,6 +110,7 @@ function toBundle(row: BundleSqlRow): MarketingBundleRow {
     analysis: row.analysis,
     promptVersion: row.prompt_version,
     draftHash: row.draft_hash,
+    leadToken: row.lead_token,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -119,7 +124,7 @@ export async function getMarketingBundle(
   const result = await db.query<BundleSqlRow>(
     `SELECT id, tenant_id, brief, objective, audience_note, status,
             strategy, copy, media_plan, funnel_plan, analysis,
-            prompt_version, draft_hash, created_at, updated_at
+            prompt_version, draft_hash, lead_token, created_at, updated_at
        FROM marketing_bundles
       WHERE id = $1 AND tenant_id = $2`,
     [bundleId, tenantId],
@@ -218,6 +223,24 @@ export async function insertMarketingArtifacts(params: {
     if (result.rows[0]) inserted += 1
   }
   return inserted
+}
+
+export async function setBundleLeadToken(params: {
+  tenantId: string
+  bundleId: string
+  token: string
+}): Promise<boolean> {
+  const db = getDbClient()
+  // Set-once: a token that can rotate would let a re-save change a published
+  // page's credential without changing its hash.
+  const result = await db.query<{ id: string }>(
+    `UPDATE marketing_bundles
+        SET lead_token = $3
+      WHERE id = $1 AND tenant_id = $2 AND lead_token IS NULL
+      RETURNING id`,
+    [params.bundleId, params.tenantId, params.token],
+  )
+  return Boolean(result.rows[0])
 }
 
 /**

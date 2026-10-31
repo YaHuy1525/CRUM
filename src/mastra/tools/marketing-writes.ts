@@ -14,10 +14,17 @@ import {
   listMarketingArtifacts,
   markBundleStaged,
   roleColumnsOf,
+  setBundleLeadToken,
   type ArtifactInput,
   type MarketingBundleRow,
 } from '../../db/marketing'
 import { computeBundleHash } from '../../marketing/hash'
+import {
+  LEAD_ENDPOINT_PLACEHOLDER,
+  leadEndpointUrl,
+  mintLeadToken,
+  stampLeadEndpoint,
+} from '../../marketing/lead-token'
 import {
   blockedActions,
   deriveActions,
@@ -117,6 +124,32 @@ export const saveBundleTool = createTool({
       checkArtifactShape(artifacts)
       await assertDocumentsVisible(rc.tenantId, artifacts)
 
+      // Objective decides whether the page must carry a form target. A proof
+      // asset with no intake is a document, not a broken funnel.
+      let pendingLeadToken: string | null = null
+      const page = artifacts.find((a) => a.kind === 'page_html')
+      if (input.objective === 'inbound_leads') {
+        if (!page?.textContent) {
+          throw new Error(
+            'needs_page_html: an inbound_leads bundle must carry one page_html artifact holding the landing page',
+          )
+        }
+        const token = mintLeadToken()
+        const apiOrigin = process.env.CRUM_LEAD_API_ORIGIN ?? process.env.CRUM_MARKETING_SITE_ORIGIN ?? ''
+        const stamp = stampLeadEndpoint(page.textContent, leadEndpointUrl(apiOrigin, token))
+        if (!stamp.ok || stamp.html === undefined) {
+          throw new Error(
+            `lead_endpoint_${stamp.reason ?? 'refused'}: the landing page must hold exactly one ` +
+              `${LEAD_ENDPOINT_PLACEHOLDER} in its form action, and this one holds ${stamp.count ?? 0}`,
+          )
+        }
+        page.textContent = stamp.html
+        // Stamped before anything is hashed: the artifact id below is derived
+        // from these bytes, and the approval signs a site hash over them, so the
+        // credential cannot arrive after the hash that covers it.
+        pendingLeadToken = token
+      }
+
       // `columns` (hashed just below) and the `payload` handed to getOrCreateDraft
       // are two hand-written views of one bundle: the first keys the idempotency
       // hash, the second becomes the marketing_bundles row the commit writes.
@@ -205,6 +238,19 @@ export const saveBundleTool = createTool({
         bundleId,
         artifacts,
       })
+
+      if (pendingLeadToken !== null) {
+        const stored = await setBundleLeadToken({
+          tenantId: rc.tenantId,
+          bundleId,
+          token: pendingLeadToken,
+        })
+        if (!stored) {
+          throw new Error(
+            `lead_token_locked: bundle ${bundleId} already carries a credential, so this page was already published once. Save a new bundle.`,
+          )
+        }
+      }
 
       return {
         bundleId,
