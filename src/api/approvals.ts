@@ -239,39 +239,48 @@ export function createApprovalRouter(deps: ApprovalRouterDeps): Hono {
     if (draft.committedAt) {
       return c.json({ error: 'already_applied', committed_at: draft.committedAt }, 409)
     }
-    if (new Date(draft.expiresAt).getTime() <= Date.now()) {
-      return c.json({ error: 'expired', expires_at: draft.expiresAt }, 410)
+    if (body.data.approved) {
+      // Expiry blocks approval and nothing else. An expired authorisation must
+      // not become executable, and the 410 stays.
+      if (new Date(draft.expiresAt).getTime() <= Date.now()) {
+        return c.json({ error: 'expired', expires_at: draft.expiresAt }, 410)
+      }
+      try {
+        const result = await commitWithReceipt(draft, { approvedBy: userId, scope: APPROVAL_SCOPE })
+        return c.json({
+          status: 'approved',
+          pending_write_id: draft.id,
+          receipt_id: result.receiptId,
+          committed_record_id: result.committedId,
+        }, 201)
+      } catch (err) {
+        if (err instanceof UnsupportedCommitError) {
+          return c.json({ error: 'not_committable', detail: err.message }, 422)
+        }
+        if (err instanceof Error && /already committed|was rejected/.test(err.message)) {
+          return c.json({ error: 'already_decided', detail: err.message }, 409)
+        }
+        throw err
+      }
     }
 
-    if (!body.data.approved) {
-      const receiptId = await rejectPendingWrite(
-        draft.id,
-        tenantId,
-        draft.runId,
-        userId,
-        body.data.reason ?? 'Rejected from the approval queue',
-      )
-      if (!receiptId) return c.json({ error: 'not_found' }, 404)
-      return c.json({ status: 'rejected', pending_write_id: draft.id, receipt_id: receiptId }, 201)
-    }
-
-    try {
-      const result = await commitWithReceipt(draft, { approvedBy: userId, scope: APPROVAL_SCOPE })
-      return c.json({
-        status: 'approved',
-        pending_write_id: draft.id,
-        receipt_id: result.receiptId,
-        committed_record_id: result.committedId,
-      }, 201)
-    } catch (err) {
-      if (err instanceof UnsupportedCommitError) {
-        return c.json({ error: 'not_committable', detail: err.message }, 422)
-      }
-      if (err instanceof Error && /already committed|was rejected/.test(err.message)) {
-        return c.json({ error: 'already_decided', detail: err.message }, 409)
-      }
-      throw err
-    }
+    // Backlog M3. Answering 410 to a rejection meant `rejected_at` could never
+    // be set, the partial index `uq_pending_draft_hash` kept holding the key,
+    // and a re-stage returned the dead row: a queue entry that refused both yes
+    // and no, with the bundle stranded in `staged`. Rejecting an expired draft
+    // is the honest answer to an expired proposal, and it is the only thing that
+    // frees the hash. The rejected alternative, adding expires_at to the index
+    // predicate, would let a re-stage win by discarding the item the owner was
+    // already reading.
+    const receiptId = await rejectPendingWrite(
+      draft.id,
+      tenantId,
+      draft.runId,
+      userId,
+      body.data.reason ?? 'Rejected from the approval queue',
+    )
+    if (!receiptId) return c.json({ error: 'not_found' }, 404)
+    return c.json({ status: 'rejected', pending_write_id: draft.id, receipt_id: receiptId }, 201)
   })
 
   app.post('/:runId/decision', async (c) => {

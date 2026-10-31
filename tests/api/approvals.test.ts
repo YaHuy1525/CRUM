@@ -366,6 +366,22 @@ describe('POST /api/approvals/drafts/:id/decision', () => {
     expect((await json<ErrorBody>(res)).error).toBe('expired')
   })
 
+  it('410s only an approval: an expired draft still accepts a rejection', async () => {
+    db.getPendingWrite.mockResolvedValue(draft({ expiresAt: PAST, objectType: 'customer' }))
+    db.rejectPendingWrite.mockResolvedValue('receipt-reject-1')
+
+    const res = await router().request(
+      `/api/approvals/drafts/${DRAFT_ID}/decision`,
+      post({ approved: false, reason: 'the window closed while I was away' }),
+    )
+
+    expect(res.status).toBe(201)
+    expect(db.rejectPendingWrite).toHaveBeenCalledWith(
+      DRAFT_ID, TENANT, 'pending', APPROVER, 'the window closed while I was away',
+    )
+    expect(db.commitWithReceipt).not.toHaveBeenCalled()
+  })
+
   /**
    * The 422 is the point: `mail.send` is staged but not deliverable, so approving
    * it would sign a receipt for an email nobody sent. That is reported as the
