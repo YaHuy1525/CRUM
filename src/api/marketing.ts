@@ -6,6 +6,7 @@ import type { TenantRequestContext } from '../mastra/tenant-context'
 import { IdentityError, resolveIdentity } from '../mastra/identity'
 import { stagePromotion, stageRetry } from '../mastra/tools/marketing-writes'
 import { getMarketingBundle, listMarketingActions, listMarketingArtifacts } from '../db/marketing'
+import { bundleForLeadToken, countLeadsSince, recordLead } from '../db/marketing-leads'
 
 // ── Marketing: the read surface and the two staging doors (slice 2) ─────────
 //
@@ -25,6 +26,27 @@ export interface MarketingRouterDeps {
 }
 
 const IdSchema = z.string().uuid()
+
+const LeadFormSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  email: z.string().trim().min(3).max(200).email(),
+  country: z.enum(['AU', 'VN']),
+  budget: z.enum(['under_500', '500_to_2k', '2k_plus', 'not_sure']),
+  goal: z.string().trim().min(1).max(500),
+  // A honeypot: a real visitor never fills it, a bot usually does.
+  website: z.string().max(0).optional().default(''),
+})
+
+/**
+ * The address as it arrived. Validation runs on a trimmed copy, but the raw
+ * string is what the owner reads in the lead row; only the dedupe key is
+ * normalised, in recordLead, beside the lookup it protects.
+ */
+function rawEmailOf(input: unknown): string {
+  if (typeof input !== 'object' || input === null) return ''
+  const email = (input as Record<string, unknown>)['email']
+  return typeof email === 'string' ? email : ''
+}
 
 export function createMarketingRouter(deps: MarketingRouterDeps): Hono {
   const { env } = deps
@@ -98,6 +120,59 @@ export function createMarketingRouter(deps: MarketingRouterDeps): Hono {
     })
     if (!result.ok) return c.json({ error: 'not_retryable', reason: result.reason }, 409)
     return c.json({ pendingWriteId: result.pendingWriteId, riskScore: result.riskScore }, 201)
+  })
+
+  // Deliberately outside the `auth(c)` closure: a stranger filling in a
+  // landing-page form has no CRUM identity, and spec section 13 says plainly
+  // that this route cannot use the identity gate. The credential is the
+  // per-bundle token stamped into the page before its bytes were hashed, and
+  // nothing else on this router is public. Spec section 7.1.
+  app.post('/leads', async (c) => {
+    const contentType = c.req.header('content-type') ?? ''
+    const wantsJson = contentType.includes('application/json')
+    const raw: unknown = wantsJson
+      ? await c.req.json().catch(() => null)
+      : Object.fromEntries(new URLSearchParams(await c.req.text().catch(() => '')).entries())
+
+    // Resolved before the form is judged: a token CRUM cannot name is a 404
+    // whether it never existed or was revoked, and no body changes that.
+    const token = c.req.query('t') ?? ''
+    const bundle = await bundleForLeadToken(token)
+    if (!bundle) return c.json({ error: 'not_found' }, 404)
+
+    const parsed = LeadFormSchema.safeParse(raw)
+    if (!parsed.success || parsed.data.website !== '') {
+      // A filled honeypot is refused the same way a bad form is, and a form
+      // caller is sent back to the page rather than shown a status code.
+      if (!wantsJson) {
+        return c.redirect(`${bundle.servingUrl}/${bundle.slug}/?lead=invalid`, 303)
+      }
+      return c.json({ error: 'invalid_lead' }, 400)
+    }
+
+    const dayStart = new Date(Date.now() - (Date.now() % 86_400_000)).toISOString()
+    const count = await countLeadsSince(bundle.bundleId, dayStart)
+    if (count >= env.CRUM_MARKETING_LEAD_DAILY_CAP) {
+      // The cap and the success path answer identically on purpose: a visitor
+      // is never shown the rate limit, and a prober learns nothing about which
+      // of the two happened.
+      if (!wantsJson) return c.redirect(`${bundle.servingUrl}/${bundle.slug}/thanks/`, 303)
+      return c.json({ status: 'received' }, 200)
+    }
+
+    await recordLead({
+      tenantId: bundle.tenantId,
+      bundleId: bundle.bundleId,
+      name: parsed.data.name,
+      email: rawEmailOf(raw),
+      country: parsed.data.country,
+      budgetBucket: parsed.data.budget,
+      goal: parsed.data.goal,
+      sourceUrl: `${bundle.servingUrl}/${bundle.slug}/`,
+    })
+
+    if (!wantsJson) return c.redirect(`${bundle.servingUrl}/${bundle.slug}/thanks/`, 303)
+    return c.json({ status: 'received' }, 200)
   })
 
   return app
