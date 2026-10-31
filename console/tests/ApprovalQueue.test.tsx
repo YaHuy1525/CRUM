@@ -9,6 +9,7 @@ import type { QueueItem } from '../lib/types'
 const DRAFT_ID = 'd1d1d1d1-1111-4111-8111-111111111111'
 const RUN_ID = 'run-4b4b4b4b'
 const RECEIPT_ID = 'r9r9r9r9-0000-4000-8000-000000000000'
+const BUNDLE_ID = '33333333-3333-4333-8333-333333333333'
 
 function item(over: Partial<QueueItem> = {}): QueueItem {
   return {
@@ -227,5 +228,45 @@ describe('ApprovalQueue', () => {
     await user.click(await screen.findByRole('tab', { name: 'Decided' }))
     await user.click(await screen.findByRole('button', { name: 'Show receipt' }))
     expect(await screen.findByText('Signature DOES NOT match this receipt')).toBeInTheDocument()
+  })
+
+  it('a staged marketing bundle links to the screen that holds the copy', async () => {
+    mount([
+      route(
+        '/api/approvals/pending',
+        queue([
+          item({
+            object_type: 'marketing_stage',
+            operation: 'update',
+            target_id: BUNDLE_ID,
+            risk_score: 10,
+            payload: {
+              bundleId: BUNDLE_ID,
+              draftHash: 'b'.repeat(64),
+              objective: 'outreach_support',
+              artifactCount: 3,
+              requestedCeilingMinor: 40000,
+              actionCount: 0,
+            },
+          }),
+        ]),
+      ),
+    ])
+    render(<ApprovalQueue />)
+
+    const link = await screen.findByRole('link', { name: 'Read the bundle this approves' })
+    expect(link).toHaveAttribute('href', `/marketing/${BUNDLE_ID}`)
+    // The row itself still renders only the redacted view: the copy is nowhere
+    // in this payload, which is the rule the link exists to work around.
+    expect(screen.getByText(/"artifactCount": 3/)).toBeInTheDocument()
+    expect(screen.queryByText(/physio/)).toBeNull()
+  })
+
+  it('a non-marketing draft gets no bundle link', async () => {
+    mount([route('/api/approvals/pending', queue([item()]))])
+    render(<ApprovalQueue />)
+
+    expect(await screen.findByText('Risk: 72')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Read the bundle this approves' })).toBeNull()
   })
 })

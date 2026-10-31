@@ -483,3 +483,47 @@ export interface BillingInvoicesResponse {
 export interface InvoiceActionResponse {
   invoice: BillingInvoice
 }
+
+// ── Marketing bundle (slice 1, read-only) ────────────────────────────────────
+//
+// camelCase because /api/marketing/bundles/:id serialises the row mapped in
+// src/db/marketing.ts, which is the same convention /api/prospects/:id follows.
+
+export interface MarketingBundleRecord {
+  id: string
+  tenantId: string
+  brief: string
+  objective: 'outreach_support' | 'inbound_leads' | 'proof_asset'
+  audienceNote: string | null
+  status: 'draft' | 'staged' | 'approved' | 'publishing' | 'live' | 'failed' | 'archived'
+  strategy: unknown
+  copy: unknown
+  mediaPlan: unknown
+  funnelPlan: unknown
+  analysis: unknown
+  promptVersion: string
+  draftHash: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface MarketingArtifactRecord {
+  id: string
+  // Widened to `string` on purpose, exactly as objective and status are widened
+  // above: the real types are six-member literal unions (MarketingRole and
+  // MarketingArtifactKind, src/db/marketing.ts:5-25), and a console type that
+  // goes stale the day a role is added breaks the build without protecting
+  // anything, because this screen renders whatever the server says rather than
+  // branching on the value.
+  role: string
+  kind: string
+  documentId: string | null
+  textContent: string | null
+  status: string
+  createdAt: string
+}
+
+export interface MarketingBundleResponse {
+  bundle: MarketingBundleRecord
+  artifacts: MarketingArtifactRecord[]
+}

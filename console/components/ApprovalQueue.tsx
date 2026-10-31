@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import Link from 'next/link'
 
 import { ApiError, get, post, describeError } from '../lib/api'
 import type { DecisionResponse, QueueItem, QueueResponse } from '../lib/types'
@@ -29,6 +30,21 @@ function riskVariant(score: number): 'danger' | 'warning' | 'secondary' {
   if (score >= 70) return 'danger'
   if (score >= 40) return 'warning'
   return 'secondary'
+}
+
+/**
+ * The staged marketing payload carries no prose (spec §7), so the row below it
+ * cannot show a reviewer what they are signing. This recovers the bundle id for
+ * the one object type that has a bundle behind it. The gate is the object type,
+ * never the shape of the payload: prose does not travel this way and must not be
+ * parsed as if it could.
+ */
+function bundleIdOf(item: QueueItem): string | null {
+  if (item.object_type !== 'marketing_stage') return null
+  const payload = item.payload
+  if (!payload || typeof payload !== 'object') return null
+  const candidate = (payload as { bundleId?: unknown }).bundleId
+  return typeof candidate === 'string' && candidate.length > 0 ? candidate : null
 }
 
 export function ApprovalQueue() {
@@ -164,6 +180,7 @@ export function ApprovalQueue() {
       <ul className="mt-4 space-y-3">
         {items.map((item) => {
           const state = decisionState(item)
+          const bundleId = bundleIdOf(item)
           const note = feedback[item.id]
           return (
             <li key={item.id} className="rounded-lg border border-border bg-bg-card p-4">
@@ -205,6 +222,17 @@ export function ApprovalQueue() {
               <pre className="mt-3 max-h-64 overflow-auto rounded-md border border-border bg-bg-sunken p-3 font-mono text-xs leading-relaxed text-text-secondary">
                 {JSON.stringify(item.payload, null, 2)}
               </pre>
+
+              {bundleId ? (
+                <p className="mt-3">
+                  <Link
+                    href={`/marketing/${encodeURIComponent(bundleId)}`}
+                    className="focus-ring text-sm text-text-secondary underline underline-offset-2 hover:underline"
+                  >
+                    Read the bundle this approves
+                  </Link>
+                </p>
+              ) : null}
 
               {tab === 'pending' && state === 'decidable' ? (
                 <div className="mt-3 flex flex-wrap gap-2">
