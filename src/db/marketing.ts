@@ -575,7 +575,7 @@ export async function listAllCampaigns(tenantId: string): Promise<Array<{
         LIMIT 1`,
       [tenantId, row.campaignExternalId],
     )
-    const status = (statuses.rows[0]?.status === 'ACTIVE' ? 'ACTIVE' : 'PAUSED') as 'ACTIVE' | 'PAUSED'
+    const status = statuses.rows[0]?.status === 'ACTIVE' ? 'ACTIVE' : 'PAUSED'
     campaigns.push({
       bundleId: row.bundle_id,
       campaignExternalId: row.campaignExternalId,
