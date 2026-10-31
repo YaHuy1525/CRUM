@@ -305,3 +305,158 @@ for anyone to report.
 shape and correct the tool schema that pins it. **Proof it is done:** a test over a follow-up row with
 `notes` set that expects the note to appear in the label.
 
+
+## Deferred from the marketing team slice 1
+
+Six items, none of them from Cedar. Slice 1 (the six-role marketing team, phase one) finished with the
+whole repository gate run against it, and these are the things the gate surfaced that the slice was not
+allowed to fix. One of them, M1, is not really a "later". It is red in CI right now and it needs a
+decision, so it is first.
+
+Evidence for every item below lives in `.superpowers/sdd/2026-10-30-marketing-team-slice-1/`: the raw
+gate logs are `gate-unit.log`, `gate-integration.log`, `gate-console.log` and `gate-eval.log`, and the
+reasoning is in `progress.md`, `task-11-report-step6.md`, `final-review-1.md` and
+`task-9-rereview-1.md`. That directory is gitignored, so this section is the durable copy.
+
+### M1. Six integration tests are red, and five of them have a verified one-line fix
+
+**Deferred with an owner decision, 2026-10-31.** The owner chose to have it ticketed rather than have
+slice 1 fix pre-existing breakage inside a feature branch.
+
+`npm run test:integration` against the throwaway cluster gave `7 failed | 48 passed | 2 skipped`. The
+real count is six, and none of the six is caused by slice 1. Two files hold five of them,
+`tests/integration/tenant-isolation.test.ts` and `tests/integration/user-isolation.test.ts`, and the
+sixth lives in `tests/integration/migrations.test.ts`.
+
+| Failure | Cause | Status |
+|---|---|---|
+| tenant-isolation, both tests | fixture UUIDs rejected by the schema | root cause proven, fix proven |
+| user-isolation, all three tests | same | same |
+| migrations, "refuses a second receipt for the same staged draft" | `INSERT` omits `draft_hash` | root cause proven, fix not attempted |
+| migrations, "boots through main()" | **not a real failure** | my reused local schema, passes on a fresh database |
+
+**Cause 1, five failures.** The fixtures are hand-written UUID literals whose version and variant nibbles
+are not legal. `tests/integration/user-isolation.test.ts:35` uses `55555555-5555-5555-5555-555555555555`
+and `tests/integration/tenant-isolation.test.ts:35-40` uses `aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa` plus
+five like it. `zod@4.6.7` validates `z.string().uuid()` against RFC 9562, so the third group must start
+with `1` through `8` and the fourth must start with `8`, `9`, `a` or `b`. Tool input therefore fails
+validation before any isolation logic runs, `crm.get_customer` and `crm.list_customers` return an error
+envelope instead of a row or an array, and the assertions at `tenant-isolation.test.ts:94` and `:115` and
+`user-isolation.test.ts:88`, `:103`, `:119` all fail on shape. One fixture even says so out loud, with
+the message `id: Invalid UUID`.
+
+**Fix, and it is verified rather than proposed.** Swap the ten literals for RFC-legal equivalents, for
+example `55555555-5555-4555-8555-555555555555`, which is the convention 46 other test files here already
+follow, including `tests/db/marketing.test.ts:14` and `tests/mastra/prospect-tools.test.ts:26`. I proved it
+by making the swap in a throwaway copy and running both files against a real PostgreSQL: `5 passed (5)`.
+I then restored the two files from HEAD, so nothing here is committed and the working tree still holds
+only the five files belonging to the memory-upgrade work.
+
+**Cause 2, one failure.** `migrations/0003_crum_add_draft_hash.sql:20-21` made `pending_writes.draft_hash`
+`NOT NULL`, long before slice 1. `tests/integration/migrations.test.ts:99-101` still inserts a draft with
+a hand-written column list that omits it, so Postgres throws `null value in column "draft_hash" ...
+violates not-null constraint`. The test's own subject is `uq_receipts_draft`, so the column is incidental
+to what it checks.
+
+**Fix:** add `draft_hash` to the column list and give it
+`encode(gen_random_bytes(32), 'hex')`, which is exactly 64 hex characters and matches the
+`/^[0-9a-f]{64}$/` shape the rest of the codebase pins. The row is rolled back at
+`migrations.test.ts:121`, so the only thing the value has to do is stay unique across concurrent runs.
+**Proof it is done:** that test passes against a fresh database.
+
+**Why "boots through main()" is off the list.** `scripts/db-migrate.ts:111-145` returns only newly applied
+files, so `result.applied` is empty on a database that already carries the spine, and my throwaway cluster
+did. I recreated the check against an empty database and it passed. That failure was my environment, not
+the repository.
+
+**What breaks if it stays.** CI runs this lane. `.github/workflows/crum-ci.yml:137-143` sets both
+`DATABASE_URL` and `CRUM_INTEGRATION_DATABASE_URL` from one `CI_DATABASE_URL` and runs
+`npm run test:integration` against a fresh pgvector container, so all six fail there too: the five for
+fixture reasons that do not depend on the database at all, and the `draft_hash` one for schema reasons
+that CI's own `npm run db:migrate` step guarantees. I could not read an actual run to confirm it, because
+`gh` is not installed on this machine, so treat CI red as strongly expected rather than observed. The
+practical cost is that nobody trusts an integration red any more, including the one that would mean
+something.
+
+### M2. Three more test files carry the same illegal-UUID habit and are latent only because they never cross a validating schema
+
+Found while writing M1. `tests/db/pending-writes-commit.test.ts`, `tests/db/prospect-queries.test.ts` and
+`tests/unit/prospects/persist-score.test.ts` hold the same style of literal and pass today because they
+hand the id to SQL or to a stub instead of to `z.string().uuid()`.
+
+**What breaks if it stays:** the first time one of those ids reaches a tool input schema, that file goes
+red for a reason that has nothing to do with what it tests, and the next reader repeats this whole
+investigation. **Fix:** a one-time sweep, plus a cheap guard. A unit test that walks `**/*.test.ts`,
+extracts UUID-shaped literals and asserts each one satisfies the rule zod applies is enough to stop it
+recurring.
+
+### M3. An expired draft can be neither approved nor rejected, and the bundle stays staged
+
+**This corrects Ruling T6-K in the slice 1 ledger, which called it "not a deadlock". That ruling was
+wrong, and I confirmed the correction in the code.** `src/api/approvals.ts:242-244` answers `410 expired`
+before the rejection branch at `:246-256` can run, so `rejected_at` can never be set on an expired draft.
+The idempotency index `uq_pending_draft_hash` (`migrations/0003_crum_add_draft_hash.sql:25-27`) is partial
+on `receipt_id IS NULL AND rejected_at IS NULL` and says nothing about `expires_at`, so the dead row keeps
+holding the unique key. `src/db/pending-writes.ts:93-94` then conflicts onto it with a deliberate no-op
+update and `RETURNING *` hands the same expired row straight back. After `RUNS_APPROVAL_TOKEN_TTL_SECONDS`
+(default 3600, `src/db/pending-writes.ts:86`) the state is a queue entry that answers 410 to yes and to
+no, a re-stage that returns that same 410 row, and a bundle left `staged` by `src/db/marketing.ts:234-240`
+that cannot be staged again. The only owner-side escape is accidental: change any hashed input, for
+example the risk ceiling, to get a different draft hash, which leaves the dead row behind as permanent
+clutter.
+
+**Why slice 1 did not fix it.** It is shared behaviour, not marketing behaviour. All eleven approval-class
+tools in `policy/tools.yaml:185-255` reach it through the same `getOrCreateDraft`. A fix changes the
+meaning of expiry for the six CRM tools too, and slice 1's brief was one new approval flow, not a
+governance-semantics change.
+
+**Fix, two shapes, one decision needed.** Either let a rejection land on an expired draft by moving the
+expiry check after the `approved: false` branch, or make expiry free the key by adding `expires_at >
+now()` to the partial index predicate in a new migration. The first keeps the audit trail honest and lets
+the owner say no. The second lets a re-stage win but silently discards the item the owner was already
+looking at. **Proof it is done:** an integration test that ages a draft past `expires_at` and shows both a
+rejection and a fresh stage reaching a usable end state, with no bundle stranded in `staged`.
+
+### M4. A suspended run has no resume affordance, and its own endpoint reports it as a count with no rows
+
+Staging a bundle did not reach the approval queue from chat on its own during the browser walkthrough.
+`requireApproval` suspends `marketing.stage_bundle` before `execute`, the console renders "waiting for
+approval" with no control to act on it, and `GET /api/approvals/suspended-runs` answers
+`{"items":[],"total":1}`. The chain completed only because I posted directly to
+`POST /api/approvals/:runId/decision`.
+
+**Not a slice 1 defect.** `requireApproval` is on every approval-class tool, so marketing behaves exactly
+like `crm.create_customer`. What is new is that staging is the first approval-class action whose whole
+purpose is to create a queue item, so the gap now sits in front of the flow instead of beside it. The
+owner-facing consequence: someone who works only in the console cannot start the marketing spine from
+chat. A second consequence is ordering. The refusal for an unbuildable bundle lives inside `execute`, so
+the reviewer is asked to approve the intention to stage before the builder has said whether it can carry
+it out. The governance queue still stays clean, which is the guarantee the design actually makes.
+
+**Fix:** return rows from `suspended-runs` and give the console one resume control per suspended run,
+wired to the decision endpoint the plane already has. **Proof it is done:** stage a bundle from chat,
+click once in the console, and see the draft appear in the queue without touching `curl`.
+
+### M5. The denial-path suite covers seven of eleven approval tools, and the tool this branch added is uncovered
+
+`tests/governance/denial-path.test.ts:20-28` iterates a hand-copied array of seven tool names while
+`tests/governance/policy.test.ts:69` asserts the policy declares eleven. Not covered:
+`crm.send_outreach`, `crm.resolve_merge_candidate`, `run.side-effect` and `marketing.stage_bundle`. The
+last one is the tool this branch added, so the new approval tool ships without a refuse-threshold test.
+
+**Fix:** drive the list off `toolByName` or `toolsByClass('approval')` instead of copying names, which
+also covers the next added tool on the day it is added. This is the cheapest real coverage gain available
+in phase one. Adjacent nit found at the same time: `policy/tools.yaml:184` still labels the section
+`approval (10)` after `marketing.stage_bundle` made it eleven, and no test reads that comment.
+
+### M6. Small honest-surface items parked by the whole-branch review
+
+Four Minors the final review left open, each about one line, none worth a slice of its own.
+`console/components/MarketingBundleView.tsx` renders `Saved {bundle.createdAt}` as a raw ISO timestamp.
+`suspended-runs` returns the items-less shape from M4. A flattened `funnel_plan` is reported as
+`unreadable funnel_plan` where the nested-but-unsupported shape reports the designed
+`no adapter for publish_page`, so two different authoring mistakes read differently. And the guard added
+by finding F1b is narrower than its own test comment claims, because
+`console/tests/MarketingBundleView.test.tsx` never routes `/api/marketing/bundles/`, so deleting the
+fallback inlines a path the suite cannot see. Full reasoning in `final-review-1.md` and
+`task-9-rereview-1.md`.
