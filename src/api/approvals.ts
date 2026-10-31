@@ -31,7 +31,7 @@ export interface SuspendedRunAgent {
       threadId?: string
       resourceId?: string
       suspendedAt?: Date
-      toolCalls?: Array<{ toolName?: string }>
+      toolCalls?: Array<{ toolName?: string; toolCallId?: string }>
     }>
     total: number
   }>
@@ -89,6 +89,7 @@ interface SuspensionMatch {
   thread_id?: string
   resource_id?: string
   tool_call_ids: string[]
+  tool_names: string[]
 }
 
 const UNMATCHABLE_RUN_IDS = new Set(['pending', 'auto'])
@@ -104,7 +105,20 @@ function matchSuspension(
     run_id: run.runId,
     thread_id: run.threadId,
     resource_id: run.resourceId,
-    tool_call_ids: (run.toolCalls ?? []).map((tc) => String(tc.toolName ?? '')).filter(Boolean),
+    /**
+     * The id, not the name. `approveToolCallGenerate` takes a toolCallId
+     * (@mastra/core AgentRunToolCall), and a field called tool_call_ids that
+     * holds tool names is how a suspended run ends up with no way back: the
+     * console can display the name but cannot resume with it. Names stay
+     * available to the caller through the draft's own object type, so nothing is
+     * lost here.
+     */
+    tool_call_ids: (run.toolCalls ?? [])
+      .map((tc) => String(tc.toolCallId ?? ''))
+      .filter(Boolean),
+    tool_names: (run.toolCalls ?? [])
+      .map((tc) => String(tc.toolName ?? ''))
+      .filter(Boolean),
   }
 }
 
@@ -200,7 +214,17 @@ export function createApprovalRouter(deps: ApprovalRouterDeps): Hono {
     const result = await agentGate.agent.listSuspendedRuns({
       ...(threadId ? { threadId } : {}),
       ...(resourceId ? { resourceId } : {}),
-      page,
+      /**
+       * CRUM's public page parameter is 1-based, because that is what a human
+       * reads off a screen and what QueueQuerySchema enforces with `.min(1)`. The
+       * provider's is zero-based (`agent.d.ts:109`), and it paginates as soon as
+       * both numbers arrive. Sending 1 therefore asked for the second page of a
+       * one-run set and answered `items: [], total: 1` — the run was counted but
+       * never listed. The translation belongs at this boundary, and nowhere else:
+       * `/pending` calls `listSuspendedRuns()` with no options at all and so was
+       * never affected, which is why one route looked broken and the other did not.
+       */
+      page: page - 1,
       perPage,
     })
 

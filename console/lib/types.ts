@@ -22,6 +22,8 @@ export interface QueueItem {
     thread_id?: string
     resource_id?: string
     tool_call_ids: string[]
+    /** Display labels only; never send these as a toolCallId. */
+    tool_names: string[]
   } | null
 }
 

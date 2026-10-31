@@ -71,6 +71,7 @@ interface Suspension {
   run_id: string
   thread_id?: string | null
   tool_call_ids: string[]
+  tool_names: string[]
 }
 
 interface QueueRow {
@@ -137,7 +138,7 @@ function fakeAgent(): FakeAgent {
           threadId: 'thread-1',
           resourceId: TENANT,
           suspendedAt: new Date(PAST),
-          toolCalls: [{ toolName: 'crm.create_contact' }],
+          toolCalls: [{ toolCallId: 'call-1', toolName: 'crm.create_contact', requiresApproval: true }],
         },
       ],
       total: 1,
@@ -254,6 +255,19 @@ describe('GET /api/approvals/pending', () => {
     expect(body.total).toBe(1)
     expect(body.items[0]!.suspension).toBeNull()
   })
+
+  it('carries the tool call id, because a name cannot resume anything', async () => {
+    db.listPendingWrites.mockResolvedValue([draft({ runId: RUN_ID })])
+
+    const body = await json<{ items: QueueRow[] }>(
+      router(() => fakeAgent()).request('/api/approvals/pending', { headers: AUTH }),
+    )
+
+    // Today this is ['crm.create_contact']: the mapping at approvals.ts:107 reads
+    // tc.toolName into a field called tool_call_ids. The resume control needs
+    // 'call-1', and no console change can recover it from a name.
+    expect(body.items[0]!.suspension!.tool_call_ids).toEqual(['call-1'])
+  })
 })
 
 describe('GET /api/approvals/resolved', () => {
@@ -292,14 +306,14 @@ describe('GET /api/approvals/suspended-runs', () => {
     expect((await json<ErrorBody>(res)).error).toBe('agent-not-wired')
   })
 
-  it('proxies the filter and the page', async () => {
+  it('proxies the filter and the page, translated from 1-based to 0-based', async () => {
     const agent = fakeAgent()
 
     const body = await json<{ items: SuspendedRunRow[]; total: number }>(
       router(() => agent).request('/api/approvals/suspended-runs?threadId=thread-1', { headers: AUTH }),
     )
 
-    expect(agent.listSuspendedRuns).toHaveBeenCalledWith({ threadId: 'thread-1', page: 1, perPage: 50 })
+    expect(agent.listSuspendedRuns).toHaveBeenCalledWith({ threadId: 'thread-1', page: 0, perPage: 50 })
     expect(body.total).toBe(1)
     expect(body.items[0]).toMatchObject({ run_id: RUN_ID, thread_id: 'thread-1', suspended_at: PAST })
   })
@@ -307,6 +321,20 @@ describe('GET /api/approvals/suspended-runs', () => {
   it('rejects a page size above the cap', async () => {
     const res = await router(() => fakeAgent()).request('/api/approvals/suspended-runs?perPage=500', { headers: AUTH })
     expect(res.status).toBe(400)
+  })
+
+  it('asks the provider for the first page, which is page zero', async () => {
+    const agent = fakeAgent()
+
+    const body = await json<{ items: SuspendedRunRow[]; total: number }>(
+      router(() => agent).request('/api/approvals/suspended-runs?perPage=20', { headers: AUTH }),
+    )
+
+    // QueueQuerySchema defaults page to 1 for callers, and the provider counts
+    // from 0, so the boundary is where the translation happens.
+    expect(agent.listSuspendedRuns).toHaveBeenCalledWith({ page: 0, perPage: 20 })
+    expect(body.total).toBe(1)
+    expect(body.items).toHaveLength(1)
   })
 })
 
