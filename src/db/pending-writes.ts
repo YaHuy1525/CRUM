@@ -46,8 +46,14 @@ export interface CreateDraftParams {
     // approval that turns a stored bundle into an approved one. They are two
     // types because applyDraft dispatches on object_type, so one type would have
     // to mean both "insert a bundle" and "approve a bundle".
+    // marketing_promote and marketing_retry are the two publish-gate approvals,
+    // declared the moment the database admits them so the closed lists in
+    // migrations/0019 and this union stay one edit apart; their applyDraft paths
+    // land with the publisher in later slice-2 tasks.
     | 'marketing_bundle'
     | 'marketing_stage'
+    | 'marketing_promote'
+    | 'marketing_retry'
   operation: 'create' | 'update' | 'delete'
   targetId?: string
   payload: unknown
