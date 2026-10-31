@@ -503,6 +503,9 @@ export interface MarketingBundleRecord {
   analysis: unknown
   promptVersion: string
   draftHash: string
+  // The credential a published page carries in its form action. Null until a
+  // save minted one, and set-once from then on.
+  leadToken: string | null
   createdAt: string
   updatedAt: string
 }
@@ -526,4 +529,23 @@ export interface MarketingArtifactRecord {
 export interface MarketingBundleResponse {
   bundle: MarketingBundleRecord
   artifacts: MarketingArtifactRecord[]
+  actions: MarketingActionRecord[]
+}
+
+// The outbox row behind every publish, promotion and retry. Duplicated from
+// MarketingActionRow in src/db/marketing.ts for the same reason as the records
+// above: the console talks HTTP and never imports src/. `payload` is the
+// mapper's `Record<string, unknown>` because the console reads it by key with a
+// runtime check, never as a shape the server promised.
+export interface MarketingActionRecord {
+  id: string
+  action: string
+  status: string
+  attempts: number
+  externalId: string | null
+  lastError: string | null
+  payload: Record<string, unknown>
+  result: Record<string, unknown> | null
+  createdAt: string
+  executedAt: string | null
 }

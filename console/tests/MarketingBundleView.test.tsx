@@ -3,10 +3,11 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MarketingBundleView } from '../components/MarketingBundleView'
 import { route, stubFetch, type FetchStub, type Reply, type Rule } from './fetchStub'
-import type { MarketingBundleResponse } from '../lib/types'
+import type { MarketingActionRecord, MarketingBundleResponse } from '../lib/types'
 
 const BUNDLE_ID = '33333333-3333-4333-8333-333333333333'
 const DOCUMENT_ID = '55555555-5555-4555-8555-555555555555'
+const DRAFT_ID = 'd2d2d2d2-2222-4222-8222-222222222222'
 
 function bundleResponse(over: Partial<MarketingBundleResponse> = {}): MarketingBundleResponse {
   return {
@@ -24,6 +25,7 @@ function bundleResponse(over: Partial<MarketingBundleResponse> = {}): MarketingB
       analysis: null,
       promptVersion: 'marketing-v1',
       draftHash: 'b'.repeat(64),
+      leadToken: null,
       createdAt: '2026-10-30T02:00:00.000Z',
       updatedAt: '2026-10-30T02:05:00.000Z',
     },
@@ -38,6 +40,7 @@ function bundleResponse(over: Partial<MarketingBundleResponse> = {}): MarketingB
         createdAt: '2026-10-30T02:00:00.000Z',
       },
     ],
+    actions: [],
     ...over,
   }
 }
@@ -174,5 +177,140 @@ describe('MarketingBundleView', () => {
     render(<MarketingBundleView bundleId={BUNDLE_ID} />)
     expect(screen.getByRole('status')).toHaveTextContent('Loading bundle')
     expect(screen.queryByText('Media plan')).toBeNull()
+  })
+})
+
+function published(over: Partial<MarketingActionRecord> = {}): MarketingActionRecord {
+  return {
+    id: 'act1',
+    action: 'publish_page',
+    status: 'succeeded',
+    attempts: 1,
+    externalId: 'dep-1',
+    lastError: null,
+    payload: { bundleId: BUNDLE_ID, slug: 'physio-probe', siteHash: 'a'.repeat(64) },
+    result: { url: 'https://dep-1.example.pages.dev', deploymentId: 'dep-1', uploadedAt: '2026-10-31T00:00:00Z' },
+    createdAt: '2026-10-31T00:00:00Z',
+    executedAt: '2026-10-31T00:00:00Z',
+    ...over,
+  }
+}
+
+describe('MarketingBundleView go-live controls', () => {
+  it('shows the preview url and the approved hash only after a publish succeeded', async () => {
+    mount([
+      route(
+        '/api/marketing/bundles/',
+        ok(
+          bundleResponse({
+            bundle: { ...bundleResponse().bundle, status: 'approved', objective: 'inbound_leads', leadToken: 'lt_probe' },
+            artifacts: [
+              { ...bundleResponse().artifacts[0]!, kind: 'page_html', role: 'funnel-builder', textContent: '<h1>Book your assessment</h1>' },
+            ],
+            actions: [published()],
+          }),
+        ),
+        'GET',
+      ),
+    ])
+
+    expect(await screen.findByText('physio-probe/index.html')).toBeInTheDocument()
+    // The hash on screen is the one the approver clicked, taken from the action
+    // payload, not recomputed by the browser.
+    expect(screen.getByText('a'.repeat(12))).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /preview/i })).toHaveAttribute(
+      'href',
+      'https://dep-1.example.pages.dev',
+    )
+    expect(screen.getByRole('button', { name: /prepare go-live/i })).toBeEnabled()
+  })
+
+  it('explains a failed publish and offers the retry, not a reroll', async () => {
+    mount([
+      route(
+        '/api/marketing/bundles/',
+        ok(
+          bundleResponse({
+            bundle: { ...bundleResponse().bundle, status: 'approved', leadToken: 'lt_probe' },
+            artifacts: [
+              { ...bundleResponse().artifacts[0]!, kind: 'page_html', role: 'funnel-builder', textContent: '<h1>Book your assessment</h1>' },
+            ],
+            actions: [
+              published({ status: 'failed', externalId: null, result: null, attempts: 1,
+                lastError: 'pages_upload_http_403: authentication error' }),
+            ],
+          }),
+        ),
+        'GET',
+      ),
+    ])
+
+    expect(await screen.findByText(/pages_upload_http_403/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /retry publish/i })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: /prepare go-live/i })).toBeNull()
+  })
+
+  it('posts to the staging route and never to a decision endpoint', async () => {
+    mount([
+      route(
+        '/api/marketing/bundles/',
+        ok(
+          bundleResponse({
+            bundle: { ...bundleResponse().bundle, status: 'approved', leadToken: 'lt_probe' },
+            artifacts: [
+              { ...bundleResponse().artifacts[0]!, kind: 'page_html', role: 'funnel-builder', textContent: '<h1>Book your assessment</h1>' },
+            ],
+            actions: [published()],
+          }),
+        ),
+        'GET',
+      ),
+      route('/promote', { status: 201, body: { pendingWriteId: DRAFT_ID, riskScore: 10, gate: 'approval' } }, 'POST'),
+    ])
+
+    await screen.findByRole('button', { name: /prepare go-live/i })
+    await userEvent.click(screen.getByRole('button', { name: /prepare go-live/i }))
+
+    expect(await screen.findByText(/staged for approval/i)).toBeInTheDocument()
+    expect(server.count('/promote')).toBe(1)
+    expect(server.last('/promote')?.method).toBe('POST')
+    // No body: the promotion takes the bundle id from the path and the ceiling
+    // from the bundle that was already approved, so the console cannot offer a
+    // number the owner did not approve.
+    expect(server.last('/promote')?.body).toBeUndefined()
+    // The one line that keeps the slice honest: a go-live click stages a
+    // decision, it never makes one.
+    expect(server.last('/approvals')?.method).not.toBe('POST')
+    expect(screen.getByRole('link', { name: /queue/i })).toHaveAttribute('href', '/approvals')
+  })
+
+  it('hides the promote control once the bundle is live', async () => {
+    mount([
+      route(
+        '/api/marketing/bundles/',
+        ok(
+          bundleResponse({
+            bundle: { ...bundleResponse().bundle, status: 'live', leadToken: 'lt_probe' },
+            artifacts: [
+              { ...bundleResponse().artifacts[0]!, kind: 'page_html', role: 'funnel-builder', textContent: '<h1>Book your assessment</h1>' },
+            ],
+            actions: [
+              published(),
+              published({ id: 'act2', action: 'promote_page', externalId: 'dep-2',
+                result: { url: 'https://example.pages.dev', deploymentId: 'dep-2', uploadedAt: '2026-10-31T01:00:00Z' } }),
+            ],
+          }),
+        ),
+        'GET',
+      ),
+    ])
+
+    expect(await screen.findByRole('link', { name: /live site/i })).toHaveAttribute(
+      'href',
+      'https://example.pages.dev',
+    )
+    expect(screen.getByText('live')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /prepare go-live/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /retry publish/i })).toBeNull()
   })
 })
