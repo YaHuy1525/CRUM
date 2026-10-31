@@ -273,7 +273,7 @@ export async function runAnalystCron(args: {
     return {
       bundleId: c.bundleId,
       campaignId: c.campaignExternalId,
-      campaignName: c.campaignExternalId,
+      campaignName: c.campaignName,
       metrics: entry?.metrics ?? { impressions: 0, clicks: 0, spend: 0, leads: 0, costPerLead: 0 },
     }
   })
@@ -362,7 +362,7 @@ async function main(): Promise<void> {
   const opts = parseArgs(process.argv.slice(2))
   const tenantId = opts.tenantId ?? process.env.CRUM_TENANT_ID ?? ''
   if (!tenantId) {
-    console.error('[analyst-cron] tenant ID required: pass --tenant <uuid> or set CRUN_TENANT_ID')
+    console.error('[analyst-cron] tenant ID required: pass --tenant <uuid> or set CRUM_TENANT_ID')
     process.exit(1)
   }
 

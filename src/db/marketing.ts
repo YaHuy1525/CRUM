@@ -472,16 +472,19 @@ export async function listActiveCampaigns(tenantId: string): Promise<Array<{
   bundleId: string
   campaignExternalId: string
   adAccountId: string
+  campaignName: string
 }>> {
   const db = getDbClient()
   const created = await db.query<{
     bundle_id: string
     campaignExternalId: string
     adAccountId: string
+    campaignName: string
   }>(
     `SELECT bundle_id,
             result ->> 'externalId' AS "campaignExternalId",
-            payload ->> 'adAccountId' AS "adAccountId"
+            payload ->> 'adAccountId' AS "adAccountId",
+            payload ->> 'name' AS "campaignName"
        FROM marketing_actions
       WHERE tenant_id = $1
         AND action = 'create_campaign'
@@ -492,6 +495,7 @@ export async function listActiveCampaigns(tenantId: string): Promise<Array<{
     bundleId: string
     campaignExternalId: string
     adAccountId: string
+    campaignName: string
   }> = []
   for (const row of created.rows) {
     if (!row.campaignExternalId) continue
@@ -510,6 +514,7 @@ export async function listActiveCampaigns(tenantId: string): Promise<Array<{
         bundleId: row.bundle_id,
         campaignExternalId: row.campaignExternalId,
         adAccountId: row.adAccountId,
+        campaignName: row.campaignName,
       })
     }
   }

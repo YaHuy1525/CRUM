@@ -28,7 +28,7 @@ function formatNumber(n: number): string {
 }
 
 function formatCurrency(n: number): string {
-  return n.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+  return n.toLocaleString('en-US', { style: 'currency', currency: 'AUD' })
 }
 
 export function CampaignMetricsDashboard({ tenantId }: CampaignMetricsDashboardProps) {

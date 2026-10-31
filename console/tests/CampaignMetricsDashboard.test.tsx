@@ -78,9 +78,9 @@ describe('CampaignMetricsDashboard', () => {
     expect(screen.getByText('Active')).toBeInTheDocument()
     expect(screen.getByText('12,500')).toBeInTheDocument()
     expect(screen.getByText('340')).toBeInTheDocument()
-    expect(screen.getByText('$450.25')).toBeInTheDocument()
+    expect(screen.getByText('A$450.25')).toBeInTheDocument()
     expect(screen.getByText('18')).toBeInTheDocument()
-    expect(screen.getByText('$25.01')).toBeInTheDocument()
+    expect(screen.getByText('A$25.01')).toBeInTheDocument()
     expect(screen.getByText('scale')).toBeInTheDocument()
   })
 

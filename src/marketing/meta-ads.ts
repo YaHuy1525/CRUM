@@ -83,6 +83,7 @@ export function makeCreateCampaignAdapter(config: MetaAdsConfig): MarketingActio
         method: 'POST',
         headers: {
           Authorization: `Bearer ${config.accessToken}`,
+          'Content-Type': 'application/json',
         },
         body: JSON.stringify(body),
       })
@@ -150,6 +151,7 @@ export function makeSetCampaignStatusAdapter(config: MetaAdsConfig): MarketingAc
         method: 'POST',
         headers: {
           Authorization: `Bearer ${config.accessToken}`,
+          'Content-Type': 'application/json',
         },
         body: JSON.stringify(body),
       })

@@ -15,6 +15,8 @@ const BUNDLE_B = '44444444-4444-4444-8444-444444444444'
 const CAMPAIGN_A = '23842653876'
 const CAMPAIGN_B = '23842653877'
 const AD_ACCOUNT = 'act_123456'
+const CAMPAIGN_NAME_A = 'Winter outreach'
+const CAMPAIGN_NAME_B = 'Spring proof'
 
 function calls(fragment: string): Array<{ sql: string; params: unknown[] }> {
   return (mockQuery.mock.calls as unknown[][])
@@ -40,6 +42,7 @@ describe('listActiveCampaigns', () => {
           bundle_id: BUNDLE_A,
           campaignExternalId: CAMPAIGN_A,
           adAccountId: AD_ACCOUNT,
+          campaignName: CAMPAIGN_NAME_A,
         },
       ],
     })
@@ -50,7 +53,7 @@ describe('listActiveCampaigns', () => {
     const result = await listActiveCampaigns(TENANT)
 
     expect(result).toEqual([
-      { bundleId: BUNDLE_A, campaignExternalId: CAMPAIGN_A, adAccountId: AD_ACCOUNT },
+      { bundleId: BUNDLE_A, campaignExternalId: CAMPAIGN_A, adAccountId: AD_ACCOUNT, campaignName: CAMPAIGN_NAME_A },
     ])
 
     const createCalls = calls("action = 'create_campaign'")
@@ -70,6 +73,7 @@ describe('listActiveCampaigns', () => {
           bundle_id: BUNDLE_A,
           campaignExternalId: CAMPAIGN_A,
           adAccountId: AD_ACCOUNT,
+          campaignName: CAMPAIGN_NAME_A,
         },
       ],
     })
@@ -82,7 +86,7 @@ describe('listActiveCampaigns', () => {
     const result = await listActiveCampaigns(TENANT)
 
     expect(result).toEqual([
-      { bundleId: BUNDLE_A, campaignExternalId: CAMPAIGN_A, adAccountId: AD_ACCOUNT },
+      { bundleId: BUNDLE_A, campaignExternalId: CAMPAIGN_A, adAccountId: AD_ACCOUNT, campaignName: CAMPAIGN_NAME_A },
     ])
 
     const statusCalls = calls("action = 'set_campaign_status'")
@@ -98,6 +102,7 @@ describe('listActiveCampaigns', () => {
           bundle_id: BUNDLE_A,
           campaignExternalId: CAMPAIGN_A,
           adAccountId: AD_ACCOUNT,
+          campaignName: CAMPAIGN_NAME_A,
         },
       ],
     })
@@ -141,11 +146,13 @@ describe('listActiveCampaigns', () => {
           bundle_id: BUNDLE_A,
           campaignExternalId: CAMPAIGN_A,
           adAccountId: AD_ACCOUNT,
+          campaignName: CAMPAIGN_NAME_A,
         },
         {
           bundle_id: BUNDLE_B,
           campaignExternalId: CAMPAIGN_B,
           adAccountId: AD_ACCOUNT,
+          campaignName: CAMPAIGN_NAME_B,
         },
       ],
     })
@@ -158,7 +165,7 @@ describe('listActiveCampaigns', () => {
     const result = await listActiveCampaigns(TENANT)
 
     expect(result).toEqual([
-      { bundleId: BUNDLE_A, campaignExternalId: CAMPAIGN_A, adAccountId: AD_ACCOUNT },
+      { bundleId: BUNDLE_A, campaignExternalId: CAMPAIGN_A, adAccountId: AD_ACCOUNT, campaignName: CAMPAIGN_NAME_A },
     ])
   })
 
@@ -169,6 +176,7 @@ describe('listActiveCampaigns', () => {
           bundle_id: BUNDLE_A,
           campaignExternalId: null,
           adAccountId: AD_ACCOUNT,
+          campaignName: CAMPAIGN_NAME_A,
         },
       ],
     })

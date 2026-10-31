@@ -72,7 +72,7 @@ describe('makeCreateCampaignAdapter', () => {
         name: 'Test Campaign',
         objective: 'LEAD_GENERATION',
         startPaused: true,
-        dailystatic: 5000,
+        dailyCeilingMinor: 5000,
         audience: { location: 'Brisbane, AU' },
         placements: ['facebook_feed'],
         budgetLadder: [{ days: 3, dailyMinor: 3000 }],
@@ -85,7 +85,7 @@ describe('makeCreateCampaignAdapter', () => {
       'https://graph.facebook.com/v18.0/act_123/campaigns',
       expect.objectContaining({
         method: 'POST',
-        headers: { Authorization: 'Bearer test-token' },
+        headers: { Authorization: 'Bearer test-token', 'Content-Type': 'application/json' },
       }),
     )
 
@@ -203,7 +203,7 @@ describe('makeSetCampaignStatusAdapter', () => {
       'https://graph.facebook.com/v18.0/23842653876',
       expect.objectContaining({
         method: 'POST',
-        headers: { Authorization: 'Bearer test-token' },
+        headers: { Authorization: 'Bearer test-token', 'Content-Type': 'application/json' },
       }),
     )
 
@@ -211,6 +211,7 @@ describe('makeSetCampaignStatusAdapter', () => {
     expect(body.status).toBe('ACTIVE')
 
     expect(result).toEqual({
+      externalId: '23842653876',
       success: true,
       previousStatus: 'PAUSED',
       newStatus: 'ACTIVE',
