@@ -91,6 +91,10 @@ export function createMarketingRouter(deps: MarketingRouterDeps): Hono {
       userId: gate.identity.userId,
       userRole: gate.identity.userRole,
       actionId: action.data,
+      // The path named a bundle, so the retry is filed under it or refused. The
+      // stager keys the row on the action alone, and an approval under a bundle
+      // the owner is not looking at is one they cannot read.
+      expectedBundleId: bundle.data,
     })
     if (!result.ok) return c.json({ error: 'not_retryable', reason: result.reason }, 409)
     return c.json({ pendingWriteId: result.pendingWriteId, riskScore: result.riskScore }, 201)

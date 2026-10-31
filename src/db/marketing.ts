@@ -180,27 +180,41 @@ export interface MarketingActionRow {
 }
 
 /** Every action of one bundle, oldest first, because a publish before a promote
- * is the order a reader expects to see. */
+ * is the order a reader expects to see. `id` breaks the tie so two rows written
+ * in the same moment still read in one fixed order rather than whatever the
+ * planner returns. Timestamps pass through as `listMarketingArtifacts` leaves
+ * them. */
 export async function listMarketingActions(tenantId: string, bundleId: string): Promise<MarketingActionRow[]> {
   const db = getDbClient()
-  const result = await db.query<Record<string, unknown>>(
+  const result = await db.query<{
+    id: string
+    action: string
+    status: string
+    attempts: number
+    external_id: string | null
+    last_error: string | null
+    payload: Record<string, unknown> | null
+    result: Record<string, unknown> | null
+    created_at: string
+    executed_at: string | null
+  }>(
     `SELECT id, action, status, attempts, external_id, last_error, payload, result, created_at, executed_at
        FROM marketing_actions
       WHERE tenant_id = $1 AND bundle_id = $2
-      ORDER BY created_at ASC`,
+      ORDER BY created_at ASC, id ASC`,
     [tenantId, bundleId],
   )
   return result.rows.map((row) => ({
-    id: String(row.id),
-    action: String(row.action),
-    status: String(row.status),
-    attempts: Number(row.attempts),
-    externalId: (row.external_id as string | null) ?? null,
-    lastError: (row.last_error as string | null) ?? null,
-    payload: (row.payload as Record<string, unknown>) ?? {},
-    result: (row.result as Record<string, unknown> | null) ?? null,
-    createdAt: String(row.created_at),
-    executedAt: (row.executed_at as string | null) ?? null,
+    id: row.id,
+    action: row.action,
+    status: row.status,
+    attempts: row.attempts,
+    externalId: row.external_id,
+    lastError: row.last_error,
+    payload: row.payload ?? {},
+    result: row.result,
+    createdAt: row.created_at,
+    executedAt: row.executed_at,
   }))
 }
 

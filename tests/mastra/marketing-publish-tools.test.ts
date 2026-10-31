@@ -167,6 +167,44 @@ describe('marketing.retry_publish', () => {
     expect(out).toMatchObject({ ok: false, reason: 'not_failed' })
   })
 
+  it('refuses a retry filed under a bundle the action does not belong to', async () => {
+    // The row is keyed on the action alone, so a caller that named a bundle is
+    // held to it: the approval would otherwise be filed under a bundle the
+    // owner is not looking at.
+    db.getFailedAction.mockResolvedValue({ id: ACT, bundleId: BUNDLE, siteHash: 'a'.repeat(64), action: 'publish_page' })
+    const out = await stageRetry({
+      tenantId: rc.tenantId,
+      userId: rc.userId,
+      userRole: 'admin',
+      actionId: ACT,
+      expectedBundleId: 'b2b2b2b2-b2b2-4b2b-8b2b-b2b2b2b2b2b2',
+    })
+    expect(out).toEqual({ ok: false, reason: 'bundle_mismatch' })
+    // Before the byte check and before any draft: the wrong URL is the whole
+    // refusal, so nothing is read or queued.
+    expect(db.currentSiteHash).not.toHaveBeenCalled()
+    expect(db.getOrCreateDraft).not.toHaveBeenCalled()
+  })
+
+  it('stages when the bundle in the request is the one the action belongs to', async () => {
+    // The other side of the expectation: the optional bundle id may not turn a
+    // correct URL into a refusal, and the tool's own call, which omits it, stays
+    // pinned by the staging test at the end of this block.
+    db.getFailedAction.mockResolvedValue({ id: ACT, bundleId: BUNDLE, siteHash: 'a'.repeat(64), action: 'publish_page' })
+    db.currentSiteHash.mockResolvedValue('a'.repeat(64))
+    const unregister = registerActionAdapter({ name: 'publish_page', execute: () => Promise.resolve({ externalId: 'x' }) })
+    const out = await stageRetry({
+      tenantId: rc.tenantId,
+      userId: rc.userId,
+      userRole: 'admin',
+      actionId: ACT,
+      expectedBundleId: BUNDLE,
+    })
+    expect(out).toMatchObject({ ok: true })
+    expect(db.getOrCreateDraft).toHaveBeenCalledTimes(1)
+    unregister()
+  })
+
   it('refuses when no adapter can execute the failed action', async () => {
     // No adapter registered in this process, the same way a build without the
     // provider configured runs: the refusal has to arrive before anything is

@@ -13,10 +13,13 @@ vi.mock('../../src/db/marketing', () => ({
   listMarketingActions: db.listMarketingActions,
 }))
 
-// The router imports the stagers from this module, and that module imports the
-// constants above from the mocked db module. Nothing in a GET-route test calls a
-// stager, so the whole module is mocked rather than half-loading it through a
-// db shape it does not expect.
+// The router imports the stagers from this module, and while marketing-writes is
+// being evaluated it reads `MARKETING_ROLES`, `MARKETING_OBJECTIVES` and
+// `ARTIFACT_KINDS` from `src/db/marketing` for its `z.enum(...)` schemas. The
+// partial db mock above exports none of the three, so the real module cannot
+// load against it. Nothing in a GET-route test calls a stager, so the whole
+// module is mocked rather than half-loading it through a db shape it does not
+// expect.
 vi.mock('../../src/mastra/tools/marketing-writes', () => ({
   stagePromotion: vi.fn(),
   stageRetry: vi.fn(),

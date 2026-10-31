@@ -664,6 +664,7 @@ export async function stagePromotion(params: {
 export type RetryRefusal =
   | 'bad_action_id'
   | 'not_failed'
+  | 'bundle_mismatch'
   | 'not_executable'
   | 'slug_unpublishable'
   | 'site_hash_moved'
@@ -684,18 +685,32 @@ export type StageRetryResult =
  * cannot execute the action or the bytes no longer hash to what the failed row
  * recorded, because an approval may not exist before its action is executable.
  * Spec section 5.
+ *
+ * `expectedBundleId` is how a caller that named a bundle says which one it
+ * meant. The row is keyed on `actionId` alone, so without it an action of one
+ * bundle could be retried through another bundle's URL and the approval would
+ * be filed against a bundle the owner is not looking at. The REST route passes
+ * its path segment; the Mastra tool omits it because an agent naming only an
+ * action is a legitimate request.
  */
 export async function stageRetry(params: {
   tenantId: string
   userId: string
   userRole: string
   actionId: string
+  expectedBundleId?: string
 }): Promise<StageRetryResult> {
   if (!ID_SHAPE.safeParse(params.actionId).success) {
     return { ok: false, reason: 'bad_action_id' }
   }
   const failed = await getFailedAction(params.tenantId, params.actionId)
   if (!failed) return { ok: false, reason: 'not_failed' }
+  // Asked before the executable and byte checks because it is a question about
+  // the request, not about the bundle: the wrong URL is refused even when the
+  // action would have staged, and nothing is queued under the named bundle.
+  if (params.expectedBundleId !== undefined && failed.bundleId !== params.expectedBundleId) {
+    return { ok: false, reason: 'bundle_mismatch' }
+  }
   if (!isExecutable(failed.action as MarketingActionName)) return { ok: false, reason: 'not_executable' }
 
   let liveHash: string | null
@@ -759,6 +774,7 @@ const REFUSAL_PROSE: Record<string, string> = {
   slug_unpublishable: 'the page slug cannot be published',
   site_hash_moved: 'the page bytes changed since this action was staged',
   bundle_unavailable: 'the bundle has no publishable page to hash',
+  bundle_mismatch: 'the action belongs to a different bundle than the one in the request',
 }
 
 function readableReason(reason: string): string {
