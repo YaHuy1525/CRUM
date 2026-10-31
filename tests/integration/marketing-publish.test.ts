@@ -18,7 +18,7 @@ import { registerActionAdapter, commitBundleApproval } from '../../src/marketing
 import { makePublishPageAdapter, makePromotePageAdapter, type PageHostConfig } from '../../src/marketing/page-host'
 import { resolveSite, siteHashOf } from '../../src/marketing/site'
 import { markBundleLive } from '../../src/db/marketing'
-import { drainOnce } from '../../scripts/publish-drain'
+import { claimNextQueued, drainOnce, reapStaleRunning } from '../../scripts/publish-drain'
 
 const url = process.env.CRUM_INTEGRATION_DATABASE_URL ?? ''
 const TENANT = 'a1000000-0000-4000-8000-000000000028'
@@ -141,6 +141,7 @@ describe.skipIf(!url)('publish drain against a local pages stand-in', () => {
     )
     expect(preview.rows[0]?.status).toBe('succeeded')
     expect(preview.rows[0]?.result['url']).toBe('https://dep-1.example.pages.dev')
+    expect(preview.rows[0]?.external_id).toBe('dep-1')
     expect((await statusOf(db, bundleId))).toBe('approved')
 
     await db.query(
@@ -153,7 +154,9 @@ describe.skipIf(!url)('publish drain against a local pages stand-in', () => {
     expect(second.succeeded).toBe(1)
     expect(captured.branches[1]).toBe('main')
 
-    expect(await markBundleLive({ tenantId: TENANT, bundleId })).toBe(true)
+    // Nothing of the test's in between: the drainer's own follow-up is the
+    // behaviour under test. A succeeded promote must leave the bundle live by
+    // itself, because `live` is what the owner sees after the second click.
     expect(await statusOf(db, bundleId)).toBe('live')
     // The only door to `live` is tenant-scoped: another tenant's id matches no
     // row here and leaves the status alone.
@@ -241,5 +244,61 @@ describe.skipIf(!url)('publish drain against a local pages stand-in', () => {
     expect(row.rows[0]?.status).toBe('failed')
     expect(row.rows[0]?.last_error).toBe('no_adapter: create_campaign has no adapter in this process')
     expect(await statusOf(db, bundleId)).toBe('staged')
+  })
+
+  it('reaps a running row on how long it has been held, not how long it sat queued', async () => {
+    const db = getDbClient()
+    // A row queued two hours ago and claimed a moment ago, and a row a dead
+    // drainer claimed two hours ago. The window is an hour, so a row a live pass
+    // is holding right now cannot match it and this test cannot disturb another
+    // file's rows.
+    const bundle = await db.query<{ id: string }>(
+      `INSERT INTO marketing_bundles
+         (tenant_id, brief, objective, status, funnel_plan, prompt_version, draft_hash)
+       VALUES ($1, 'A brief long enough to pass the tool floor for this probe', 'inbound_leads',
+               'approved', jsonb_build_object('page', jsonb_build_object('slug','physio-reap')),
+               'v1', $2)
+       RETURNING id`,
+      [TENANT, `probe-reap-${Date.now()}`],
+    )
+    const bundleId = bundle.rows[0]!.id
+
+    const queuedLongAgo = await db.query<{ id: string }>(
+      `INSERT INTO marketing_actions
+         (tenant_id, bundle_id, action, payload, status, attempts, created_at)
+       VALUES ($1, $2, 'promote_page', '{}'::jsonb, 'queued', 0, now() - interval '2 hours')
+       RETURNING id`,
+      [TENANT, bundleId],
+    )
+    const heldTooLong = await db.query<{ id: string }>(
+      `INSERT INTO marketing_actions
+         (tenant_id, bundle_id, action, payload, status, attempts, created_at, executed_at)
+       VALUES ($1, $2, 'promote_page', '{}'::jsonb, 'running', 1,
+               now() - interval '3 hours', now() - interval '2 hours')
+       RETURNING id`,
+      [TENANT, bundleId],
+    )
+
+    // The claim is the state change that matters: the row was queued two hours
+    // ago, but it has been in flight for no time at all.
+    const claimed = await claimNextQueued(db, bundleId)
+    expect(claimed?.id).toBe(queuedLongAgo.rows[0]!.id)
+
+    await reapStaleRunning(db, 3_600)
+
+    const after = await db.query<{ id: string; status: string; last_error: string | null }>(
+      `SELECT id, status, last_error FROM marketing_actions WHERE bundle_id = $1`,
+      [bundleId],
+    )
+    const byId = new Map(after.rows.map((row) => [row.id, row]))
+    // Under a queue-time comparison this row was two hours old and would be
+    // failed here while its provider call was still running, which is the
+    // duplicate-deployment invitation the claim stamp exists to remove.
+    expect(byId.get(queuedLongAgo.rows[0]!.id)?.status).toBe('running')
+    // The reaper still has to work: a row actually held past the window is failed.
+    expect(byId.get(heldTooLong.rows[0]!.id)?.status).toBe('failed')
+    expect(byId.get(heldTooLong.rows[0]!.id)?.last_error).toContain('stale_running')
+
+    await db.query('DELETE FROM marketing_bundles WHERE id = $1', [bundleId])
   })
 })

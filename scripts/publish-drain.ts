@@ -55,12 +55,19 @@ export interface DrainRow {
  * of the statement, so the outer UPDATE sees the same `queued` row it selected
  * even when a second drainer evaluates the subselect at the same instant: that
  * drainer skips the locked row and claims the next one, or nothing.
+ *
+ * The claim stamps `executed_at`, so the column reads "the last moment this row
+ * changed state" for every state it can be in: queued to running here, then
+ * running to succeeded or failed in recordSuccess and recordFailure. Without
+ * that stamp there is no claim time anywhere, and the reaper would have to
+ * measure from `created_at`, the moment the row was queued, which is a
+ * different and much older instant.
  */
 export async function claimNextQueued(client: Queryable, bundleId?: string): Promise<DrainRow | null> {
   const result = await client.query<DrainRow>(
     bundleId
       ? `UPDATE marketing_actions
-              SET status = 'running', attempts = attempts + 1
+              SET status = 'running', attempts = attempts + 1, executed_at = now()
           WHERE id = (
                     SELECT id FROM marketing_actions
                      WHERE status = 'queued' AND bundle_id = $1
@@ -70,7 +77,7 @@ export async function claimNextQueued(client: Queryable, bundleId?: string): Pro
                 )
           RETURNING id, tenant_id, bundle_id, action, payload, attempts`
       : `UPDATE marketing_actions
-              SET status = 'running', attempts = attempts + 1
+              SET status = 'running', attempts = attempts + 1, executed_at = now()
           WHERE id = (
                     SELECT id FROM marketing_actions
                      WHERE status = 'queued'
@@ -110,10 +117,20 @@ export async function recordFailure(client: Queryable, actionId: string, error: 
 }
 
 /**
- * A `running` row older than the process timeout is a drainer that died holding
- * it. Marking it failed and letting a human re-queue beats re-uploading in
- * silence, because a duplicate deployment is visible and a hidden second
+ * A `running` row held longer than the process timeout is a drainer that died
+ * holding it. Marking it failed and letting a human re-queue beats re-uploading
+ * in silence, because a duplicate deployment is visible and a hidden second
  * publish is not.
+ *
+ * The window is measured from `executed_at`, which every state change stamps:
+ * claim, success and failure. So it answers "how long has this row been in
+ * flight", and `created_at` is deliberately not the answer, because that is the
+ * moment the row was queued: a bundle approved ten minutes ago and claimed one
+ * second ago has been in flight for one second, and reaping it then would fail a
+ * row whose provider call is still running, inviting a second deployment. The
+ * COALESCE stays for rows claimed by a build that predates the claim stamp: they
+ * carry no claim time, and the queue time is the only bound left to retire them
+ * by, so they keep the old behaviour rather than leaking as `running` forever.
  */
 export async function reapStaleRunning(client: Queryable, olderThanSeconds: number): Promise<number> {
   const result = await client.query<{ id: string }>(
@@ -125,6 +142,31 @@ export async function reapStaleRunning(client: Queryable, olderThanSeconds: numb
     [olderThanSeconds],
   )
   return result.rows.length
+}
+
+type ActionOutcome =
+  | { ok: true; result: Record<string, unknown> }
+  | { ok: false; error: string }
+
+/**
+ * The adapter call, and only the adapter call, inside the try. What the provider
+ * did is what that try decides, so nothing that happens after it may be folded
+ * into a provider failure: `recordSuccess` runs outside this function for that
+ * reason. A database failure while writing down a success leaves the row
+ * `running`, where the reaper retires it on claim age; it never becomes a
+ * `failed` row whose retry would deploy the same page a second time.
+ */
+async function executeAction(action: DerivedAction, tenantId: string): Promise<ActionOutcome> {
+  try {
+    const adapter = actionAdapter(action.action)
+    if (adapter === null) return { ok: false, error: `no_adapter: ${action.action} registered no adapter` }
+    // The adapter needs to know whose bundle it is reading: the action carries a
+    // bundle id and nothing else, and an unscoped artifact read would let one
+    // tenant's row publish another tenant's page. The claimed row has the tenant.
+    return { ok: true, result: { ...(await adapter.execute(action, { tenantId })) } }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
 }
 
 export async function drainOnce(deps: {
@@ -164,29 +206,36 @@ export async function drainOnce(deps: {
       continue
     }
 
-    try {
-      const adapter = actionAdapter(action.action)
-      if (adapter === null) throw new Error(`no_adapter: ${row.action} registered no adapter`)
-      // The adapter needs to know whose bundle it is reading: the action carries a
-      // bundle id and nothing else, and an unscoped artifact read would let one
-      // tenant's row publish another tenant's page. The claimed row has the tenant.
-      const result = await adapter.execute(action, { tenantId: row.tenant_id })
-      await recordSuccess(client, row.id, { ...result })
-      succeeded += 1
-    } catch (err) {
-      await recordFailure(client, row.id, err instanceof Error ? err.message : String(err))
+    // The adapter is the only thing that can report a provider failure, and it is
+    // the only thing inside this try. Writing the answer down comes after: a
+    // database failure there is not the provider's, and reporting it as one would
+    // leave a `failed` row over a page that exists.
+    const outcome = await executeAction(action, row.tenant_id)
+    if (!outcome.ok) {
+      await recordFailure(client, row.id, outcome.error)
       failed += 1
       continue
     }
+    await recordSuccess(client, row.id, outcome.result)
+    succeeded += 1
 
-    // Outside the try on purpose: the provider already answered and the row
-    // already says so. A database blip while marking the bundle live must not
-    // rewrite that row to failed, because `marketing.retry_publish` is what
+    // Outside the recording above on purpose: the provider already answered and
+    // the row already says so. A database blip while marking the bundle live must
+    // not rewrite that row to failed, because `marketing.retry_publish` is what
     // re-queues a failed row and a retry here would deploy a live page twice.
     // The honest leftover is a loud line naming the bundle; a human sets it live.
     if (action.action === 'promote_page') {
       try {
-        await markBundleLive({ tenantId: row.tenant_id, bundleId: row.bundle_id })
+        const marked = await markBundleLive({ tenantId: row.tenant_id, bundleId: row.bundle_id })
+        if (!marked) {
+          // A false is a write that matched no row: the bundle left approved,
+          // publishing and live between the approval and this promote. The page
+          // is live and the bundle does not say so, and nothing else would.
+          console.error(
+            `[publish-drain] action ${row.id} promoted bundle ${row.bundle_id}: the page is live but the bundle is not live, ` +
+              'because its status no longer allows it; set the bundle live by hand',
+          )
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         console.error(
