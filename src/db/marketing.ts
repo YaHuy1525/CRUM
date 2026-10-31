@@ -1,5 +1,7 @@
 import { getDbClient } from './client'
 import { artifactIdFor, type BundleHashInput } from '../marketing/hash'
+import { pageSlugOf } from '../marketing/outbox'
+import { resolveSite, siteHashOf, slotProblem } from '../marketing/site'
 
 export const MARKETING_OBJECTIVES = ['outreach_support', 'inbound_leads', 'proof_asset'] as const
 export type MarketingObjective = (typeof MARKETING_OBJECTIVES)[number]
@@ -177,6 +179,44 @@ export async function countMarketingArtifacts(tenantId: string, bundleId: string
   )
   const value = result.rows[0]?.count ?? 0
   return typeof value === 'number' ? value : Number.parseInt(String(value), 10)
+}
+
+/**
+ * The publish actions that actually succeeded, newest first, with the hash they
+ * carried. A promotion is a receipt over one of these rows, so the row has to
+ * exist, say `succeeded`, and carry a URL: a publish the owner cannot link is
+ * not a preview the owner has seen.
+ */
+export async function listPublishSucceeded(
+  tenantId: string,
+  bundleId: string,
+): Promise<{ id: string; siteHash: string }[]> {
+  const db = getDbClient()
+  const result = await db.query<{ id: string; payload: { siteHash?: string } }>(
+    `SELECT id, payload FROM marketing_actions
+      WHERE tenant_id = $1 AND bundle_id = $2 AND action = 'publish_page' AND status = 'succeeded'
+        AND result ->> 'url' IS NOT NULL
+      ORDER BY executed_at DESC`,
+    [tenantId, bundleId],
+  )
+  return result.rows
+    .map((r) => ({ id: r.id, siteHash: String(r.payload?.siteHash ?? '') }))
+    .filter((r) => r.siteHash.length === 64)
+}
+
+/**
+ * The hash of the bundle's current bytes, or null when it has no uploadable
+ * page. The slug lives on the bundle row, not on the artifacts, so this reads
+ * the bundle first and cannot be built from an artifact list alone.
+ */
+export async function currentSiteHash(tenantId: string, bundleId: string): Promise<string | null> {
+  const bundle = await getMarketingBundle(tenantId, bundleId)
+  if (!bundle) return null
+  const slug = pageSlugOf(bundle)
+  if (slug === null) return null
+  const artifacts = await listMarketingArtifacts(tenantId, bundleId)
+  if (slotProblem(artifacts) !== null) return null
+  return siteHashOf(resolveSite(slug, artifacts))
 }
 
 export async function insertMarketingArtifacts(params: {

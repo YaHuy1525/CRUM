@@ -18,11 +18,17 @@ import { registerActionAdapter, commitBundleApproval } from '../../src/marketing
 import { makePublishPageAdapter, makePromotePageAdapter, type PageHostConfig } from '../../src/marketing/page-host'
 import { resolveSite, siteHashOf } from '../../src/marketing/site'
 import { markBundleLive } from '../../src/db/marketing'
+import { commitWithReceipt, getPendingWrite } from '../../src/db/pending-writes'
+import { stagePromotion } from '../../src/mastra/tools/marketing-writes'
 import { claimNextQueued, drainOnce, reapStaleRunning } from '../../scripts/publish-drain'
 
 const url = process.env.CRUM_INTEGRATION_DATABASE_URL ?? ''
+// The second approval signs a real receipt, and parseEnv reads the secret at
+// sign time, so setting it here is enough.
+process.env.APPROVAL_HMAC_SECRET ??= 'crum-integration-receipt-secret-0123456789'
 const TENANT = 'a1000000-0000-4000-8000-000000000028'
 const OTHER_TENANT = 'a1000000-0000-4000-8000-000000000029'
+const APPROVER = 'a2000000-0000-4000-8000-000000000028'
 
 const PAGE_HTML = '<h1>Book your assessment</h1>'
 
@@ -164,6 +170,127 @@ describe.skipIf(!url)('publish drain against a local pages stand-in', () => {
     expect(await statusOf(db, bundleId)).toBe('live')
     unregisterPublish()
     unregisterPromote()
+  })
+
+  /**
+   * The second click, end to end: the preview is published for real, the
+   * promotion is staged through the same function Task 12's route will call,
+   * and approving it queues exactly one promote_page row. That row has to carry
+   * the slug the adapter reads, because the approval payload deliberately does
+   * not (a slug is prose, and prose is not scored), and the bundle must still be
+   * `approved`: `live` is the drainer's verdict and it has not run.
+   */
+  it('queues one promote_page row carrying the slug and the published hash, and leaves the bundle approved', async () => {
+    const db = getDbClient()
+    const unregisterPublish = registerActionAdapter(makePublishPageAdapter(config))
+    const unregisterPromote = registerActionAdapter(makePromotePageAdapter(config))
+    try {
+      const slug = 'physio-second'
+      const bundle = await db.query<{ id: string }>(
+        `INSERT INTO marketing_bundles
+           (tenant_id, brief, objective, status, funnel_plan, prompt_version, draft_hash)
+         VALUES ($1, 'A brief long enough to pass the tool floor for this probe', 'inbound_leads',
+                 'staged', jsonb_build_object('page', jsonb_build_object('slug',$3::text)),
+                 'v1', $2)
+         RETURNING id`,
+        [TENANT, `probe-second-${Date.now()}`, slug],
+      )
+      const bundleId = bundle.rows[0]!.id
+      await db.query(
+        `INSERT INTO marketing_artifacts (tenant_id, bundle_id, role, kind, text_content)
+         VALUES ($1, $2, 'funnel-builder', 'page_html', $3)`,
+        [TENANT, bundleId, PAGE_HTML],
+      )
+      await commitBundleApproval(db, {
+        tenantId: TENANT, bundleId, receiptId: null, expectedSiteHash: siteHashFor(slug),
+      })
+      expect((await drainOnce({ bundleId })).succeeded).toBe(1)
+
+      const publish = await db.query<{ id: string; payload: { siteHash: string } }>(
+        `SELECT id, payload FROM marketing_actions WHERE bundle_id = $1 AND action = 'publish_page'`,
+        [bundleId],
+      )
+      const publishRow = publish.rows[0]!
+
+      const staged = await stagePromotion({ tenantId: TENANT, userId: APPROVER, userRole: 'admin', bundleId })
+      if (!staged.ok) throw new Error(`expected a staged promotion, was refused with ${staged.reason}`)
+
+      const draft = await getPendingWrite(staged.pendingWriteId, TENANT)
+      if (!draft) throw new Error('the staged promotion draft is not visible to its own tenant')
+      expect(draft.objectType).toBe('marketing_promote')
+      expect(draft.payload).toEqual({
+        bundleId,
+        pageActionId: publishRow.id,
+        siteHash: publishRow.payload.siteHash,
+      })
+
+      await commitWithReceipt(draft, { approvedBy: APPROVER, scope: 'marketing:promote' })
+
+      const queued = await db.query<{ status: string; payload: Record<string, unknown> }>(
+        `SELECT status, payload FROM marketing_actions WHERE bundle_id = $1 AND action = 'promote_page'`,
+        [bundleId],
+      )
+      expect(queued.rows).toHaveLength(1)
+      expect(queued.rows[0]!.status).toBe('queued')
+      // The hash is the publish's own, and the slug is the one the bundle's plan
+      // names: the queued row is what the adapter resolves its files from.
+      expect(queued.rows[0]!.payload).toEqual({
+        bundleId,
+        slug,
+        siteHash: publishRow.payload.siteHash,
+      })
+      expect(await statusOf(db, bundleId)).toBe('approved')
+
+      await db.query('DELETE FROM marketing_bundles WHERE id = $1', [bundleId])
+    } finally {
+      unregisterPublish()
+      unregisterPromote()
+    }
+  })
+
+  /**
+   * The preview-side half of "an action may not be approvable before it is
+   * executable": a succeeded publish row that never reported a URL is not a
+   * preview the owner has seen or can link, so there is no promotion to stage.
+   * Only an older build or a hand-written row can carry one.
+   */
+  it('refuses to stage a promotion for a publish that never reported a URL', async () => {
+    const db = getDbClient()
+    const unregister = registerActionAdapter(makePromotePageAdapter(config))
+    try {
+      const bundle = await db.query<{ id: string }>(
+        `INSERT INTO marketing_bundles
+           (tenant_id, brief, objective, status, funnel_plan, prompt_version, draft_hash)
+         VALUES ($1, 'A brief long enough to pass the tool floor for this probe', 'inbound_leads',
+                 'approved', jsonb_build_object('page', jsonb_build_object('slug','physio-nourl')),
+                 'v1', $2)
+         RETURNING id`,
+        [TENANT, `probe-nourl-${Date.now()}`],
+      )
+      const bundleId = bundle.rows[0]!.id
+      await db.query(
+        `INSERT INTO marketing_artifacts (tenant_id, bundle_id, role, kind, text_content)
+         VALUES ($1, $2, 'funnel-builder', 'page_html', $3)`,
+        [TENANT, bundleId, PAGE_HTML],
+      )
+      await db.query(
+        `INSERT INTO marketing_actions (tenant_id, bundle_id, action, payload, status)
+         VALUES ($1, $2, 'publish_page', jsonb_build_object('slug','physio-nourl','siteHash',$3::text), 'succeeded')`,
+        [TENANT, bundleId, siteHashFor('physio-nourl')],
+      )
+
+      const staged = await stagePromotion({ tenantId: TENANT, userId: APPROVER, userRole: 'admin', bundleId })
+      expect(staged).toEqual({ ok: false, reason: 'no_published_preview' })
+      const queued = await db.query<{ n: string }>(
+        `SELECT count(*) AS n FROM marketing_actions WHERE bundle_id = $1 AND action = 'promote_page'`,
+        [bundleId],
+      )
+      expect(Number(queued.rows[0]!.n)).toBe(0)
+
+      await db.query('DELETE FROM marketing_bundles WHERE id = $1', [bundleId])
+    } finally {
+      unregister()
+    }
   })
 
   it('records an unreachable provider as a failed row without touching the bundle status', async () => {

@@ -9,9 +9,11 @@ import {
   ARTIFACT_KINDS,
   MARKETING_OBJECTIVES,
   MARKETING_ROLES,
+  currentSiteHash,
   getMarketingBundle,
   insertMarketingArtifacts,
   listMarketingArtifacts,
+  listPublishSucceeded,
   markBundleStaged,
   roleColumnsOf,
   setBundleLeadToken,
@@ -28,11 +30,12 @@ import {
 import {
   blockedActions,
   deriveActions,
+  isExecutable,
   pageSlugOf,
   slotProblemCheck,
   unreadPlanColumns,
 } from '../../marketing/outbox'
-import { saveRiskView, stagePayload } from '../../marketing/payload'
+import { promotePayload, saveRiskView, stagePayload } from '../../marketing/payload'
 import { slugProblem } from '../../marketing/site'
 
 // One role output is a JSON document, not a fixed shape: each producer owns its
@@ -520,4 +523,155 @@ export const stageBundleTool = createTool({
       }
     })
   },
+})
+
+export type StagePromotionResult =
+  | { ok: true; pendingWriteId: string; riskScore: number }
+  | { ok: false; reason: string }
+
+/**
+ * The one implementation of "ask the owner to put that preview on the domain",
+ * behind the Mastra tool here and Task 12's REST route. A second copy for HTTP
+ * would be a second answer to the same governance question.
+ *
+ * `userRole` is threaded rather than hard-coded because `gateFor` reads the role
+ * out of the request context: a promotion scored as 'admin' regardless of who
+ * asked would report a different gate to the owner than the policy would apply.
+ * Task 11's `stageRetry` takes the same parameter for the same reason.
+ */
+export async function stagePromotion(params: {
+  tenantId: string
+  userId: string
+  userRole: string
+  bundleId: string
+}): Promise<StagePromotionResult> {
+  const bundle = await getMarketingBundle(params.tenantId, params.bundleId)
+  if (!bundle) return { ok: false, reason: 'not_found' }
+  // `live` is accepted because the owner may ask again for a page already on the
+  // domain; anything else has not been through the first approval.
+  if (bundle.status !== 'approved' && bundle.status !== 'live') {
+    return { ok: false, reason: `bundle_is_${bundle.status}` }
+  }
+
+  // The publish this promotion refers to must exist and have succeeded. A
+  // promotion staged against a vanished preview is a receipt over nothing, so
+  // this is asked before anything is queued, and it is asked first because it
+  // is the question about the bundle the caller named.
+  const published = await listPublishSucceeded(params.tenantId, params.bundleId)
+  if (published.length === 0) return { ok: false, reason: 'no_published_preview' }
+  const pageAction = published[0]!
+
+  // Then the build's own capability: an action may not be approvable before it
+  // is executable, and a build without a promote adapter would queue a row the
+  // drainer could only record as no_adapter.
+  if (!isExecutable('promote_page')) return { ok: false, reason: 'not_executable' }
+
+  // The same recomputation the bundle approval does, one step later: a promotion
+  // authorises the bytes that are already on the preview URL, and if the bundle
+  // was re-saved since, those bytes are not what the reviewer looked at.
+  const liveHash = await currentSiteHash(params.tenantId, params.bundleId)
+  if (liveHash === null || liveHash !== pageAction.siteHash) {
+    return { ok: false, reason: 'site_hash_moved' }
+  }
+
+  const payload = promotePayload({ bundleId: bundle.id, pageActionId: pageAction.id, siteHash: pageAction.siteHash })
+  const policy = loadPolicy()
+  const assessment = scoreRisk(payload, policy.risk, 'marketing.promote_bundle')
+  const gate = policy.gateFor('marketing.promote_bundle', assessment, {
+    requestContext: { tenantId: params.tenantId, userId: params.userId, userRole: params.userRole },
+  })
+  const draft = await getOrCreateDraft({
+    tenantId: params.tenantId,
+    runId: 'pending',
+    objectType: 'marketing_promote',
+    operation: 'create',
+    targetId: bundle.id,
+    payload,
+    riskScore: assessment.score,
+    gate,
+    requestedBy: params.userId,
+    // One live decision per preview deployment: a re-ask for the same preview
+    // lands on the draft that already exists rather than a second one.
+    idempotencyKey: `promote:${bundle.id}:${pageAction.id}`,
+  })
+  // The row, not the request: getOrCreateDraft's ON CONFLICT is a no-op, so an
+  // existing draft keeps the score it was created with.
+  return { ok: true, pendingWriteId: draft.id, riskScore: draft.riskScore }
+}
+
+/**
+ * Refusal reasons are tokens so a caller can branch on them; the sentence the
+ * model repeats is prose. This is a message, not a scored payload, so spelling
+ * the token out is safe here and unreadable otherwise.
+ */
+function readableReason(reason: string): string {
+  return reason.replaceAll('_', ' ')
+}
+
+export const promoteBundleTool = createTool({
+  id: 'marketing.promote_bundle',
+  title: 'Promote Marketing Bundle',
+  description:
+    'Ask the owner to approve putting a bundle whose preview page is already published onto the live domain. Stages one approval. Publishes nothing until it is approved and drained.',
+  requestContextSchema: TenantRequestContextSchema,
+  inputSchema: z.object({ bundleId: z.string().uuid() }),
+  outputSchema: StageOutputSchema,
+  outputValidation: 'warn',
+
+  /**
+   * Scored on a placeholder, like the stage tool: the action id and hash are not
+   * knowable without a database read, and this hook must stay synchronous and
+   * side-effect free. The payload is identifiers, hashes and numbers only, so
+   * the declared class decides the gate whatever the placeholders hold;
+   * `execute` recomputes the score on the payload it actually stages.
+   */
+  requireApproval: (input, { requestContext } = {}) => {
+    const policy = loadPolicy()
+    const assessment = scoreRisk(
+      promotePayload({ bundleId: input.bundleId, pageActionId: '', siteHash: '' }),
+      policy.risk,
+      'marketing.promote_bundle',
+    )
+    return policy.gateFor('marketing.promote_bundle', assessment, { requestContext }) === 'approval'
+  },
+
+  execute: async (input, context) =>
+    context.observe.span('marketing.promote_bundle', async () => {
+      const rc = context.requestContext.all as { tenantId: string; userId: string; userRole: string }
+      const result = await stagePromotion({
+        tenantId: rc.tenantId,
+        userId: rc.userId,
+        userRole: rc.userRole,
+        bundleId: input.bundleId,
+      })
+      if (!result.ok) {
+        // Refusing as a queue entry rather than a throw, the same way the stage
+        // tool does: an owner reading a refusal can act on it, and a failed turn
+        // leaves no record of why nothing went live.
+        const humanTaskId = await createHumanTask(
+          {
+            tenantId: rc.tenantId,
+            runId: `promote:${input.bundleId}`,
+            toolName: 'marketing.promote_bundle',
+            riskScore: 0,
+            title: `Refused promotion of bundle ${input.bundleId}`,
+            body: `Not staged: ${result.reason}. Nothing went live.`,
+            requestedBy: rc.userId,
+          },
+          'refusal',
+        )
+        return {
+          pendingWriteId: humanTaskId,
+          riskScore: 0,
+          gate: 'approval' as const,
+          message: `Promotion refused (${readableReason(result.reason)}). A human task was created; nothing is staged.`,
+        }
+      }
+      return {
+        pendingWriteId: result.pendingWriteId,
+        riskScore: result.riskScore,
+        gate: 'approval' as const,
+        message: `Promotion staged for approval (${result.pendingWriteId}). The page stays on its preview URL until it is approved and drained.`,
+      }
+    }),
 })

@@ -361,6 +361,29 @@ async function deleteRow(
   return id
 }
 
+/**
+ * The slug the drainer's adapter needs, and the one field the promote payload
+ * may not carry: a slug is a phrase an agent wrote, and prose in a scored
+ * payload moves the score (spec section 5). It is read from the bundle the
+ * promotion names, inside the transaction that queues the promote, so the row
+ * the publisher runs and the page the owner approved are the same bundle.
+ */
+async function slugOfBundle(client: Queryable, tenantId: string, bundleId: string): Promise<string> {
+  const result = await client.query<{ slug: string | null }>(
+    `SELECT funnel_plan -> 'page' ->> 'slug' AS slug
+       FROM marketing_bundles
+      WHERE id = $1 AND tenant_id = $2`,
+    [bundleId, tenantId],
+  )
+  const slug = result.rows[0]?.slug ?? null
+  if (typeof slug !== 'string' || slug.length === 0) {
+    throw new UnsupportedCommitError(
+      `marketing_promote names bundle ${bundleId}, which has no page slug, so there is no page to put on the domain`,
+    )
+  }
+  return slug
+}
+
 function mapColumns(
   target: (typeof COMMIT_TARGETS)[string],
   payload: Record<string, unknown>,
@@ -475,6 +498,46 @@ async function applyDraft(
       if (err instanceof BundleNotApprovableError) throw new UnsupportedCommitError(err.message)
       throw err
     }
+  }
+
+  // A promotion is one work order and no content change: the bundle is already
+  // approved and its preview already exists. Status moves to `live` only after
+  // the publisher reports success, in scripts/publish-drain.ts, never here.
+  if (draft.objectType === 'marketing_promote') {
+    if (draft.operation !== 'create') {
+      throw new UnsupportedCommitError(
+        `marketing_promote supports only the create operation, not ${draft.operation}`,
+      )
+    }
+    const bundleId = draft.targetId
+    const pageActionId = payload['pageActionId']
+    const siteHash = payload['siteHash']
+    if (!bundleId || typeof pageActionId !== 'string' || typeof siteHash !== 'string') {
+      throw new UnsupportedCommitError('marketing_promote must name a bundle, a publish action and its hash')
+    }
+    // The publish the reviewer approved the promotion of has to still be the
+    // succeeded publish this payload names. Re-read inside the transaction, like
+    // commitBundleApproval, because the payload is a claim about another row.
+    const check = await client.query<{ id: string; status: string; action: string }>(
+      `SELECT id, status, action FROM marketing_actions
+        WHERE id = $1 AND tenant_id = $2 AND bundle_id = $3 AND action = 'publish_page' AND status = 'succeeded'`,
+      [pageActionId, draft.tenantId, bundleId],
+    )
+    if (!check.rows[0]) {
+      throw new UnsupportedCommitError(
+        `marketing_promote names publish action ${pageActionId}, which is not a succeeded publish on bundle ${bundleId}`,
+      )
+    }
+    const slug = await slugOfBundle(client, draft.tenantId, bundleId)
+    // receipt_id is null on purpose, for the reason the marketing_stage branch
+    // gives: the receipt is signed after applyDraft returns, so no id exists yet
+    // and the drainer back-fills it.
+    await client.query(
+      `INSERT INTO marketing_actions (tenant_id, bundle_id, action, payload, status, receipt_id)
+       VALUES ($1, $2, 'promote_page', $3, 'queued', $4)`,
+      [draft.tenantId, bundleId, JSON.stringify({ bundleId, slug, siteHash }), draft.receiptId ?? null],
+    )
+    return bundleId
   }
 
   const target = requireTarget(draft.objectType)
