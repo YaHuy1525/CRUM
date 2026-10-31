@@ -10,6 +10,7 @@ import {
   MARKETING_OBJECTIVES,
   MARKETING_ROLES,
   currentSiteHash,
+  getFailedAction,
   getMarketingBundle,
   insertMarketingArtifacts,
   listMarketingArtifacts,
@@ -34,8 +35,9 @@ import {
   pageSlugOf,
   slotProblemCheck,
   unreadPlanColumns,
+  type MarketingActionName,
 } from '../../marketing/outbox'
-import { promotePayload, saveRiskView, stagePayload } from '../../marketing/payload'
+import { promotePayload, retryPayload, saveRiskView, stagePayload } from '../../marketing/payload'
 import { SlugProblemError, slugProblem } from '../../marketing/site'
 
 // One role output is a JSON document, not a fixed shape: each producer owns its
@@ -633,6 +635,52 @@ export async function stagePromotion(params: {
 }
 
 /**
+ * The one implementation of "ask the owner for another go at that failed
+ * publish", behind the Mastra tool here and Task 12's REST route.
+ *
+ * A retry is not a re-run inside the failed row: the database caps attempts at
+ * 3 and `failed` is terminal, so the decision stages one new queued row cloned
+ * from the payload the owner approved the first time. Like the stage and
+ * promotion stagers, it refuses before anything is queued when this build
+ * cannot execute the action or the bytes no longer hash to what the failed row
+ * recorded, because an approval may not exist before its action is executable.
+ * Spec section 5.
+ */
+export async function stageRetry(params: {
+  tenantId: string
+  userId: string
+  userRole: string
+  actionId: string
+}): Promise<{ ok: true; pendingWriteId: string; riskScore: number } | { ok: false; reason: string }> {
+  const failed = await getFailedAction(params.tenantId, params.actionId)
+  if (!failed) return { ok: false, reason: 'not_failed' }
+  if (!isExecutable(failed.action as MarketingActionName)) return { ok: false, reason: 'not_executable' }
+
+  const liveHash = await currentSiteHash(params.tenantId, failed.bundleId)
+  if (liveHash !== failed.siteHash) return { ok: false, reason: 'site_hash_moved' }
+
+  const payload = retryPayload({ actionId: failed.id, siteHash: failed.siteHash })
+  const policy = loadPolicy()
+  const assessment = scoreRisk(payload, policy.risk, 'marketing.retry_publish')
+  const gate = policy.gateFor('marketing.retry_publish', assessment, {
+    requestContext: { tenantId: params.tenantId, userId: params.userId, userRole: params.userRole },
+  })
+  const draft = await getOrCreateDraft({
+    tenantId: params.tenantId,
+    runId: 'pending',
+    objectType: 'marketing_retry',
+    operation: 'create',
+    targetId: failed.id,
+    payload,
+    riskScore: assessment.score,
+    gate,
+    requestedBy: params.userId,
+    idempotencyKey: `retry:${failed.id}`,
+  })
+  return { ok: true, pendingWriteId: draft.id, riskScore: draft.riskScore }
+}
+
+/**
  * Refusal reasons are tokens so a caller can branch on them; the sentence the
  * model repeats is prose. This is a message, not a scored payload, so spelling
  * the token out is safe here and unreadable otherwise.
@@ -710,6 +758,79 @@ export const promoteBundleTool = createTool({
         riskScore: result.riskScore,
         gate: 'approval' as const,
         message: `Promotion staged for approval (${result.pendingWriteId}). The page stays on its preview URL until it is approved and drained.`,
+      }
+    }),
+})
+
+export const retryPublishTool = createTool({
+  id: 'marketing.retry_publish',
+  title: 'Retry Failed Marketing Publish',
+  description:
+    'Ask the owner to approve re-queuing one failed publish as a new outbox row. Stages one approval. Never retries inside the failed row, and publishes nothing until the new row is drained.',
+  requestContextSchema: TenantRequestContextSchema,
+  inputSchema: z.object({ actionId: z.string().uuid() }),
+  outputSchema: StageOutputSchema,
+  outputValidation: 'warn',
+
+  /**
+   * Scored on a placeholder, like the other two marketing approvals: the failed
+   * row's hash is not knowable without a database read, and this hook must stay
+   * synchronous and side-effect free. The payload is identifiers and hashes
+   * only, so the declared class decides the gate whatever the placeholder
+   * holds; `execute` recomputes the score on the payload it actually stages.
+   */
+  requireApproval: (input, { requestContext } = {}) => {
+    const policy = loadPolicy()
+    const assessment = scoreRisk(
+      retryPayload({ actionId: input.actionId, siteHash: '' }),
+      policy.risk,
+      'marketing.retry_publish',
+    )
+    // The same plain record stageRetry passes, not Mastra's context wrapper:
+    // `gateFor` declares a record, and one shape at both call sites is one
+    // thing to keep true when it starts reading the role.
+    const rc = requestContext?.all as Record<string, unknown> | undefined
+    return policy.gateFor('marketing.retry_publish', assessment, { requestContext: rc }) === 'approval'
+  },
+
+  execute: async (input, context) =>
+    context.observe.span('marketing.retry_publish', async () => {
+      const rc = context.requestContext.all as { tenantId: string; userId: string; userRole: string }
+      const result = await stageRetry({
+        tenantId: rc.tenantId,
+        userId: rc.userId,
+        userRole: rc.userRole,
+        actionId: input.actionId,
+      })
+      if (!result.ok) {
+        // Refusing as a queue entry rather than a throw, the same way the stage
+        // and promote tools do: an owner reading a refusal can act on it, and a
+        // failed turn leaves no record of why nothing was re-queued.
+        const why = readableReason(result.reason)
+        const humanTaskId = await createHumanTask(
+          {
+            tenantId: rc.tenantId,
+            runId: `retry:${input.actionId}`,
+            toolName: 'marketing.retry_publish',
+            riskScore: 0,
+            title: `Refused retry of action ${input.actionId}`,
+            body: `Not staged: ${why}. Nothing was re-queued.`,
+            requestedBy: rc.userId,
+          },
+          'refusal',
+        )
+        return {
+          pendingWriteId: humanTaskId,
+          riskScore: 0,
+          gate: 'approval' as const,
+          message: `Retry refused (${why}). A human task was created; nothing is staged.`,
+        }
+      }
+      return {
+        pendingWriteId: result.pendingWriteId,
+        riskScore: result.riskScore,
+        gate: 'approval' as const,
+        message: `Retry staged for approval (${result.pendingWriteId}). The failed row stays failed; a new action is queued only after it is approved and drained.`,
       }
     }),
 })

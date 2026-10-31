@@ -4,6 +4,7 @@ const db = vi.hoisted(() => ({
   getMarketingBundle: vi.fn(),
   listPublishSucceeded: vi.fn(),
   currentSiteHash: vi.fn(),
+  getFailedAction: vi.fn(),
   getOrCreateDraft: vi.fn(),
   createHumanTask: vi.fn(),
 }))
@@ -13,6 +14,7 @@ vi.mock('../../src/db/marketing', async (importOriginal) => ({
   getMarketingBundle: db.getMarketingBundle,
   listPublishSucceeded: db.listPublishSucceeded,
   currentSiteHash: db.currentSiteHash,
+  getFailedAction: db.getFailedAction,
 }))
 vi.mock('../../src/db/pending-writes', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/db/pending-writes')>()),
@@ -23,7 +25,7 @@ vi.mock('../../src/db/pending-writes', async (importOriginal) => ({
   createHumanTask: db.createHumanTask,
 }))
 
-import { promoteBundleTool, stagePromotion } from '../../src/mastra/tools/marketing-writes'
+import { promoteBundleTool, stagePromotion, stageRetry } from '../../src/mastra/tools/marketing-writes'
 import { registerActionAdapter } from '../../src/marketing/outbox'
 import { SlugProblemError } from '../../src/marketing/site'
 
@@ -32,6 +34,7 @@ const context = { requestContext: { all: rc }, observe: { span: (_n: string, fn:
 // A real uuid, because `stagePromotion` refuses anything else before it reads:
 // Task 12's REST route will hand it a raw path parameter that no schema guards.
 const BUNDLE = 'b1b1b1b1-b1b1-4b1b-8b1b-b1b1b1b1b1b1'
+const ACT = '66666666-6666-4666-8666-666666666666'
 const PUBLISHED = { id: 'act1', siteHash: 'a'.repeat(64) }
 const bundle = () => ({
   id: BUNDLE,
@@ -127,6 +130,37 @@ describe('marketing.promote_bundle', () => {
     expect(out).toMatchObject({ ok: false, reason: 'site_hash_moved' })
     if (!out.ok) expect(out.message).toMatch(/slug/)
     expect(db.getOrCreateDraft).not.toHaveBeenCalled()
+    unregister()
+  })
+})
+
+describe('marketing.retry_publish', () => {
+  it('refuses to retry a row that has not failed', async () => {
+    db.getFailedAction.mockResolvedValue(null)
+    const out = await stageRetry({ tenantId: rc.tenantId, userId: rc.userId, userRole: 'admin', actionId: ACT })
+    expect(out).toMatchObject({ ok: false, reason: 'not_failed' })
+  })
+
+  it('refuses when the bytes moved, so a retry cannot publish an unseen page', async () => {
+    // Registered so the refusal under test is the hash, not the build:
+    // stageRetry asks whether the action is executable before it compares bytes.
+    const unregister = registerActionAdapter({ name: 'publish_page', execute: () => Promise.resolve({ externalId: 'x' }) })
+    db.getFailedAction.mockResolvedValue({ id: ACT, bundleId: 'b1', siteHash: 'a'.repeat(64), action: 'publish_page' })
+    db.currentSiteHash.mockResolvedValue('b'.repeat(64))
+    const out = await stageRetry({ tenantId: rc.tenantId, userId: rc.userId, userRole: 'admin', actionId: ACT })
+    expect(out).toMatchObject({ ok: false, reason: 'site_hash_moved' })
+    expect(db.getOrCreateDraft).not.toHaveBeenCalled()
+    unregister()
+  })
+
+  it('stages the action id and the hash, and nothing else', async () => {
+    db.getFailedAction.mockResolvedValue({ id: ACT, bundleId: 'b1', siteHash: 'a'.repeat(64), action: 'publish_page' })
+    db.currentSiteHash.mockResolvedValue('a'.repeat(64))
+    const unregister = registerActionAdapter({ name: 'publish_page', execute: () => Promise.resolve({ externalId: 'x' }) })
+    const out = await stageRetry({ tenantId: rc.tenantId, userId: rc.userId, userRole: 'admin', actionId: ACT })
+    expect(out).toMatchObject({ ok: true })
+    expect(Object.keys((db.getOrCreateDraft.mock.calls[0]![0] as { payload: object }).payload).sort())
+      .toEqual(['actionId', 'siteHash'])
     unregister()
   })
 })

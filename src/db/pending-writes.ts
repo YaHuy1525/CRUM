@@ -558,6 +558,46 @@ async function applyDraft(
     return bundleId
   }
 
+  // The database caps attempts at 3 and a terminal failure may not retry inside
+  // its own row, so a retry is exactly one new queued row, cloned from the
+  // payload the human already approved once. Spec section 5.
+  if (draft.objectType === 'marketing_retry') {
+    if (draft.operation !== 'create') {
+      throw new UnsupportedCommitError(
+        `marketing_retry supports only the create operation, not ${draft.operation}`,
+      )
+    }
+    const sourceId = draft.targetId
+    const siteHash = payload['siteHash']
+    if (!sourceId || typeof siteHash !== 'string') {
+      throw new UnsupportedCommitError('marketing_retry must name the failed action and its hash')
+    }
+    const source = await client.query<{
+      id: string
+      bundle_id: string
+      action: string
+      status: string
+      payload: { siteHash?: string } | null
+    }>(
+      `SELECT id, bundle_id, action, status, payload FROM marketing_actions
+        WHERE id = $1 AND tenant_id = $2 AND status = 'failed'`,
+      [sourceId, draft.tenantId],
+    )
+    const row = source.rows[0]
+    if (!row) {
+      throw new UnsupportedCommitError(`marketing_retry names ${sourceId}, which is not a failed action visible to this tenant`)
+    }
+    if (String(row.payload?.['siteHash'] ?? '') !== siteHash) {
+      throw new UnsupportedCommitError(`marketing_retry carries a hash that does not match action ${sourceId}`)
+    }
+    await client.query(
+      `INSERT INTO marketing_actions (tenant_id, bundle_id, action, payload, status, receipt_id)
+       VALUES ($1, $2, $3, $4::jsonb, 'queued', $5)`,
+      [draft.tenantId, row.bundle_id, row.action, JSON.stringify(row.payload), draft.receiptId ?? null],
+    )
+    return row.bundle_id
+  }
+
   const target = requireTarget(draft.objectType)
 
   switch (draft.operation) {

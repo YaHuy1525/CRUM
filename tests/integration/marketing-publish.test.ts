@@ -19,7 +19,7 @@ import { makePublishPageAdapter, makePromotePageAdapter, type PageHostConfig } f
 import { resolveSite, siteHashOf } from '../../src/marketing/site'
 import { markBundleLive } from '../../src/db/marketing'
 import { commitWithReceipt, getPendingWrite } from '../../src/db/pending-writes'
-import { stagePromotion } from '../../src/mastra/tools/marketing-writes'
+import { stagePromotion, stageRetry } from '../../src/mastra/tools/marketing-writes'
 import { claimNextQueued, drainOnce, reapStaleRunning } from '../../scripts/publish-drain'
 
 const url = process.env.CRUM_INTEGRATION_DATABASE_URL ?? ''
@@ -507,5 +507,124 @@ describe.skipIf(!url)('publish drain against a local pages stand-in', () => {
     expect(byId.get(heldTooLong.rows[0]!.id)?.last_error).toContain('stale_running')
 
     await db.query('DELETE FROM marketing_bundles WHERE id = $1', [bundleId])
+  })
+
+  /**
+   * The retry is a decision, not a second attempt inside the failed row: the
+   * database caps attempts at 3 and `failed` is terminal, so approving a
+   * marketing_retry draft clones the failed payload into one new queued row.
+   * The failed row stays failed forever, because the receipt trail has to show
+   * both attempts. Spec section 5.
+   */
+  it('re-queues a failed publish as a new row after a retry approval, leaving the failed row alone', async () => {
+    const db = getDbClient()
+    // A port nothing listens on: the first attempt fails through fetch, the way
+    // an under-scoped token fails, and never touches the bundle status.
+    const down = { ...config, apiBaseUrl: 'http://127.0.0.1:1' }
+    const unregisterFailed = registerActionAdapter(makePublishPageAdapter(down))
+    let unregisterLive: (() => void) | null = null
+    try {
+      const slug = 'physio-retry'
+      const bundle = await db.query<{ id: string }>(
+        `INSERT INTO marketing_bundles
+           (tenant_id, brief, objective, status, funnel_plan, prompt_version, draft_hash)
+         VALUES ($1, 'A brief long enough to pass the tool floor for this probe', 'inbound_leads',
+                 'staged', jsonb_build_object('page', jsonb_build_object('slug',$3::text)),
+                 'v1', $2)
+         RETURNING id`,
+        [TENANT, `probe-retry-${Date.now()}`, slug],
+      )
+      const bundleId = bundle.rows[0]!.id
+      await db.query(
+        `INSERT INTO marketing_artifacts (tenant_id, bundle_id, role, kind, text_content)
+         VALUES ($1, $2, 'funnel-builder', 'page_html', $3)`,
+        [TENANT, bundleId, PAGE_HTML],
+      )
+      await commitBundleApproval(db, {
+        tenantId: TENANT, bundleId, receiptId: null, expectedSiteHash: siteHashFor(slug),
+      })
+
+      const first = await drainOnce({ bundleId })
+      expect(first.failed).toBe(1)
+      const failedRows = await db.query<{
+        id: string
+        status: string
+        attempts: number
+        last_error: string | null
+        payload: Record<string, unknown>
+      }>(
+        `SELECT id, status, attempts, last_error, payload FROM marketing_actions
+          WHERE bundle_id = $1 AND action = 'publish_page'`,
+        [bundleId],
+      )
+      expect(failedRows.rows).toHaveLength(1)
+      const failed = failedRows.rows[0]!
+      expect(failed.status).toBe('failed')
+      expect(failed.attempts).toBe(1)
+      expect(failed.last_error).toMatch(/ECONNREFUSED|fetch failed/)
+
+      const staged = await stageRetry({ tenantId: TENANT, userId: APPROVER, userRole: 'admin', actionId: failed.id })
+      if (!staged.ok) throw new Error(`expected a staged retry, was refused with ${staged.reason}`)
+
+      const draft = await getPendingWrite(staged.pendingWriteId, TENANT)
+      if (!draft) throw new Error('the staged retry draft is not visible to its own tenant')
+      expect(draft.objectType).toBe('marketing_retry')
+      expect(draft.payload).toEqual({ actionId: failed.id, siteHash: failed.payload['siteHash'] })
+
+      await commitWithReceipt(draft, { approvedBy: APPROVER, scope: 'marketing:retry' })
+
+      // Two attempts, two rows: the queued clone has zero attempts, and the
+      // failed row still says exactly what the first attempt said.
+      const afterApproval = await db.query<{
+        id: string
+        status: string
+        attempts: number
+        payload: Record<string, unknown>
+      }>(
+        `SELECT id, status, attempts, payload FROM marketing_actions
+          WHERE bundle_id = $1 AND action = 'publish_page'`,
+        [bundleId],
+      )
+      expect(afterApproval.rows).toHaveLength(2)
+      expect(afterApproval.rows.map((row) => row.attempts).sort()).toEqual([0, 1])
+      const stillFailed = afterApproval.rows.find((row) => row.id === failed.id)!
+      expect(stillFailed.status).toBe('failed')
+      const requeued = afterApproval.rows.find((row) => row.id !== failed.id)!
+      expect(requeued.status).toBe('queued')
+      // The clone is the payload the owner approved the first time, not a
+      // re-derivation from whatever the bundle says now.
+      expect(requeued.payload).toEqual(failed.payload)
+
+      // Once this process can run the action again, the next pass takes the
+      // queued clone and succeeds; the failed row is still the first attempt.
+      unregisterLive = registerActionAdapter(makePublishPageAdapter(config))
+      const second = await drainOnce({ bundleId })
+      expect(second.succeeded).toBe(1)
+      expect(second.failed).toBe(0)
+
+      const afterDrain = await db.query<{ id: string; status: string; attempts: number }>(
+        `SELECT id, status, attempts FROM marketing_actions
+          WHERE bundle_id = $1 AND action = 'publish_page'`,
+        [bundleId],
+      )
+      const failedAfter = afterDrain.rows.find((row) => row.id === failed.id)!
+      expect(failedAfter).toMatchObject({ status: 'failed', attempts: 1 })
+      const succeeded = afterDrain.rows.find((row) => row.id !== failed.id)!
+      expect(succeeded).toMatchObject({ status: 'succeeded', attempts: 1 })
+      // A publish leaves the bundle approved; only a promote makes it live.
+      expect(await statusOf(db, bundleId)).toBe('approved')
+
+      // A succeeded action is not retryable: the refusal comes from the row
+      // itself, not from a caller remembering to ask only about failures.
+      const notFailed = await stageRetry({
+        tenantId: TENANT, userId: APPROVER, userRole: 'admin', actionId: succeeded.id,
+      })
+      expect(notFailed).toEqual({ ok: false, reason: 'not_failed' })
+
+      await db.query('DELETE FROM marketing_bundles WHERE id = $1', [bundleId])
+    } finally {
+      unregisterFailed()
+      unregisterLive?.()
+    }
   })
 })

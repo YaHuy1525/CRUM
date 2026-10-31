@@ -204,6 +204,35 @@ export async function listPublishSucceeded(
     .filter((r) => r.siteHash.length === 64)
 }
 
+/** One failed outbox row, with the hash it was published under. */
+export async function getFailedAction(
+  tenantId: string,
+  actionId: string,
+): Promise<{ id: string; bundleId: string; action: string; siteHash: string } | null> {
+  const db = getDbClient()
+  // The hash lane alone, typed as the string it is: this reader only ever
+  // compares siteHash, and String() over a Record-wide unknown is the
+  // '[object Object]' collision the hash comparison cannot afford.
+  const result = await db.query<{
+    id: string
+    bundle_id: string
+    action: string
+    payload: { siteHash?: string } | null
+  }>(
+    `SELECT id, bundle_id, action, payload FROM marketing_actions
+      WHERE id = $1 AND tenant_id = $2 AND status = 'failed' AND action IN ('publish_page','promote_page')`,
+    [actionId, tenantId],
+  )
+  const row = result.rows[0]
+  if (!row) return null
+  return {
+    id: row.id,
+    bundleId: row.bundle_id,
+    action: row.action,
+    siteHash: String(row.payload?.['siteHash'] ?? ''),
+  }
+}
+
 /**
  * The hash of the bundle's current bytes, or null when it has no uploadable
  * page. The slug lives on the bundle row, not on the artifacts, so this reads
