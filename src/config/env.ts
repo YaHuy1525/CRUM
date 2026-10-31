@@ -15,6 +15,14 @@ const optionalString = z
   .transform((v) => (v.trim() === '' ? undefined : v))
   .optional()
 
+// `KEY=` in an env file is an unset key, not a failed boot. optionalString
+// already reads it that way; a key that carries a constraint needs the blank
+// mapped to undefined before the constraint runs, which is what preprocess is
+// for.
+function blankAsUnset(value: unknown): unknown {
+  return typeof value === 'string' && value.trim() === '' ? undefined : value
+}
+
 const hmacSecret = z.string().min(32, 'must be at least 32 bytes').optional()
 
 const booleanish = z
@@ -141,12 +149,22 @@ export const EnvSchema = z.object({
   CRUM_CLOUDFLARE_ACCOUNT_ID: optionalString,
   CRUM_CLOUDFLARE_PAGES_PROJECT: optionalString,
   // A secret: the injection guard fails open when an expected key is absent, and
-  // a marketing agent reading untrusted page copy is where that matters.
-  CRUM_CLOUDFLARE_API_TOKEN: hmacSecret,
+  // a marketing agent reading untrusted page copy is where that matters. Blank is
+  // unset, because an .env.example placeholder line must not stop an
+  // unconfigured install from booting.
+  CRUM_CLOUDFLARE_API_TOKEN: z.preprocess(
+    blankAsUnset,
+    z.string().trim().min(32, 'must be at least 32 bytes').optional(),
+  ),
   CRUM_PAGES_PRODUCTION_BRANCH: optionalString,
   CRUM_MARKETING_SITE_ORIGIN: optionalString,
   CRUM_LEAD_API_ORIGIN: optionalString,
-  CRUM_MARKETING_LEAD_DAILY_CAP: z.coerce.number().int().min(1).max(100_000).default(200),
+  // Blank means unset, so the default cap applies instead of a coerced 0 that
+  // fails min(1).
+  CRUM_MARKETING_LEAD_DAILY_CAP: z.preprocess(
+    blankAsUnset,
+    z.coerce.number().int().min(1).max(100_000).default(200),
+  ),
 })
 
 export type CrumEnv = z.infer<typeof EnvSchema>
@@ -183,9 +201,12 @@ export const PRODUCTION_REQUIRED_SECRETS: readonly string[] = [
   'MCP_REQUEST_STATE_KEY',
   'SUPABASE_URL',
   'SUPABASE_SERVICE_ROLE_KEY',
-  // A production deployment that holds a Pages token can publish a reviewed
-  // page, and a missing one fails open in the injection guard. Losing the
-  // variable must be loud rather than silently un-registering the adapters.
+  // Required only for a production install that publishes pages. A Pages-free
+  // production boot is legitimate, so whoever wires this list into boot must not
+  // make the entry fatal on its own: the adapters simply stay unregistered and
+  // staging refuses. A deployment that does publish, though, must not lose the
+  // token quietly, and the injection guard fails open when an expected key is
+  // absent.
   'CRUM_CLOUDFLARE_API_TOKEN',
 ]
 

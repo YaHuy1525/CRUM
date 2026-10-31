@@ -160,6 +160,18 @@ describe('marketing slice 2 settings', () => {
     expect(parseEnv({ CRUM_CLOUDFLARE_ACCOUNT_ID: '' }).CRUM_CLOUDFLARE_ACCOUNT_ID).toBeUndefined()
   })
 
+  it('treats a blank Pages token as absent, not as a failed boot', () => {
+    // An `.env.example` placeholder line is `KEY=`, and an unconfigured install
+    // must still boot without the Pages lane.
+    expect(parseEnv({ CRUM_CLOUDFLARE_API_TOKEN: '' }).CRUM_CLOUDFLARE_API_TOKEN).toBeUndefined()
+    expect(parseEnv({ CRUM_CLOUDFLARE_API_TOKEN: '   ' }).CRUM_CLOUDFLARE_API_TOKEN).toBeUndefined()
+  })
+
+  it('treats a blank lead cap as unset, not as a cap of zero', () => {
+    expect(parseEnv({ CRUM_MARKETING_LEAD_DAILY_CAP: '' }).CRUM_MARKETING_LEAD_DAILY_CAP).toBe(200)
+    expect(parseEnv({ CRUM_MARKETING_LEAD_DAILY_CAP: '   ' }).CRUM_MARKETING_LEAD_DAILY_CAP).toBe(200)
+  })
+
   it('rejects a Pages token too short to be a secret, like the other HMAC keys', () => {
     expect(() => parseEnv({ CRUM_CLOUDFLARE_API_TOKEN: 'short' })).toThrowError(EnvParseError)
     expect(parseEnv({ CRUM_CLOUDFLARE_API_TOKEN: 't'.repeat(40) }).CRUM_CLOUDFLARE_API_TOKEN)

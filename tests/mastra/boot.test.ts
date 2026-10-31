@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { Mastra } from '@mastra/core/mastra'
 import { InMemoryStore } from '@mastra/core/storage'
 import {
@@ -353,6 +353,18 @@ describe('slice 2 adapter registration', () => {
     })).toBeNull()
   })
 
+  it('reads a whitespace-only Pages setting as absent, not as a credential', () => {
+    // The schema maps an empty value to undefined but leaves whitespace alone.
+    // `"   "` would otherwise register both adapters and fail only at drain time,
+    // after a human approved the bundle.
+    expect(pageHostConfigFromEnv({
+      CRUM_CLOUDFLARE_ACCOUNT_ID: '   ',
+      CRUM_CLOUDFLARE_PAGES_PROJECT: 'proj',
+      CRUM_CLOUDFLARE_API_TOKEN: 'tok',
+      CRUM_PAGES_PRODUCTION_BRANCH: 'main',
+    })).toBeNull()
+  })
+
   it('builds a config when all four are present', () => {
     expect(pageHostConfigFromEnv({
       CRUM_CLOUDFLARE_ACCOUNT_ID: 'acc',
@@ -375,9 +387,9 @@ describe('slice 2 adapter registration', () => {
     expect(isExecutable('publish_page')).toBe(false)
   })
 
-  // Last on purpose: createCrumMastra registers into the process-wide outbox
-  // registry and hands back no unregister, so this is the one test that leaves
-  // the registry changed. Both directions live in one test so their order is
+  // These last two tests boot with Pages config, and createCrumMastra registers
+  // into the process-wide outbox registry without handing back an unregister, so
+  // they leave it registered. Both directions live in one test so their order is
   // explicit: three of four settings must register nothing, four of four must
   // register both adapters.
   it('registers both page adapters at boot only when every Pages setting is present', () => {
@@ -386,10 +398,31 @@ describe('slice 2 adapter registration', () => {
     expect(isExecutable('publish_page')).toBe(false)
     expect(isExecutable('promote_page')).toBe(false)
 
+    createCrumMastra(envWith({ ...PAGES_ENV, CRUM_CLOUDFLARE_ACCOUNT_ID: '   ' }), { storage: testStore() })
+    expect(isExecutable('publish_page')).toBe(false)
+    expect(isExecutable('promote_page')).toBe(false)
+
     createCrumMastra(envWith(PAGES_ENV), { storage: testStore() })
     expect(isExecutable('publish_page')).toBe(true)
     expect(isExecutable('promote_page')).toBe(true)
     // Registering the page adapters must not make every marketing action runnable.
     expect(isExecutable('unpublish_page')).toBe(false)
+  })
+
+  it('logs the lane once per change, not once per construction', () => {
+    // Settle the module's remembered lane first, so the capture starts from a
+    // known state however the tests above left it.
+    createCrumMastra(envWith(), { storage: testStore() })
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      createCrumMastra(envWith(PAGES_ENV), { storage: testStore() })
+      createCrumMastra(envWith(PAGES_ENV), { storage: testStore() })
+      const laneLines = log.mock.calls
+        .map((args) => String(args[0]))
+        .filter((line) => line.includes('marketing page adapters'))
+      expect(laneLines).toEqual(['[CRUM] marketing page adapters registered'])
+    } finally {
+      log.mockRestore()
+    }
   })
 })

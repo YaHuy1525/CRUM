@@ -93,6 +93,23 @@ export function buildCrumServerConfig(env: CrumEnv): ServerConfig {
   }
 }
 
+// createCrumMastra runs per request, so the adapter registration it performs is
+// deliberately not guarded; this log is. It writes once per process, or once per
+// actual lane change, which stops a load balancer's /health probes from
+// repeating the same boot line forever, while still leaving one line an operator
+// can find when asking why staging refuses.
+let lastLane: 'pages' | 'none' | undefined
+
+function logLaneOnce(lane: 'pages' | 'none'): void {
+  if (lastLane === lane) return
+  lastLane = lane
+  console.log(
+    lane === 'pages'
+      ? '[CRUM] marketing page adapters registered'
+      : '[CRUM] marketing page adapters not registered: Pages config incomplete, staging will refuse',
+  )
+}
+
 export function createCrumMastra(env: CrumEnv, options: CrumMastraOptions = {}): Mastra {
   assertMcpRequestStateKey(env)
 
@@ -101,13 +118,14 @@ export function createCrumMastra(env: CrumEnv, options: CrumMastraOptions = {}):
   // Pages settings or none: pageHostConfigFromEnv answers null for a partial one.
   const pageHost = pageHostConfigFromEnv(env)
   if (pageHost !== null) {
+    // Deliberately outside the log guard below: createCrumMastra runs per request
+    // (the REST plane rebuilds the runtime, and every /health probe calls it), and
+    // a second construction must still register. A Map.set is cheap.
     registerActionAdapter(makePublishPageAdapter(pageHost))
     registerActionAdapter(makePromotePageAdapter(pageHost))
-    // Logged, not silent: an operator debugging "why is staging refused" needs to
-    // see which lane the process took at boot.
-    console.log('[CRUM] marketing page adapters registered')
+    logLaneOnce('pages')
   } else {
-    console.log('[CRUM] marketing page adapters not registered: Pages config incomplete, staging will refuse')
+    logLaneOnce('none')
   }
 
   const storage = options.storage ?? buildMastraStorage(env)

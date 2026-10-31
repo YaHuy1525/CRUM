@@ -176,9 +176,23 @@ export function pageHostConfigFromEnv(env: {
   CRUM_CLOUDFLARE_API_TOKEN?: string
   CRUM_PAGES_PRODUCTION_BRANCH?: string
 }): PageHostConfig | null {
-  const { CRUM_CLOUDFLARE_ACCOUNT_ID: accountId, CRUM_CLOUDFLARE_PAGES_PROJECT: project } = env
-  const apiToken = env.CRUM_CLOUDFLARE_API_TOKEN
-  const productionBranch = env.CRUM_PAGES_PRODUCTION_BRANCH
-  if (!accountId || !project || !apiToken || !productionBranch) return null
+  const accountId = nonBlank(env.CRUM_CLOUDFLARE_ACCOUNT_ID)
+  const project = nonBlank(env.CRUM_CLOUDFLARE_PAGES_PROJECT)
+  const apiToken = nonBlank(env.CRUM_CLOUDFLARE_API_TOKEN)
+  const productionBranch = nonBlank(env.CRUM_PAGES_PRODUCTION_BRANCH)
+  if (accountId === null || project === null || apiToken === null || productionBranch === null) {
+    return null
+  }
   return { accountId, project, apiToken, productionBranch, previewBranchPrefix: 'crum-preview' }
+}
+
+/**
+ * The parser maps a blank optional string to undefined but leaves whitespace
+ * alone, and `"   "` is not an account id. Registering on it would put both
+ * adapters in the registry and only fail at drain time, after approval, which
+ * is the failure the builder exists to prevent.
+ */
+function nonBlank(value: string | undefined): string | null {
+  const trimmed = value?.trim() ?? ''
+  return trimmed === '' ? null : trimmed
 }
