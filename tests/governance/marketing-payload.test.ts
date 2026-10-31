@@ -2,7 +2,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { loadPolicy } from '@/governance/policy'
 import { domainOf, scoreRisk } from '@/governance/risk'
-import { stagePayload, saveRiskView } from '@/marketing/payload'
+import { promotePayload, retryPayload, stagePayload, saveRiskView } from '@/marketing/payload'
 import { MARKETING_OBJECTIVES } from '@/db/marketing'
 
 const policy = loadPolicy(join(process.cwd(), 'policy'))
@@ -222,5 +222,32 @@ describe('the marketing payload rule', () => {
     )
     expect(assessment.score).toBe(risk.preflight.scores.benign)
     expect(policy.gateFor('marketing.stage_bundle', assessment)).toBe('approval')
+  })
+
+  const promote = promotePayload({
+    bundleId: BUNDLE,
+    pageActionId: '44444444-4444-4444-8444-444444444444',
+    siteHash: HASH,
+  })
+  const retry = retryPayload({ actionId: '55555555-5555-5555-8555-555555555555', siteHash: HASH })
+
+  it('keeps the two new decision payloads free of any scored term', () => {
+    expect(forbiddenTermsIn(promote)).toEqual([])
+    expect(forbiddenTermsIn(retry)).toEqual([])
+  })
+
+  it('declares exactly the keys each decision is allowed to carry', () => {
+    expect(Object.keys(promote).sort()).toEqual(['bundleId', 'pageActionId', 'siteHash'])
+    expect(Object.keys(retry).sort()).toEqual(['actionId', 'siteHash'])
+  })
+
+  // The rule this slice nearly broke, stated as a test: a reviewer-facing URL is
+  // not a scorer-facing field. `previewUrl` would put a page slug, chosen by an
+  // agent, into a scored payload. The dangerous word stands as its own path
+  // segment because the shared tokeniser keeps hyphens inside a token, so a
+  // hyphenated compound would not produce the token `send`.
+  it('would catch a previewUrl if one were ever added', () => {
+    const tainted = { ...promote, previewUrl: 'https://x.pages.dev/send/free-quote' }
+    expect(forbiddenTermsIn(tainted)).toContain('send')
   })
 })

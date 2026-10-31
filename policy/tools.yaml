@@ -181,7 +181,7 @@ tools:
     idempotent: true
     idempotency_key: draftHash
 
-  # ── approval (10) ──────────────────────────────────────────
+  # ── approval (12) ──────────────────────────────────────────
   - name: crm.create_customer
     description: Stage a new customer record.
     scope: crm:write
@@ -253,6 +253,23 @@ tools:
     class: approval
     idempotent: true
     idempotency_key: draftHash
+
+  - name: marketing.promote_bundle
+    description: Stage the decision to put an already published preview page on the live domain. Approves nothing itself.
+    # Distinct scope per distinct decision: conformance.test.ts forbids one
+    # concrete scope holding two classes, and marketing:bundle and
+    # marketing:stage are already taken.
+    scope: marketing:promote
+    class: approval
+    idempotent: true
+    idempotency_key: siteHash
+
+  - name: marketing.retry_publish
+    description: Stage the decision to re-queue one failed publish. Never retries inside the same row.
+    scope: marketing:retry
+    class: approval
+    idempotent: true
+    idempotency_key: actionId
 
   # ── workflow side effects (1) ──────────────────────────────
   - name: run.side-effect

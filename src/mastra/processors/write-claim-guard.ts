@@ -18,6 +18,8 @@ export const MUTATING_TOOL_IDS = [
   'mail.send',
   'marketing.save_bundle',
   'marketing.stage_bundle',
+  'marketing.promote_bundle',
+  'marketing.retry_publish',
 ]
 
 export const MUTATING_TOOLS = new Set(MUTATING_TOOL_IDS.map(providerToolName))

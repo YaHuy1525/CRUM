@@ -6,7 +6,7 @@ export type ToolClass = (typeof TOOL_CLASSES)[number]
 export const GATES = ['auto', 'approval', 'refuse'] as const
 export type Gate = (typeof GATES)[number]
 
-export const IDEMPOTENCY_KEYS = ['correlationId', 'draftHash', 'actionHash'] as const
+export const IDEMPOTENCY_KEYS = ['correlationId', 'draftHash', 'actionHash', 'siteHash', 'actionId'] as const
 export type IdempotencyKey = (typeof IDEMPOTENCY_KEYS)[number]
 
 const ScoreBound = z.number().int().min(0).max(100)

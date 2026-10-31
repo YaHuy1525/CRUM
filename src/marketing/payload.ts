@@ -45,3 +45,27 @@ export function stagePayload(input: StagePayload): StagePayload {
     siteHash: input.siteHash,
   }
 }
+
+export interface PromotePayload {
+  bundleId: string
+  pageActionId: string
+  siteHash: string
+}
+
+export interface RetryPayload {
+  actionId: string
+  siteHash: string
+}
+
+/**
+ * Deliberately no `previewUrl`. The reviewer needs the URL and gets it from the
+ * bundle screen, which reads the database; the scorer needs nothing from it, and
+ * a URL carries the slug, which is a phrase an agent wrote. Spec section 5.
+ */
+export function promotePayload(input: PromotePayload): PromotePayload {
+  return { bundleId: input.bundleId, pageActionId: input.pageActionId, siteHash: input.siteHash }
+}
+
+export function retryPayload(input: RetryPayload): RetryPayload {
+  return { actionId: input.actionId, siteHash: input.siteHash }
+}
