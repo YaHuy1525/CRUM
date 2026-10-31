@@ -163,3 +163,22 @@ export function makePromotePageAdapter(config: PageHostConfig): MarketingActionA
     },
   }
 }
+
+/**
+ * All or nothing on purpose. A half-configured host would register an adapter
+ * that throws at drain time, after a human approved the bundle, which is the
+ * failure spec section 6 exists to prevent. Missing config keeps the action
+ * unexecutable and the stage refusal honest.
+ */
+export function pageHostConfigFromEnv(env: {
+  CRUM_CLOUDFLARE_ACCOUNT_ID?: string
+  CRUM_CLOUDFLARE_PAGES_PROJECT?: string
+  CRUM_CLOUDFLARE_API_TOKEN?: string
+  CRUM_PAGES_PRODUCTION_BRANCH?: string
+}): PageHostConfig | null {
+  const { CRUM_CLOUDFLARE_ACCOUNT_ID: accountId, CRUM_CLOUDFLARE_PAGES_PROJECT: project } = env
+  const apiToken = env.CRUM_CLOUDFLARE_API_TOKEN
+  const productionBranch = env.CRUM_PAGES_PRODUCTION_BRANCH
+  if (!accountId || !project || !apiToken || !productionBranch) return null
+  return { accountId, project, apiToken, productionBranch, previewBranchPrefix: 'crum-preview' }
+}

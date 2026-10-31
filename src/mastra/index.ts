@@ -36,6 +36,8 @@ import { buildScheduleHooks } from './schedule-hooks'
 import { resolveIdentity, IdentityError } from './identity'
 import { CRUM_AGENT_CONTROLLER_ID, resourceIdFor } from './sessions'
 import { createGmailConnectRoute, createGmailCallbackRoute } from '../api/gmail'
+import { registerActionAdapter } from '../marketing/outbox'
+import { makePromotePageAdapter, makePublishPageAdapter, pageHostConfigFromEnv } from '../marketing/page-host'
 
 export interface CrumMastraOptions {
   storage?: CrumStorage
@@ -93,6 +95,20 @@ export function buildCrumServerConfig(env: CrumEnv): ServerConfig {
 
 export function createCrumMastra(env: CrumEnv, options: CrumMastraOptions = {}): Mastra {
   assertMcpRequestStateKey(env)
+
+  // Slice 2's staging guard refuses a bundle whose action has no adapter, so a
+  // half-configured page host would stage a publish that can never run. All four
+  // Pages settings or none: pageHostConfigFromEnv answers null for a partial one.
+  const pageHost = pageHostConfigFromEnv(env)
+  if (pageHost !== null) {
+    registerActionAdapter(makePublishPageAdapter(pageHost))
+    registerActionAdapter(makePromotePageAdapter(pageHost))
+    // Logged, not silent: an operator debugging "why is staging refused" needs to
+    // see which lane the process took at boot.
+    console.log('[CRUM] marketing page adapters registered')
+  } else {
+    console.log('[CRUM] marketing page adapters not registered: Pages config incomplete, staging will refuse')
+  }
 
   const storage = options.storage ?? buildMastraStorage(env)
   // buildRecallDeps is lazy, returns undefined for in-memory CI (no

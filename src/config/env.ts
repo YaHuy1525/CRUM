@@ -132,6 +132,21 @@ export const EnvSchema = z.object({
   VIDEO_TWITCH_CLIENT_ID: optionalString,
   VIDEO_TWITCH_CLIENT_SECRET: optionalString,
   VIDEO_TWITCH_REDIRECT_URI: optionalString,
+
+  // Marketing slice 2: the page host and the inbound lead lane. Every one of
+  // these is optional here, and the page adapters register at boot only when the
+  // account, project, token and branch are all present — an action must not be
+  // approvable before it is executable, and a half-configured host would stage a
+  // publish that can never run.
+  CRUM_CLOUDFLARE_ACCOUNT_ID: optionalString,
+  CRUM_CLOUDFLARE_PAGES_PROJECT: optionalString,
+  // A secret: the injection guard fails open when an expected key is absent, and
+  // a marketing agent reading untrusted page copy is where that matters.
+  CRUM_CLOUDFLARE_API_TOKEN: hmacSecret,
+  CRUM_PAGES_PRODUCTION_BRANCH: optionalString,
+  CRUM_MARKETING_SITE_ORIGIN: optionalString,
+  CRUM_LEAD_API_ORIGIN: optionalString,
+  CRUM_MARKETING_LEAD_DAILY_CAP: z.coerce.number().int().min(1).max(100_000).default(200),
 })
 
 export type CrumEnv = z.infer<typeof EnvSchema>
@@ -168,6 +183,10 @@ export const PRODUCTION_REQUIRED_SECRETS: readonly string[] = [
   'MCP_REQUEST_STATE_KEY',
   'SUPABASE_URL',
   'SUPABASE_SERVICE_ROLE_KEY',
+  // A production deployment that holds a Pages token can publish a reviewed
+  // page, and a missing one fails open in the injection guard. Losing the
+  // variable must be loud rather than silently un-registering the adapters.
+  'CRUM_CLOUDFLARE_API_TOKEN',
 ]
 
 export function parseEnv(raw: NodeJS.ProcessEnv = process.env): CrumEnv {
