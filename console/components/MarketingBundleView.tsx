@@ -22,7 +22,7 @@ import { Skeleton } from './ui/skeleton'
 // deliberately identifiers, a hash and numbers (spec §7). That is what makes
 // this screen necessary rather than decorative: without it a human approves
 // campaign copy they have never read. Reading is all this screen does to the
-// bundle. Prepare go-live and Retry publish post to the staging routes, which
+// bundle. Prepare go-live and the retry control post to the staging routes, which
 // queue a decision, and saying yes stays in the queue through
 // POST /api/approvals/drafts/:id/decision: there is exactly one way to approve.
 
@@ -331,16 +331,23 @@ export function MarketingBundleView({ bundleId }: MarketingBundleViewProps) {
   // failed row would leave the control on screen forever.
   const retryAction = useMemo(() => retryableAction(actions), [actions])
 
-  // Promotion is the deployment the owner asked for; the preview is the one the
-  // first approval produced. Only a URL the API recorded is ever linked, because
-  // a URL this screen built is an address that does not exist.
+  // Promotion is the deployment the owner asked for; the preview is the one a
+  // publish produced. Only a URL the API recorded is ever linked, because a URL
+  // this screen built is an address that does not exist. Republishing and
+  // promoting each append a row, so the last match of a name is its newest
+  // attempt: a bundle promoted twice must link the deployment that is live now,
+  // not the first one that ever answered with a URL.
   const liveAction = useMemo(() => {
-    const succeeded = actions.filter((action) => action.status === 'succeeded' && urlOf(action) !== null)
-    return (
-      succeeded.find((action) => action.action === 'promote_page') ??
-      succeeded.find((action) => action.action === 'publish_page') ??
-      null
+    const succeeded = actions.filter(
+      (action) => action.status === 'succeeded' && urlOf(action) !== null,
     )
+    const newestOf = (name: string): MarketingActionRecord | null => {
+      for (let index = succeeded.length - 1; index >= 0; index -= 1) {
+        if (succeeded[index].action === name) return succeeded[index]
+      }
+      return null
+    }
+    return newestOf('promote_page') ?? newestOf('publish_page')
   }, [actions])
   const liveHref = liveAction ? urlOf(liveAction) : null
 
@@ -527,7 +534,11 @@ export function MarketingBundleView({ bundleId }: MarketingBundleViewProps) {
                       )
                     }
                   >
-                    Retry publish
+                    {/* The control clones the failed action, so it is named for
+                        that action. A failed promotion is the owner's go-live
+                        path, and calling it "Retry publish" would send them
+                        looking for a different door. */}
+                    {retryAction.action === 'promote_page' ? 'Retry go-live' : 'Retry publish'}
                   </Button>
                 ) : null}
                 {liveHref ? (

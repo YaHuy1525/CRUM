@@ -173,14 +173,20 @@ describe('MarketingBundleView', () => {
     expect(screen.queryByText('Media plan')).toBeNull()
   })
 
-  it('announces the loading state before any answer arrives', () => {
-    // Sync body, no await: the fetch resolves on a later microtask, so the only
-    // state this can observe is the loading branch. If a refactor dropped it, the
-    // a11y node the brief asks for would vanish with no test noticing.
+  it('announces the loading state before any answer arrives', async () => {
+    // The body runs synchronously up to the first await: the fetch resolves on a
+    // later microtask, so the only state the first assertions can observe is the
+    // loading branch. If a refactor dropped it, the a11y node the brief asks for
+    // would vanish with no test noticing.
     server = stubFetch([route('/api/marketing/bundles/', ok(bundleResponse()))])
     render(<MarketingBundleView bundleId={BUNDLE_ID} />)
     expect(screen.getByRole('status')).toHaveTextContent('Loading bundle')
     expect(screen.queryByText('Media plan')).toBeNull()
+    // Then let the answer land inside act, the way the rest of this file does.
+    // The file hashes are awaited after the fetch, so a test that ends while
+    // they are still queued updates the component after the test, which React
+    // reports as an update not wrapped in act.
+    expect(await screen.findByText('Book more physio assessments in Melbourne')).toBeInTheDocument()
   })
 })
 
@@ -206,6 +212,21 @@ function failedPublish(over: Partial<MarketingActionRecord> = {}): MarketingActi
     externalId: null,
     result: null,
     lastError: 'pages_upload_http_403: authentication error',
+    ...over,
+  })
+}
+
+function promoted(over: Partial<MarketingActionRecord> = {}): MarketingActionRecord {
+  return published({
+    action: 'promote_page',
+    externalId: 'dep-2',
+    result: {
+      url: 'https://dep-2.example.pages.dev',
+      deploymentId: 'dep-2',
+      uploadedAt: '2026-10-31T01:00:00Z',
+    },
+    createdAt: '2026-10-31T01:00:00Z',
+    executedAt: '2026-10-31T01:00:00Z',
     ...over,
   })
 }
@@ -292,6 +313,37 @@ describe('MarketingBundleView go-live controls', () => {
 
     expect(await screen.findByText(/pages_upload_http_403/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /retry publish/i })).toBeEnabled()
+    // The control is named for the action it clones, so a failed publish is
+    // never offered as the go-live door.
+    expect(screen.queryByRole('button', { name: /retry go-live/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /prepare go-live/i })).toBeNull()
+  })
+
+  it('names the retry for a failed promotion as the go-live door', async () => {
+    mount([
+      route(
+        '/api/marketing/bundles/',
+        ok(
+          twoFileBundle([
+            published(),
+            promoted({
+              id: 'act2',
+              status: 'failed',
+              externalId: null,
+              result: null,
+              lastError: 'custom_domain_http_409: zone already claimed',
+            }),
+          ]),
+        ),
+        'GET',
+      ),
+    ])
+
+    expect(await screen.findByText(/custom_domain_http_409/)).toBeInTheDocument()
+    // A failed promotion is the only remaining way onto the domain, so the
+    // retry says so. "Retry publish" would name the action that already worked.
+    expect(screen.getByRole('button', { name: /retry go-live/i })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: /retry publish/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /prepare go-live/i })).toBeNull()
   })
 
@@ -314,6 +366,11 @@ describe('MarketingBundleView go-live controls', () => {
     ])
 
     await screen.findByRole('button', { name: /prepare go-live/i })
+    // Mount reads and never writes. Counting POSTs, rather than looking for a
+    // decision route nothing in this scenario calls, is what makes the assertion
+    // able to fail: any POST before the click belongs to the screen, not the owner.
+    expect(server.calls.filter((call) => call.method === 'POST')).toHaveLength(0)
+
     await userEvent.click(screen.getByRole('button', { name: /prepare go-live/i }))
 
     expect(await screen.findByText(/staged for approval/i)).toBeInTheDocument()
@@ -324,8 +381,11 @@ describe('MarketingBundleView go-live controls', () => {
     // number the owner did not approve.
     expect(server.last('/promote')?.body).toBeUndefined()
     // The one line that keeps the slice honest: a go-live click stages a
-    // decision, it never makes one.
-    expect(server.last('/approvals')?.method).not.toBe('POST')
+    // decision, it never makes one. The only POST the whole test made is the
+    // staging route, so nothing reached an approval or a decision endpoint.
+    const posts = server.calls.filter((call) => call.method === 'POST')
+    expect(posts).toHaveLength(1)
+    expect(posts[0]?.url).toContain('/promote')
     expect(screen.getByRole('link', { name: /queue/i })).toHaveAttribute('href', '/approvals')
   })
 
@@ -357,6 +417,61 @@ describe('MarketingBundleView go-live controls', () => {
     expect(screen.getByText('live')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /prepare go-live/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /retry publish/i })).toBeNull()
+  })
+
+  it('links the newest promotion when a bundle went live twice', async () => {
+    const { container } = mount([
+      route(
+        '/api/marketing/bundles/',
+        ok(
+          twoFileBundle([
+            published(),
+            promoted({ id: 'promo1' }),
+            promoted({
+              id: 'promo2',
+              externalId: 'dep-3',
+              result: {
+                url: 'https://dep-3.example.pages.dev',
+                deploymentId: 'dep-3',
+                uploadedAt: '2026-10-31T02:00:00Z',
+              },
+              createdAt: '2026-10-31T02:00:00Z',
+              executedAt: '2026-10-31T02:00:00Z',
+            }),
+          ]),
+        ),
+        'GET',
+      ),
+    ])
+
+    // Actions arrive oldest first, and the later promotion is the one that moved
+    // the page to its domain. Linking the first deployment would point an owner
+    // at a URL that stopped being the live site.
+    expect(await screen.findByRole('link', { name: /live site/i })).toHaveAttribute(
+      'href',
+      'https://dep-3.example.pages.dev',
+    )
+    expect(container.querySelector('a[href="https://dep-2.example.pages.dev"]')).toBeNull()
+  })
+
+  it('hides the promote control while a promotion is already queued', async () => {
+    mount([
+      route(
+        '/api/marketing/bundles/',
+        ok(
+          twoFileBundle([
+            published(),
+            promoted({ id: 'promo1', status: 'queued', externalId: null, result: null }),
+          ]),
+        ),
+        'GET',
+      ),
+    ])
+
+    expect(await screen.findByText('physio-probe/index.html')).toBeInTheDocument()
+    // The queued promotion is already a pending decision. A second control would
+    // queue a duplicate the owner has to go and reject.
+    expect(screen.queryByRole('button', { name: /prepare go-live/i })).toBeNull()
   })
 })
 
@@ -428,6 +543,29 @@ describe('MarketingBundleView retry staleness', () => {
     expect(screen.queryByRole('button', { name: /retry publish/i })).toBeNull()
     // The failed row deliberately stays in the trail, but its error is no longer
     // the state of the action, so the screen does not report it as the last word.
+    expect(screen.queryByText(/pages_upload_http_403/)).toBeNull()
+  })
+
+  it('hides the retry while the newest attempt of its action is running', async () => {
+    mount([
+      route(
+        '/api/marketing/bundles/',
+        ok(
+          twoFileBundle([
+            failedPublish({ id: 'act1' }),
+            published({ id: 'act2', status: 'running', externalId: null, result: null }),
+          ]),
+        ),
+        'GET',
+      ),
+    ])
+
+    expect(await screen.findByText('physio-probe/index.html')).toBeInTheDocument()
+    // A running attempt is the action's current state, so the failure behind it
+    // is superseded. Offering a retry beside a live attempt would queue a clone
+    // of something that is already under way.
+    expect(screen.queryByRole('button', { name: /retry publish/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /retry go-live/i })).toBeNull()
     expect(screen.queryByText(/pages_upload_http_403/)).toBeNull()
   })
 
