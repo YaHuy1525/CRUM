@@ -461,3 +461,57 @@ export function roleColumnsOf(bundle: MarketingBundleRow): BundleHashInput {
     promptVersion: bundle.promptVersion,
   }
 }
+
+/**
+ * The campaigns the analyst cron reads metrics for. A campaign is active when
+ * it has a succeeded `create_campaign` action and either no `set_campaign_status`
+ * action at all, or its most recent status action says ACTIVE. Paused campaigns
+ * are excluded because they produce no new metrics (spec section 8.3).
+ */
+export async function listActiveCampaigns(tenantId: string): Promise<Array<{
+  bundleId: string
+  campaignExternalId: string
+  adAccountId: string
+}>> {
+  const db = getDbClient()
+  const created = await db.query<{
+    bundle_id: string
+    campaignExternalId: string
+    adAccountId: string
+  }>(
+    `SELECT bundle_id,
+            result ->> 'externalId' AS "campaignExternalId",
+            payload ->> 'adAccountId' AS "adAccountId"
+       FROM marketing_actions
+      WHERE tenant_id = $1
+        AND action = 'create_campaign'
+        AND status = 'succeeded'`,
+    [tenantId],
+  )
+  const active: Array<{
+    bundleId: string
+    campaignExternalId: string
+    adAccountId: string
+  }> = []
+  for (const row of created.rows) {
+    if (!row.campaignExternalId) continue
+    const statuses = await db.query<{ status: string }>(
+      `SELECT payload ->> 'status' AS status
+         FROM marketing_actions
+        WHERE tenant_id = $1
+          AND action = 'set_campaign_status'
+          AND payload ->> 'campaignId' = $2
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [tenantId, row.campaignExternalId],
+    )
+    if (statuses.rows.length === 0 || statuses.rows[0].status === 'ACTIVE') {
+      active.push({
+        bundleId: row.bundle_id,
+        campaignExternalId: row.campaignExternalId,
+        adAccountId: row.adAccountId,
+      })
+    }
+  }
+  return active
+}
