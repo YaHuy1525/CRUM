@@ -6,7 +6,8 @@ import type { TenantRequestContext } from '../mastra/tenant-context'
 import { IdentityError, resolveIdentity } from '../mastra/identity'
 import { stagePromotion, stageRetry } from '../mastra/tools/marketing-writes'
 import { getMarketingBundle, listMarketingActions, listMarketingArtifacts } from '../db/marketing'
-import { bundleForLeadToken, countLeadsSince, recordLead } from '../db/marketing-leads'
+import { bundleForLeadToken, countLeadsSince, normalizeEmail, recordLead } from '../db/marketing-leads'
+import { sendConversionEvent, type ConversionsApiConfig } from '../marketing/meta-conversions'
 
 // ── Marketing: the read surface and the two staging doors (slice 2) ─────────
 //
@@ -23,6 +24,11 @@ import { bundleForLeadToken, countLeadsSince, recordLead } from '../db/marketing
 
 export interface MarketingRouterDeps {
   env: CrumEnv
+  // Optional: when both CRUM_META_PIXEL_ID and CRUM_META_ADS_ACCESS_TOKEN are
+  // set, the boot wire-up passes the config in and the lead route fires a
+  // server-side Conversions API event in parallel with the DB insert. Absent
+  // means the route skips the API call and logs a warning. Spec section 7.5.
+  conversionsConfig?: ConversionsApiConfig | null
 }
 
 const IdSchema = z.string().uuid()
@@ -49,7 +55,7 @@ function rawEmailOf(input: unknown): string {
 }
 
 export function createMarketingRouter(deps: MarketingRouterDeps): Hono {
-  const { env } = deps
+  const { env, conversionsConfig } = deps
   const app = new Hono().basePath('/api/marketing')
 
   const auth = async (
@@ -160,7 +166,18 @@ export function createMarketingRouter(deps: MarketingRouterDeps): Hono {
       return c.json({ status: 'received' }, 200)
     }
 
-    await recordLead({
+    // Slice 3 spec section 7.3: the Conversions API call runs in parallel with
+    // the lead insert. A Meta API failure must never cost a lead, so the
+    // sender catches its own errors and logs them. The lead_token is the
+    // deduplication key (spec section 7.2): the pixel fires with the same
+    // token stamped into the page at save time, so Meta collapses the two.
+    const thankYouUrl = `${bundle.servingUrl}/${bundle.slug}/thanks/`
+    const clientIp = c.req.header('x-forwarded-for')?.split(',')[0]?.trim()
+      ?? c.req.header('x-real-ip')
+      ?? ''
+    const userAgent = c.req.header('user-agent') ?? ''
+
+    const leadPromise = recordLead({
       tenantId: bundle.tenantId,
       bundleId: bundle.bundleId,
       name: parsed.data.name,
@@ -171,9 +188,43 @@ export function createMarketingRouter(deps: MarketingRouterDeps): Hono {
       sourceUrl: `${bundle.servingUrl}/${bundle.slug}/`,
     })
 
-    if (!wantsJson) return c.redirect(`${bundle.servingUrl}/${bundle.slug}/thanks/`, 303)
+    if (conversionsConfig) {
+      // Fire-and-forget: the promise runs concurrently with the DB insert.
+      // Its catch handler logs and swallows errors so a Meta outage never
+      // reaches the response path below.
+      sendConversionEvent(conversionsConfig, {
+        leadToken: token,
+        normalizedEmail: normalizeEmail(parsed.data.email),
+        sourceUrl: thankYouUrl,
+        bundleId: bundle.bundleId,
+        campaignId: null,
+        clientIpAddress: clientIp,
+        clientUserAgent: userAgent,
+      }).catch((err) => {
+        console.warn('[CRUM] Conversions API call failed unexpectedly', err)
+      })
+    } else {
+      // One warning per unconfigured boot, not per request: the route is
+      // public and a bot flood would fill the log.
+      if (!createMarketingRouter._warnedMissingConfig) {
+        createMarketingRouter._warnedMissingConfig = true
+        console.warn(
+          '[CRUM] Conversions API not configured (CRUM_META_PIXEL_ID and/or ' +
+          'CRUM_META_ADS_ACCESS_TOKEN absent); lead recorded without server-side event',
+        )
+      }
+    }
+
+    await leadPromise
+
+    if (!wantsJson) return c.redirect(thankYouUrl, 303)
     return c.json({ status: 'received' }, 200)
   })
 
   return app
 }
+
+// One-shot warning flag so an unconfigured boot does not fill the log on
+// every inbound lead. Module-level because the function is called once per
+// request but the warning should fire at most once per process.
+createMarketingRouter._warnedMissingConfig = false

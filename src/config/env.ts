@@ -168,6 +168,15 @@ export const EnvSchema = z.object({
     blankAsUnset,
     z.coerce.number().int().min(1).max(100_000).default(200),
   ),
+
+  // Slice 3 spec section 7: Conversions API. Both must be present for the
+  // sender to register; either absent means the lead route skips the API call
+  // and logs a warning, so a half-configured install never fails intake.
+  CRUM_META_PIXEL_ID: optionalString,
+  CRUM_META_ADS_ACCESS_TOKEN: z.preprocess(
+    blankAsUnset,
+    z.string().trim().min(1).optional(),
+  ),
 })
 
 export type CrumEnv = z.infer<typeof EnvSchema>

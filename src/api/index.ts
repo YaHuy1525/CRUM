@@ -10,6 +10,7 @@ import { createPrefillRouter } from './prefill'
 import { createCrmRouter } from './crm'
 import { createProspectsRouter } from './prospects'
 import { createMarketingRouter } from './marketing'
+import { conversionsApiConfigFromEnv } from '../marketing/meta-conversions'
 import { createApprovalRouter, type SuspendedRunAgent } from './approvals'
 import { createKnowledgeRouter, type IngestWorkflowLike } from './knowledge'
 import { createDocumentsRouter, type DocumentIntakeWorkflowLike } from './documents'
@@ -98,7 +99,7 @@ export function createApiRouter(deps: ApiRouterDeps): Hono {
   app.route('/', createPrefillRouter())
   app.route('/', createCrmRouter({ env }))
   app.route('/', createProspectsRouter({ env }))
-  app.route('/', createMarketingRouter({ env }))
+  app.route('/', createMarketingRouter({ env, conversionsConfig: conversionsApiConfigFromEnv(env) }))
   app.route('/', createSignalsRouter({ env, getMastra: deps.getMastra }))
   app.route('/', createAgentRouter({ env, getMastra: deps.getMastra }))
   app.route('/', createThreadsRouter({ env, getMastra: deps.getMastra }))
