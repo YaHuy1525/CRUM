@@ -166,6 +166,44 @@ export async function listMarketingArtifacts(
   }))
 }
 
+export interface MarketingActionRow {
+  id: string
+  action: string
+  status: string
+  attempts: number
+  externalId: string | null
+  lastError: string | null
+  payload: Record<string, unknown>
+  result: Record<string, unknown> | null
+  createdAt: string
+  executedAt: string | null
+}
+
+/** Every action of one bundle, oldest first, because a publish before a promote
+ * is the order a reader expects to see. */
+export async function listMarketingActions(tenantId: string, bundleId: string): Promise<MarketingActionRow[]> {
+  const db = getDbClient()
+  const result = await db.query<Record<string, unknown>>(
+    `SELECT id, action, status, attempts, external_id, last_error, payload, result, created_at, executed_at
+       FROM marketing_actions
+      WHERE tenant_id = $1 AND bundle_id = $2
+      ORDER BY created_at ASC`,
+    [tenantId, bundleId],
+  )
+  return result.rows.map((row) => ({
+    id: String(row.id),
+    action: String(row.action),
+    status: String(row.status),
+    attempts: Number(row.attempts),
+    externalId: (row.external_id as string | null) ?? null,
+    lastError: (row.last_error as string | null) ?? null,
+    payload: (row.payload as Record<string, unknown>) ?? {},
+    result: (row.result as Record<string, unknown> | null) ?? null,
+    createdAt: String(row.created_at),
+    executedAt: (row.executed_at as string | null) ?? null,
+  }))
+}
+
 /**
  * The approver sees a count, not the bodies, in the staged payload. The bodies
  * are one read away on the bundle screen, which is the point: numbers are safe

@@ -4,15 +4,21 @@ import { z } from 'zod'
 import type { CrumEnv } from '../config/env'
 import type { TenantRequestContext } from '../mastra/tenant-context'
 import { IdentityError, resolveIdentity } from '../mastra/identity'
-import { getMarketingBundle, listMarketingArtifacts } from '../db/marketing'
+import { stagePromotion, stageRetry } from '../mastra/tools/marketing-writes'
+import { getMarketingBundle, listMarketingActions, listMarketingArtifacts } from '../db/marketing'
 
-// ── Marketing: read surface (slice 1) ───────────────────────────────────────
+// ── Marketing: the read surface and the two staging doors (slice 2) ─────────
 //
-// One route, and it is read-only. The reviewer needs to see the copy a staged
-// bundle is pointing at, and the staged payload deliberately carries no prose, so
-// the bundle row is the only place a human can read what they are approving.
-// Nothing here writes: approving still goes through POST
-// /api/approvals/drafts/:id/decision, so there is exactly one way to say yes.
+// The reviewer needs to see the copy a staged bundle is pointing at, and the
+// staged payload deliberately carries no prose, so the bundle row is the only
+// place a human can read what they are approving. The bundle read also returns
+// the outbox rows, because the preview URL a promotion would point at lives
+// there and never in an approval payload.
+//
+// The two POST routes stage the second-click decisions by calling the same
+// stagers the Mastra tools call. Neither decides anything: approving still goes
+// through POST /api/approvals/drafts/:id/decision, so there is exactly one way
+// to say yes.
 
 export interface MarketingRouterDeps {
   env: CrumEnv
@@ -48,7 +54,46 @@ export function createMarketingRouter(deps: MarketingRouterDeps): Hono {
     if (!bundle) return c.json({ error: 'not_found' }, 404)
 
     const artifacts = await listMarketingArtifacts(gate.identity.tenantId, bundle.id)
-    return c.json({ bundle, artifacts })
+    const actions = await listMarketingActions(gate.identity.tenantId, bundle.id)
+    return c.json({ bundle, artifacts, actions })
+  })
+
+  // Two staging doors, no deciding door. These create the same pending write the
+  // tools create, by calling the same function, so the console can reach the
+  // marketing spine without a chat sentence while `POST
+  // /api/approvals/drafts/:id/decision` stays the only way to say yes. Spec
+  // section 8.1.
+  app.post('/bundles/:id/promote', async (c) => {
+    const gate = await auth(c)
+    if ('error' in gate) return gate.error
+    const parsed = IdSchema.safeParse(c.req.param('id'))
+    if (!parsed.success) return c.json({ error: 'invalid_id' }, 400)
+
+    const result = await stagePromotion({
+      tenantId: gate.identity.tenantId,
+      userId: gate.identity.userId,
+      userRole: gate.identity.userRole,
+      bundleId: parsed.data,
+    })
+    if (!result.ok) return c.json({ error: 'not_promotable', reason: result.reason }, 409)
+    return c.json({ pendingWriteId: result.pendingWriteId, riskScore: result.riskScore }, 201)
+  })
+
+  app.post('/bundles/:id/actions/:actionId/retry', async (c) => {
+    const gate = await auth(c)
+    if ('error' in gate) return gate.error
+    const bundle = IdSchema.safeParse(c.req.param('id'))
+    const action = IdSchema.safeParse(c.req.param('actionId'))
+    if (!bundle.success || !action.success) return c.json({ error: 'invalid_id' }, 400)
+
+    const result = await stageRetry({
+      tenantId: gate.identity.tenantId,
+      userId: gate.identity.userId,
+      userRole: gate.identity.userRole,
+      actionId: action.data,
+    })
+    if (!result.ok) return c.json({ error: 'not_retryable', reason: result.reason }, 409)
+    return c.json({ pendingWriteId: result.pendingWriteId, riskScore: result.riskScore }, 201)
   })
 
   return app
