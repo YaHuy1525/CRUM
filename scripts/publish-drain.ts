@@ -128,7 +128,10 @@ export async function reapStaleRunning(client: Queryable, olderThanSeconds: numb
 }
 
 export async function drainOnce(deps: {
-  pool?: Pool
+  // Only `query` is ever asked of it: the claim, the record and the reap are
+  // plain statements, so a test can hand in a fake that answers the claim and
+  // records the rest without a database behind it.
+  pool?: Queryable
   bundleId?: string
   staleSeconds?: number
 } = {}): Promise<{ ran: number; succeeded: number; failed: number }> {
@@ -170,12 +173,26 @@ export async function drainOnce(deps: {
       const result = await adapter.execute(action, { tenantId: row.tenant_id })
       await recordSuccess(client, row.id, { ...result })
       succeeded += 1
-      if (action.action === 'promote_page') {
-        await markBundleLive({ tenantId: row.tenant_id, bundleId: row.bundle_id })
-      }
     } catch (err) {
       await recordFailure(client, row.id, err instanceof Error ? err.message : String(err))
       failed += 1
+      continue
+    }
+
+    // Outside the try on purpose: the provider already answered and the row
+    // already says so. A database blip while marking the bundle live must not
+    // rewrite that row to failed, because `marketing.retry_publish` is what
+    // re-queues a failed row and a retry here would deploy a live page twice.
+    // The honest leftover is a loud line naming the bundle; a human sets it live.
+    if (action.action === 'promote_page') {
+      try {
+        await markBundleLive({ tenantId: row.tenant_id, bundleId: row.bundle_id })
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        console.error(
+          `[publish-drain] action ${row.id} promoted bundle ${row.bundle_id} but marking it live failed: ${message}`,
+        )
+      }
     }
   }
   return { ran, succeeded, failed }
