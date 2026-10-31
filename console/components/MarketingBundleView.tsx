@@ -73,7 +73,7 @@ const SITE_SLOTS = [
 
 interface SiteFileRow {
   path: string
-  sha256: string
+  sha256: string | null
 }
 
 function nonEmptyString(value: unknown): string | null {
@@ -103,11 +103,12 @@ function approvedSiteHashOf(actions: MarketingActionRecord[]): string | null {
 }
 
 /**
- * sha256 of one file's bytes, so the owner can compare a hash before staging.
- * The approved hash always wins over this: a browser that recomputed it would
- * be showing a number nobody signed. Web Crypto is the only hasher the platform
+ * sha256 of one file's bytes, so the owner can compare a row against a copy of
+ * the file they or a provider holds. Web Crypto is the only hasher the platform
  * offers a client without a new dependency, and its digest is async, so these
- * rows are built after the fetch rather than during render.
+ * rows are built after the fetch rather than during render. A browser without
+ * crypto.subtle gets null, which renders as a dash: an empty cell reads as a
+ * hash and the aggregate site hash would be a number no file ever had.
  */
 async function sha256Hex(text: string): Promise<string | null> {
   if (typeof crypto === 'undefined' || !crypto.subtle) return null
@@ -128,18 +129,40 @@ async function siteFiles(
 ): Promise<SiteFileRow[]> {
   const slug = siteSlug(bundle, actions)
   if (slug === null) return []
-  const approved = approvedSiteHashOf(actions)
   const files: SiteFileRow[] = []
   for (const slot of SITE_SLOTS) {
     const artifact = artifacts.find((a) => a.kind === slot.kind && a.textContent !== null)
     if (!artifact) continue
-    // The approved siteHash covers every file in the site, and it is shown as
-    // the server returned it. Only a bundle no publish has touched gets a hash
-    // computed here, and the caption says so.
-    const sha256 = approved ?? (await sha256Hex(artifact.textContent ?? ''))
-    files.push({ path: `${slug}/${slot.suffix}`, sha256: sha256 ?? '' })
+    // The hash beside a path is that file's own digest. The site hash covers
+    // the sorted path and hash pairs of the whole site, so showing it per row
+    // would tell an owner their file matches a value no provider computed for
+    // it. The aggregate is shown once, above the table, as what was signed.
+    files.push({
+      path: `${slug}/${slot.suffix}`,
+      sha256: await sha256Hex(artifact.textContent ?? ''),
+    })
   }
   return files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+}
+
+/**
+ * The action a retry would clone, if any. A retry never mutates the failed row,
+ * because the trail keeps both attempts, so a failed row alone is not evidence
+ * that a retry is still needed. The candidate is the newest row of its action
+ * name, and only while that newest row failed: a later queued, running or
+ * succeeded row of the same name means the action has moved on, and another
+ * click would queue a duplicate. Actions arrive oldest first, so walking
+ * backwards meets the newest row of each name first.
+ */
+function retryableAction(actions: MarketingActionRecord[]): MarketingActionRecord | null {
+  const newestSeen = new Set<string>()
+  for (let index = actions.length - 1; index >= 0; index -= 1) {
+    const action = actions[index]
+    if (newestSeen.has(action.action)) continue
+    newestSeen.add(action.action)
+    if (action.status === 'failed') return action
+  }
+  return null
 }
 
 function urlOf(action: MarketingActionRecord): string | null {
@@ -303,12 +326,10 @@ export function MarketingBundleView({ bundleId }: MarketingBundleViewProps) {
     [bundle, actions],
   )
 
-  // The newest failure, because the retry belongs to the attempt the owner is
-  // looking at. Actions arrive oldest first.
-  const failedAction = useMemo(() => {
-    const failed = actions.filter((action) => action.status === 'failed')
-    return failed.length > 0 ? failed[failed.length - 1] : null
-  }, [actions])
+  // The newest attempt of each action name, and a retry only when that attempt
+  // failed. The failed row stays in the trail after a retry, so picking any
+  // failed row would leave the control on screen forever.
+  const retryAction = useMemo(() => retryableAction(actions), [actions])
 
   // Promotion is the deployment the owner asked for; the preview is the one the
   // first approval produced. Only a URL the API recorded is ever linked, because
@@ -427,28 +448,50 @@ export function MarketingBundleView({ bundleId }: MarketingBundleViewProps) {
             {files.length === 0 ? (
               <p className="mt-2 text-sm text-text-muted">This bundle publishes no files.</p>
             ) : (
-              <div className="mt-2 overflow-x-auto rounded-lg border border-border">
-                <table className="w-full border-collapse text-sm">
-                  <caption className="px-3 pt-3 text-left text-xs uppercase tracking-[0.06em] text-text-muted">
-                    Files this bundle publishes, and their hashes
-                    {approvedHash === null ? ' (preview only, not what was approved)' : ''}
-                  </caption>
-                  <tbody>
-                    {files.map((file) => (
-                      <tr key={file.path} className="border-t border-border">
-                        <td className="px-3 py-2 align-top">
-                          <code className="font-mono text-xs text-text-primary">{file.path}</code>
-                        </td>
-                        <td className="px-3 py-2 align-top">
-                          <code className="font-mono text-xs text-text-muted" title={file.sha256}>
-                            {file.sha256.slice(0, 12)}
-                          </code>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <>
+                {approvedHash ? (
+                  <p className="mt-2 break-words text-sm text-text-secondary">
+                    Site hash the approval signed:{' '}
+                    <code className="font-mono text-xs break-all text-text-primary">
+                      {approvedHash}
+                    </code>
+                  </p>
+                ) : (
+                  <p className="mt-2 text-sm text-text-muted">
+                    No approval has signed a site hash for this bundle yet.
+                  </p>
+                )}
+                <div className="mt-2 overflow-x-auto rounded-lg border border-border">
+                  <table className="w-full border-collapse text-sm">
+                    <caption className="px-3 pt-3 text-left text-xs uppercase tracking-[0.06em] text-text-muted">
+                      Files this bundle publishes, and each file's own sha256
+                    </caption>
+                    <tbody>
+                      {files.map((file) => (
+                        <tr key={file.path} className="border-t border-border">
+                          <td className="px-3 py-2 align-top">
+                            <code className="font-mono text-xs text-text-primary">{file.path}</code>
+                          </td>
+                          <td className="px-3 py-2 align-top">
+                            {file.sha256 === null ? (
+                              <span
+                                className="text-xs text-text-muted"
+                                title="This browser cannot compute SHA-256."
+                              >
+                                —
+                              </span>
+                            ) : (
+                              <code className="font-mono text-xs text-text-muted" title={file.sha256}>
+                                {file.sha256.slice(0, 12)}
+                              </code>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
           </section>
 
@@ -473,14 +516,14 @@ export function MarketingBundleView({ bundleId }: MarketingBundleViewProps) {
                     Prepare go-live
                   </Button>
                 ) : null}
-                {failedAction ? (
+                {retryAction ? (
                   <Button
                     variant="secondary"
                     size="sm"
                     disabled={busy}
                     onClick={() =>
                       void stage(
-                        `/api/marketing/bundles/${encodeURIComponent(bundleId)}/actions/${encodeURIComponent(failedAction.id)}/retry`,
+                        `/api/marketing/bundles/${encodeURIComponent(bundleId)}/actions/${encodeURIComponent(retryAction.id)}/retry`,
                       )
                     }
                   >
@@ -498,10 +541,10 @@ export function MarketingBundleView({ bundleId }: MarketingBundleViewProps) {
                   </a>
                 ) : null}
               </div>
-              {failedAction ? (
+              {retryAction ? (
                 <p className="mt-2 break-words text-sm text-danger">
-                  The last {failedAction.action} failed:{' '}
-                  <code>{failedAction.lastError ?? 'no error recorded'}</code>
+                  The last {retryAction.action} failed:{' '}
+                  <code>{retryAction.lastError ?? 'no error recorded'}</code>
                 </p>
               ) : null}
               {staged ? (

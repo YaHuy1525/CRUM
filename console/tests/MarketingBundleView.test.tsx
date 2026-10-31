@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -8,6 +9,9 @@ import type { MarketingActionRecord, MarketingBundleResponse } from '../lib/type
 const BUNDLE_ID = '33333333-3333-4333-8333-333333333333'
 const DOCUMENT_ID = '55555555-5555-4555-8555-555555555555'
 const DRAFT_ID = 'd2d2d2d2-2222-4222-8222-222222222222'
+const SITE_HASH = 'a'.repeat(64)
+const PAGE_CONTENT = '<h1>Book your assessment</h1>'
+const THANK_YOU_CONTENT = '<h1>Thanks, we will call you</h1>'
 
 function bundleResponse(over: Partial<MarketingBundleResponse> = {}): MarketingBundleResponse {
   return {
@@ -188,12 +192,51 @@ function published(over: Partial<MarketingActionRecord> = {}): MarketingActionRe
     attempts: 1,
     externalId: 'dep-1',
     lastError: null,
-    payload: { bundleId: BUNDLE_ID, slug: 'physio-probe', siteHash: 'a'.repeat(64) },
+    payload: { bundleId: BUNDLE_ID, slug: 'physio-probe', siteHash: SITE_HASH },
     result: { url: 'https://dep-1.example.pages.dev', deploymentId: 'dep-1', uploadedAt: '2026-10-31T00:00:00Z' },
     createdAt: '2026-10-31T00:00:00Z',
     executedAt: '2026-10-31T00:00:00Z',
     ...over,
   }
+}
+
+function failedPublish(over: Partial<MarketingActionRecord> = {}): MarketingActionRecord {
+  return published({
+    status: 'failed',
+    externalId: null,
+    result: null,
+    lastError: 'pages_upload_http_403: authentication error',
+    ...over,
+  })
+}
+
+function digestOf(text: string): string {
+  return createHash('sha256').update(text).digest('hex')
+}
+
+// The two slots the publisher places, both present, so a per-row hash has
+// something to differ from and the site hash has a row to leak into.
+function twoFileBundle(actions: MarketingActionRecord[]): MarketingBundleResponse {
+  return bundleResponse({
+    bundle: { ...bundleResponse().bundle, status: 'approved', leadToken: 'lt_probe' },
+    artifacts: [
+      {
+        ...bundleResponse().artifacts[0]!,
+        id: 'page',
+        kind: 'page_html',
+        role: 'funnel-builder',
+        textContent: PAGE_CONTENT,
+      },
+      {
+        ...bundleResponse().artifacts[0]!,
+        id: 'thanks',
+        kind: 'thank_you_html',
+        role: 'funnel-builder',
+        textContent: THANK_YOU_CONTENT,
+      },
+    ],
+    actions,
+  })
 }
 
 describe('MarketingBundleView go-live controls', () => {
@@ -215,9 +258,11 @@ describe('MarketingBundleView go-live controls', () => {
     ])
 
     expect(await screen.findByText('physio-probe/index.html')).toBeInTheDocument()
-    // The hash on screen is the one the approver clicked, taken from the action
-    // payload, not recomputed by the browser.
-    expect(screen.getByText('a'.repeat(12))).toBeInTheDocument()
+    // The site hash is the one the approver clicked, taken from the action
+    // payload, not recomputed by the browser. It is shown once and labelled as
+    // the site hash, never as a file's digest.
+    expect(screen.getByText(SITE_HASH)).toBeInTheDocument()
+    expect(screen.getByText(/site hash the approval signed/i)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /preview/i })).toHaveAttribute(
       'href',
       'https://dep-1.example.pages.dev',
@@ -312,5 +357,96 @@ describe('MarketingBundleView go-live controls', () => {
     expect(screen.getByText('live')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /prepare go-live/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /retry publish/i })).toBeNull()
+  })
+})
+
+describe('MarketingBundleView file hashes', () => {
+  it("hashes each file from its own content, so a row matches the file's bytes", async () => {
+    mount([route('/api/marketing/bundles/', ok(twoFileBundle([published()])), 'GET')])
+
+    expect(await screen.findByText('physio-probe/index.html')).toBeInTheDocument()
+    expect(screen.getByText('physio-probe/thanks/index.html')).toBeInTheDocument()
+    // The expected digests come from Node, so these are known sha256 values
+    // rather than a second reading of the component's own arithmetic.
+    expect(screen.getByText(digestOf(PAGE_CONTENT).slice(0, 12))).toBeInTheDocument()
+    expect(screen.getByText(digestOf(THANK_YOU_CONTENT).slice(0, 12))).toBeInTheDocument()
+  })
+
+  it('shows the approved site hash once above the table, never as a file digest', async () => {
+    mount([route('/api/marketing/bundles/', ok(twoFileBundle([published()])), 'GET')])
+
+    expect(await screen.findByText('physio-probe/index.html')).toBeInTheDocument()
+    expect(screen.getAllByText(SITE_HASH)).toHaveLength(1)
+    // The old table repeated the truncated aggregate in every row.
+    expect(screen.queryAllByText(SITE_HASH.slice(0, 12))).toHaveLength(0)
+  })
+
+  it('shows a dash when this browser cannot hash, never an empty cell', async () => {
+    vi.stubGlobal('crypto', {})
+    mount([route('/api/marketing/bundles/', ok(twoFileBundle([published()])), 'GET')])
+
+    expect(await screen.findByText('physio-probe/index.html')).toBeInTheDocument()
+    expect(screen.getAllByText('—')).toHaveLength(2)
+  })
+})
+
+describe('MarketingBundleView retry staleness', () => {
+  it('offers the retry when the newest attempt of an action failed', async () => {
+    mount([
+      route(
+        '/api/marketing/bundles/',
+        ok(
+          twoFileBundle([
+            failedPublish({ id: 'act1', lastError: 'older failure' }),
+            failedPublish({ id: 'act2', lastError: 'newest failure' }),
+          ]),
+        ),
+        'GET',
+      ),
+    ])
+
+    expect(await screen.findByText(/newest failure/)).toBeInTheDocument()
+    expect(screen.queryByText(/older failure/)).toBeNull()
+    expect(screen.getByRole('button', { name: /retry publish/i })).toBeEnabled()
+  })
+
+  it('hides the retry once a newer attempt of the same action is queued', async () => {
+    mount([
+      route(
+        '/api/marketing/bundles/',
+        ok(
+          twoFileBundle([
+            failedPublish({ id: 'act1' }),
+            published({ id: 'act2', status: 'queued', externalId: null, result: null }),
+          ]),
+        ),
+        'GET',
+      ),
+    ])
+
+    expect(await screen.findByText('physio-probe/index.html')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /retry publish/i })).toBeNull()
+    // The failed row deliberately stays in the trail, but its error is no longer
+    // the state of the action, so the screen does not report it as the last word.
+    expect(screen.queryByText(/pages_upload_http_403/)).toBeNull()
+  })
+
+  it('hides the retry once a newer attempt of the same action succeeded', async () => {
+    mount([
+      route(
+        '/api/marketing/bundles/',
+        ok(
+          twoFileBundle([
+            failedPublish({ id: 'act1' }),
+            published({ id: 'act2', status: 'succeeded' }),
+          ]),
+        ),
+        'GET',
+      ),
+    ])
+
+    expect(await screen.findByText('physio-probe/index.html')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /retry publish/i })).toBeNull()
+    expect(screen.queryByText(/pages_upload_http_403/)).toBeNull()
   })
 })
