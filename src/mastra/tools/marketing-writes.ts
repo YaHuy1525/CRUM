@@ -651,12 +651,32 @@ export async function stageRetry(params: {
   userId: string
   userRole: string
   actionId: string
-}): Promise<{ ok: true; pendingWriteId: string; riskScore: number } | { ok: false; reason: string }> {
+}): Promise<
+  | { ok: true; pendingWriteId: string; riskScore: number }
+  | { ok: false; reason: string; message?: string }
+> {
   const failed = await getFailedAction(params.tenantId, params.actionId)
   if (!failed) return { ok: false, reason: 'not_failed' }
   if (!isExecutable(failed.action as MarketingActionName)) return { ok: false, reason: 'not_executable' }
 
-  const liveHash = await currentSiteHash(params.tenantId, failed.bundleId)
+  let liveHash: string | null
+  try {
+    liveHash = await currentSiteHash(params.tenantId, failed.bundleId)
+  } catch (err) {
+    // currentSiteHash resolves the slug through resolveSite, which throws rather
+    // than returns null when the slug cannot name a page. The promotion door
+    // makes the same translation; the token stays site_hash_moved because both
+    // answers mean the bytes the failed row recorded are not publishable now,
+    // and the message names the slug because that is the part a human can fix.
+    if (err instanceof SlugProblemError) {
+      return {
+        ok: false,
+        reason: 'site_hash_moved',
+        message: 'the page slug cannot be published, so the failed action cannot be re-queued',
+      }
+    }
+    throw err
+  }
   if (liveHash !== failed.siteHash) return { ok: false, reason: 'site_hash_moved' }
 
   const payload = retryPayload({ actionId: failed.id, siteHash: failed.siteHash })
@@ -805,8 +825,10 @@ export const retryPublishTool = createTool({
       if (!result.ok) {
         // Refusing as a queue entry rather than a throw, the same way the stage
         // and promote tools do: an owner reading a refusal can act on it, and a
-        // failed turn leaves no record of why nothing was re-queued.
-        const why = readableReason(result.reason)
+        // failed turn leaves no record of why nothing was re-queued. The
+        // stager's own sentence wins when it has one, because a slug problem and
+        // moved bytes share a token and only the sentence tells them apart.
+        const why = result.message ?? readableReason(result.reason)
         const humanTaskId = await createHumanTask(
           {
             tenantId: rc.tenantId,

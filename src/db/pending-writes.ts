@@ -2,6 +2,8 @@ import { getDbClient } from './client'
 import { signReceipt, computeActionHash } from '../governance/receipt'
 import { dismissMergeCandidate, mergeProspects } from './prospect-merge'
 import { BundleNotApprovableError, commitBundleApproval, pageSlugOf } from '../marketing/outbox'
+import { SlugProblemError } from '../marketing/site'
+import { siteHashInTransaction } from './marketing'
 
 export interface PendingWrite {
   id: string
@@ -589,6 +591,31 @@ async function applyDraft(
     }
     if (String(row.payload?.['siteHash'] ?? '') !== siteHash) {
       throw new UnsupportedCommitError(`marketing_retry carries a hash that does not match action ${sourceId}`)
+    }
+    // The clone carries the hash the failed row recorded, and the owner agreed
+    // to re-queue exactly those bytes. A bundle re-saved between staging and
+    // approval has different bytes, so the receipt would attest to a row the
+    // drainer could only record as failed; read them under this transaction and
+    // refuse instead of signing. This is the same question stageRetry asked
+    // when it staged, asked at the last moment the answer can still matter.
+    let liveHash: string | null
+    try {
+      liveHash = await siteHashInTransaction(client, draft.tenantId, row.bundle_id)
+    } catch (err) {
+      // A slug that can no longer name a page is the same refusal, not a throw:
+      // the bytes the owner approved cannot be published, so nothing is queued.
+      if (err instanceof SlugProblemError) {
+        throw new UnsupportedCommitError(
+          `marketing_retry names action ${sourceId}, whose bundle slug can no longer be published`,
+        )
+      }
+      throw err
+    }
+    if (liveHash !== siteHash) {
+      throw new UnsupportedCommitError(
+        `marketing_retry carries hash ${siteHash}, but bundle ${row.bundle_id} hashes to ` +
+          `${liveHash ?? 'nothing'} now, so the bytes the owner approved are not the bytes stored`,
+      )
     }
     await client.query(
       `INSERT INTO marketing_actions (tenant_id, bundle_id, action, payload, status, receipt_id)

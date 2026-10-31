@@ -153,6 +153,21 @@ describe('marketing.retry_publish', () => {
     unregister()
   })
 
+  it('refuses an unpublishable slug as a refusal, not a throw', async () => {
+    const unregister = registerActionAdapter({ name: 'publish_page', execute: () => Promise.resolve({ externalId: 'x' }) })
+    db.getFailedAction.mockResolvedValue({ id: ACT, bundleId: 'b1', siteHash: 'a'.repeat(64), action: 'publish_page' })
+    // The same throw the promotion door translates: currentSiteHash resolves the
+    // slug through resolveSite, which refuses to return a hash for a slug that
+    // cannot name a page. The retry door must answer with a refusal token too,
+    // because Task 12 puts both behind REST routes and only one may 500.
+    db.currentSiteHash.mockRejectedValue(new SlugProblemError('Not A Slug'))
+    const out = await stageRetry({ tenantId: rc.tenantId, userId: rc.userId, userRole: 'admin', actionId: ACT })
+    expect(out).toMatchObject({ ok: false, reason: 'site_hash_moved' })
+    if (!out.ok) expect(out.message).toMatch(/slug/)
+    expect(db.getOrCreateDraft).not.toHaveBeenCalled()
+    unregister()
+  })
+
   it('stages the action id and the hash, and nothing else', async () => {
     db.getFailedAction.mockResolvedValue({ id: ACT, bundleId: 'b1', siteHash: 'a'.repeat(64), action: 'publish_page' })
     db.currentSiteHash.mockResolvedValue('a'.repeat(64))

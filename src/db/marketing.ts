@@ -234,18 +234,48 @@ export async function getFailedAction(
 }
 
 /**
+ * The same hash as `currentSiteHash`, read through the caller's client so an
+ * approval can recompute it inside its own transaction rather than on a second
+ * connection that a concurrent save could race. Null when the bundle has no
+ * publishable page; a slug that cannot be resolved still throws, and the caller
+ * translates it the way the approval path does.
+ */
+export async function siteHashInTransaction(
+  client: { query: <T = Record<string, unknown>>(text: string, values?: unknown[]) => Promise<{ rows: T[] }> },
+  tenantId: string,
+  bundleId: string,
+): Promise<string | null> {
+  const bundle = await client.query<{ funnel_plan: unknown }>(
+    `SELECT funnel_plan FROM marketing_bundles WHERE id = $1 AND tenant_id = $2`,
+    [bundleId, tenantId],
+  )
+  const row = bundle.rows[0]
+  if (!row) return null
+  const slug = pageSlugOf({ funnelPlan: row.funnel_plan })
+  if (slug === null) return null
+  const artifactsResult = await client.query<{ id: string; kind: string; text_content: string | null }>(
+    `SELECT id, kind, text_content
+       FROM marketing_artifacts
+      WHERE tenant_id = $1 AND bundle_id = $2
+      ORDER BY created_at ASC`,
+    [tenantId, bundleId],
+  )
+  const artifacts = artifactsResult.rows.map((a) => ({
+    id: a.id,
+    kind: a.kind,
+    textContent: a.text_content,
+  }))
+  if (slotProblem(artifacts) !== null) return null
+  return siteHashOf(resolveSite(slug, artifacts))
+}
+
+/**
  * The hash of the bundle's current bytes, or null when it has no uploadable
  * page. The slug lives on the bundle row, not on the artifacts, so this reads
  * the bundle first and cannot be built from an artifact list alone.
  */
 export async function currentSiteHash(tenantId: string, bundleId: string): Promise<string | null> {
-  const bundle = await getMarketingBundle(tenantId, bundleId)
-  if (!bundle) return null
-  const slug = pageSlugOf(bundle)
-  if (slug === null) return null
-  const artifacts = await listMarketingArtifacts(tenantId, bundleId)
-  if (slotProblem(artifacts) !== null) return null
-  return siteHashOf(resolveSite(slug, artifacts))
+  return siteHashInTransaction(getDbClient(), tenantId, bundleId)
 }
 
 export async function insertMarketingArtifacts(params: {

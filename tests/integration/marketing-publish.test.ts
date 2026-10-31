@@ -627,4 +627,79 @@ describe.skipIf(!url)('publish drain against a local pages stand-in', () => {
       unregisterLive?.()
     }
   })
+
+  /**
+   * The commit-time bytes re-read is the retry receipt's last chance to notice
+   * that the bundle was re-saved after the retry was staged. The drainer's
+   * adapter would refuse such a clone with site_hash_moved, but the receipt
+   * would still attest to an action that could never have succeeded; that is
+   * the signed lie the in-transaction re-read prevents.
+   */
+  it('refuses to sign a retry whose page bytes moved after it was staged', async () => {
+    const db = getDbClient()
+    // A port nothing listens on: the first attempt has to fail through fetch,
+    // so the fixture reaches the retry path the way a real under-scoped token
+    // would rather than through a stub written for this case.
+    const down = { ...config, apiBaseUrl: 'http://127.0.0.1:1' }
+    const unregisterFailed = registerActionAdapter(makePublishPageAdapter(down))
+    try {
+      const slug = 'physio-retry-moved'
+      const bundle = await db.query<{ id: string }>(
+        `INSERT INTO marketing_bundles
+           (tenant_id, brief, objective, status, funnel_plan, prompt_version, draft_hash)
+         VALUES ($1, 'A brief long enough to pass the tool floor for this probe', 'inbound_leads',
+                 'staged', jsonb_build_object('page', jsonb_build_object('slug',$3::text)),
+                 'v1', $2)
+         RETURNING id`,
+        [TENANT, `probe-retry-moved-${Date.now()}`, slug],
+      )
+      const bundleId = bundle.rows[0]!.id
+      await db.query(
+        `INSERT INTO marketing_artifacts (tenant_id, bundle_id, role, kind, text_content)
+         VALUES ($1, $2, 'funnel-builder', 'page_html', $3)`,
+        [TENANT, bundleId, PAGE_HTML],
+      )
+      await commitBundleApproval(db, {
+        tenantId: TENANT, bundleId, receiptId: null, expectedSiteHash: siteHashFor(slug),
+      })
+
+      expect((await drainOnce({ bundleId })).failed).toBe(1)
+      const failedRows = await db.query<{ id: string }>(
+        `SELECT id FROM marketing_actions
+          WHERE bundle_id = $1 AND action = 'publish_page' AND status = 'failed'`,
+        [bundleId],
+      )
+      const failed = failedRows.rows[0]!
+      const staged = await stageRetry({ tenantId: TENANT, userId: APPROVER, userRole: 'admin', actionId: failed.id })
+      if (!staged.ok) throw new Error(`expected a staged retry, was refused with ${staged.reason}`)
+      const draft = await getPendingWrite(staged.pendingWriteId, TENANT)
+      if (!draft) throw new Error('the staged retry draft is not visible to its own tenant')
+
+      // The page is re-saved under the review: the failed row and the draft
+      // still name the bytes of the first attempt, but the bundle no longer
+      // holds them. Approving now would queue a clone the drainer could only
+      // record as failed.
+      await db.query(
+        `UPDATE marketing_artifacts SET text_content = $3
+          WHERE tenant_id = $1 AND bundle_id = $2 AND kind = 'page_html'`,
+        [TENANT, bundleId, '<h1>Re-saved while the retry waited</h1>'],
+      )
+      await expect(
+        commitWithReceipt(draft, { approvedBy: APPROVER, scope: 'marketing:retry' }),
+      ).rejects.toThrow(/are not the bytes stored/)
+
+      // Neither a queued clone nor a receipt came out of the refused approval.
+      const queued = await db.query<{ n: string }>(
+        `SELECT count(*) AS n FROM marketing_actions
+          WHERE bundle_id = $1 AND action = 'publish_page' AND status = 'queued'`,
+        [bundleId],
+      )
+      expect(Number(queued.rows[0]!.n)).toBe(0)
+      expect((await getPendingWrite(staged.pendingWriteId, TENANT))?.receiptId).toBeNull()
+
+      await db.query('DELETE FROM marketing_bundles WHERE id = $1', [bundleId])
+    } finally {
+      unregisterFailed()
+    }
+  })
 })
