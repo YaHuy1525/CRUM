@@ -207,4 +207,39 @@ describe.skipIf(!url)('publish drain against a local pages stand-in', () => {
 
     unregister()
   })
+
+  it('records a claimed action this process cannot run instead of dropping it', async () => {
+    const db = getDbClient()
+    // create_campaign is declared in the outbox and has no adapter anywhere in
+    // this build. A row for it can only exist if an older build queued it, and
+    // the honest answer is a named failure, never a row left `running` or
+    // silently skipped.
+    const bundle = await db.query<{ id: string }>(
+      `INSERT INTO marketing_bundles
+         (tenant_id, brief, objective, status, funnel_plan, prompt_version, draft_hash)
+       VALUES ($1, 'A brief long enough to pass the tool floor for this probe', 'inbound_leads',
+               'staged', NULL, 'v1', $2)
+       RETURNING id`,
+      [TENANT, `probe-noadapter-${Date.now()}`],
+    )
+    const bundleId = bundle.rows[0]!.id
+    await db.query(
+      `INSERT INTO marketing_actions (tenant_id, bundle_id, action, payload, status)
+       VALUES ($1, $2, 'create_campaign', '{}'::jsonb, 'queued')`,
+      [TENANT, bundleId],
+    )
+
+    const r = await drainOnce({ bundleId })
+    expect(r.ran).toBe(1)
+    expect(r.failed).toBe(1)
+    expect(r.succeeded).toBe(0)
+
+    const row = await db.query<{ status: string; last_error: string | null }>(
+      `SELECT status, last_error FROM marketing_actions WHERE bundle_id = $1`,
+      [bundleId],
+    )
+    expect(row.rows[0]?.status).toBe('failed')
+    expect(row.rows[0]?.last_error).toBe('no_adapter: create_campaign has no adapter in this process')
+    expect(await statusOf(db, bundleId)).toBe('staged')
+  })
 })
