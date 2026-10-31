@@ -181,7 +181,7 @@ tools:
     idempotent: true
     idempotency_key: draftHash
 
-  # ── approval (12) ──────────────────────────────────────────
+  # ── approval (13) ──────────────────────────────────────────
   - name: crm.create_customer
     description: Stage a new customer record.
     scope: crm:write
@@ -270,6 +270,13 @@ tools:
     class: approval
     idempotent: true
     idempotency_key: actionId
+
+  - name: marketing.set_campaign_status
+    description: Stage a campaign status change (activate, pause, or archive). Identifier payload only.
+    scope: marketing:status
+    class: approval
+    idempotent: true
+    idempotency_key: draftHash
 
   # ── workflow side effects (1) ──────────────────────────────
   - name: run.side-effect

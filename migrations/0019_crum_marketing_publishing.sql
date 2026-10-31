@@ -33,7 +33,8 @@ ALTER TABLE pending_writes ADD CONSTRAINT pending_writes_object_type_check
                          'knowledge_document','email',
                          'prospect','prospect_channel','outreach_draft','outreach_send',
                          'prospect_merge',
-                         'marketing_bundle','marketing_stage','marketing_promote','marketing_retry'));
+                         'marketing_bundle','marketing_stage','marketing_promote','marketing_retry',
+                         'marketing_set_campaign_status'));
 
 -- Deviation from the parent spec section 8, which promised no new table. There
 -- is nowhere on prospects to put a budget bucket, and the core spine is not the

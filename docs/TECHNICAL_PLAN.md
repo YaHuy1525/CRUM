@@ -1123,6 +1123,7 @@ Two more `ToolAction` fields that are governance features rather than convenienc
 | `marketing.stage_bundle` | approval | `draftHash` | Identifier payload only; refuses unexecutable actions at staging |
 | `marketing.promote_bundle` | approval | `siteHash` | Puts a published preview page on the live domain; identifier payload only |
 | `marketing.retry_publish` | approval | `actionId` | Re-queues one failed publish; identifier payload only |
+| `marketing.set_campaign_status` | approval | `draftHash` | Activates, pauses, or archives a campaign; identifier payload only |
 
 #### 4.6.3 Resolving the active set
 
