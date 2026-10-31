@@ -250,4 +250,16 @@ describe('the marketing payload rule', () => {
     const tainted = { ...promote, previewUrl: 'https://x.pages.dev/send/free-quote' }
     expect(forbiddenTermsIn(tainted)).toContain('send')
   })
+
+  it('drops a field smuggled in on an untyped input', () => {
+    // The builders return fresh literals, so the only way an extra field reaches
+    // the scored payload is a caller whose object was widened somewhere the
+    // compiler stopped checking. Spreading into a variable is that shape: an
+    // object literal would fail the excess-property check, a widened one will
+    // not, and the builder is what has to hold the line.
+    const widened = { ...promote, previewUrl: 'https://x.pages.dev/send/free-quote' }
+    const built = promotePayload(widened)
+    expect(Object.keys(built).sort()).toEqual(['bundleId', 'pageActionId', 'siteHash'])
+    expect(forbiddenTermsIn(built)).toEqual([])
+  })
 })
