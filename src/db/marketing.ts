@@ -515,3 +515,70 @@ export async function listActiveCampaigns(tenantId: string): Promise<Array<{
   }
   return active
 }
+
+/**
+ * Every campaign that has a succeeded `create_campaign` action, regardless of
+ * whether it is currently active or paused. The console dashboard shows both
+ * statuses; the analyst cron alone filters to active-only via
+ * `listActiveCampaigns` above.
+ */
+export async function listAllCampaigns(tenantId: string): Promise<Array<{
+  bundleId: string
+  campaignExternalId: string
+  adAccountId: string
+  campaignName: string
+  status: 'ACTIVE' | 'PAUSED'
+  analysis: unknown
+}>> {
+  const db = getDbClient()
+  const created = await db.query<{
+    bundle_id: string
+    campaignExternalId: string
+    adAccountId: string
+    brief: string
+    analysis: unknown
+  }>(
+    `SELECT ma.bundle_id,
+            ma.result ->> 'externalId' AS "campaignExternalId",
+            ma.payload ->> 'adAccountId' AS "adAccountId",
+            mb.brief,
+            mb.analysis
+       FROM marketing_actions ma
+       JOIN marketing_bundles mb ON mb.id = ma.bundle_id AND mb.tenant_id = ma.tenant_id
+      WHERE ma.tenant_id = $1
+        AND ma.action = 'create_campaign'
+        AND ma.status = 'succeeded'`,
+    [tenantId],
+  )
+  const campaigns: Array<{
+    bundleId: string
+    campaignExternalId: string
+    adAccountId: string
+    campaignName: string
+    status: 'ACTIVE' | 'PAUSED'
+    analysis: unknown
+  }> = []
+  for (const row of created.rows) {
+    if (!row.campaignExternalId) continue
+    const statuses = await db.query<{ status: string }>(
+      `SELECT payload ->> 'status' AS status
+         FROM marketing_actions
+        WHERE tenant_id = $1
+          AND action = 'set_campaign_status'
+          AND payload ->> 'campaignId' = $2
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [tenantId, row.campaignExternalId],
+    )
+    const status = (statuses.rows[0]?.status === 'ACTIVE' ? 'ACTIVE' : 'PAUSED') as 'ACTIVE' | 'PAUSED'
+    campaigns.push({
+      bundleId: row.bundle_id,
+      campaignExternalId: row.campaignExternalId,
+      adAccountId: row.adAccountId,
+      campaignName: row.brief,
+      status,
+      analysis: row.analysis,
+    })
+  }
+  return campaigns
+}

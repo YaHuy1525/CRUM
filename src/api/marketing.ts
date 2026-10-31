@@ -5,9 +5,11 @@ import type { CrumEnv } from '../config/env'
 import type { TenantRequestContext } from '../mastra/tenant-context'
 import { IdentityError, resolveIdentity } from '../mastra/identity'
 import { stagePromotion, stageRetry } from '../mastra/tools/marketing-writes'
-import { getMarketingBundle, listMarketingActions, listMarketingArtifacts } from '../db/marketing'
+import { getMarketingBundle, listAllCampaigns, listMarketingActions, listMarketingArtifacts } from '../db/marketing'
+import { listRecentSnapshots, type MetricsSnapshotRow } from '../db/marketing-metrics'
 import { bundleForLeadToken, countLeadsSince, normalizeEmail, recordLead } from '../db/marketing-leads'
 import { sendConversionEvent, type ConversionsApiConfig } from '../marketing/meta-conversions'
+import type { CampaignMetrics } from '../../console/lib/types'
 
 // ── Marketing: the read surface and the two staging doors (slice 2) ─────────
 //
@@ -128,6 +130,79 @@ export function createMarketingRouter(deps: MarketingRouterDeps): Hono {
     return c.json({ pendingWriteId: result.pendingWriteId, riskScore: result.riskScore }, 201)
   })
 
+  // ── Campaign metrics for the console dashboard (slice 3) ─────────────────
+  //
+  // The dashboard component at console/components/CampaignMetricsDashboard.tsx
+  // fetches this endpoint with a tenantId query parameter. It returns one
+  // CampaignMetrics row per campaign (active or paused) with aggregated metrics
+  // from the past 7 days of snapshots and the analyst's recommendation from the
+  // bundle's analysis JSON. Spec section 10.1.
+  app.get('/campaign-metrics', async (c) => {
+    const gate = await auth(c)
+    if ('error' in gate) return gate.error
+
+    const tenantId = c.req.query('tenantId')
+    if (!tenantId) return c.json({ error: 'tenantId_required' }, 400)
+
+    const [campaigns, snapshots] = await Promise.all([
+      listAllCampaigns(tenantId),
+      listRecentSnapshots(tenantId, 7),
+    ])
+
+    // Aggregate snapshots per (bundleId, campaignExternalId), summing the
+    // numeric fields across all windows in the 7-day range.
+    const aggregated = new Map<string, {
+      impressions: number
+      clicks: number
+      spend: number
+      leads: number
+    }>()
+    for (const snap of snapshots) {
+      const key = `${snap.bundleId}:${snap.campaignExternalId}`
+      const extracted = extractMetricsFromSnapshot(snap)
+      const existing = aggregated.get(key)
+      if (existing) {
+        existing.impressions += extracted.impressions
+        existing.clicks += extracted.clicks
+        existing.spend += extracted.spend
+        existing.leads += extracted.leads
+      } else {
+        aggregated.set(key, { ...extracted })
+      }
+    }
+
+    const items: CampaignMetrics[] = campaigns.map((campaign) => {
+      const key = `${campaign.bundleId}:${campaign.campaignExternalId}`
+      const metrics = aggregated.get(key) ?? { impressions: 0, clicks: 0, spend: 0, leads: 0 }
+      const costPerLead = metrics.leads > 0 ? metrics.spend / metrics.leads : 0
+
+      // The analyst recommendation lives in the bundle's `analysis` JSON,
+      // written by the campaign-analyst agent. Each campaign has its own entry
+      // keyed by campaignExternalId inside the campaigns array.
+      const { recommendation, lastAnalystRun } = extractRecommendation(
+        campaign.analysis,
+        campaign.campaignExternalId,
+      )
+
+      return {
+        bundleId: campaign.bundleId,
+        campaignExternalId: campaign.campaignExternalId,
+        campaignName: campaign.campaignName,
+        adAccountId: campaign.adAccountId,
+        status: campaign.status,
+        impressions: metrics.impressions,
+        clicks: metrics.clicks,
+        spend: metrics.spend,
+        leads: metrics.leads,
+        costPerLead,
+        recommendation,
+        lastAnalystRun,
+      }
+    })
+
+    return c.json({ items })
+  })
+
   // Deliberately outside the `auth(c)` closure: a stranger filling in a
   // landing-page form has no CRUM identity, and spec section 13 says plainly
   // that this route cannot use the identity gate. The credential is the
@@ -222,6 +297,98 @@ export function createMarketingRouter(deps: MarketingRouterDeps): Hono {
   })
 
   return app
+}
+
+// ── Helpers for the campaign-metrics route ───────────────────────────────────
+
+/**
+ * Extracts numeric metrics from a snapshot's raw `metrics` field. The field
+ * stores the JSON body returned by Meta's Ads Insights API, which is either the
+ * `data` array directly or an object wrapping it. Each snapshot carries string
+ * values for impressions, clicks, and spend; leads come from the `actions`
+ * array when an `action_type` of `lead` is present.
+ *
+ * This is the same extraction logic as in scripts/analyst-cron.ts, duplicated
+ * here so the route does not depend on a script module.
+ */
+function extractMetricsFromSnapshot(snapshot: MetricsSnapshotRow): {
+  impressions: number
+  clicks: number
+  spend: number
+  leads: number
+} {
+  const raw = snapshot.metrics as Record<string, unknown> | unknown[] | null
+  if (raw === null || raw === undefined) {
+    return { impressions: 0, clicks: 0, spend: 0, leads: 0 }
+  }
+
+  let dataArr: unknown[]
+  if (Array.isArray(raw)) {
+    dataArr = raw
+  } else {
+    const inner = raw.data
+    dataArr = Array.isArray(inner) ? inner : []
+  }
+
+  let impressions = 0
+  let clicks = 0
+  let spend = 0
+  let leads = 0
+
+  for (const row of dataArr) {
+    if (typeof row !== 'object' || row === null) continue
+    const r = row as Record<string, unknown>
+    impressions += Number(r.impressions ?? 0)
+    clicks += Number(r.clicks ?? 0)
+    spend += Number(r.spend ?? 0)
+    const actions = r.actions
+    if (Array.isArray(actions)) {
+      for (const action of actions) {
+        if (
+          typeof action === 'object' &&
+          action !== null &&
+          (action as Record<string, unknown>).action_type === 'lead'
+        ) {
+          leads += Number((action as Record<string, unknown>).value ?? 0)
+        }
+      }
+    }
+  }
+
+  return { impressions, clicks, spend, leads }
+}
+
+/**
+ * Pulls the analyst's recommendation and run timestamp from the bundle's
+ * `analysis` JSON. The analysis field is written by the campaign-analyst agent
+ * and has the shape `{ campaigns: [{ campaignId, recommendation }], ... }`.
+ * Returns `null` for both fields when the analysis is absent or the campaign
+ * is not found in it.
+ */
+function extractRecommendation(
+  analysis: unknown,
+  campaignExternalId: string,
+): { recommendation: 'scale' | 'hold' | 'kill' | null; lastAnalystRun: string | null } {
+  if (!analysis || typeof analysis !== 'object') {
+    return { recommendation: null, lastAnalystRun: null }
+  }
+  const obj = analysis as Record<string, unknown>
+  const campaigns = obj.campaigns
+  if (!Array.isArray(campaigns)) {
+    return { recommendation: null, lastAnalystRun: null }
+  }
+  const entry = campaigns.find(
+    (c: Record<string, unknown>) => c.campaignId === campaignExternalId,
+  ) as Record<string, unknown> | undefined
+  if (!entry) {
+    return { recommendation: null, lastAnalystRun: null }
+  }
+  const rec = entry.recommendation
+  const recommendation = (rec === 'scale' || rec === 'hold' || rec === 'kill') ? rec : null
+  // The analyst cron does not stamp a run timestamp into the analysis JSON
+  // itself; the bundle's updated_at is the closest proxy. Return null here and
+  // let the dashboard show '—' when no timestamp is available.
+  return { recommendation, lastAnalystRun: null }
 }
 
 // One-shot warning flag so an unconfigured boot does not fill the log on
