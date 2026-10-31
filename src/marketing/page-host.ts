@@ -103,14 +103,24 @@ function stringField(value: unknown): string {
 export async function readSiteFiles(action: DerivedAction, tenantId: string): Promise<SiteFile[]> {
   const bundleId = stringField(action.payload['bundleId'])
   const slug = stringField(action.payload['slug'])
-  const expected = action.payload['siteHash']
+  const expected = stringField(action.payload['siteHash'])
   const artifacts = await listMarketingArtifacts(tenantId, bundleId)
   const files = resolveSite(slug, artifacts)
   if (files.length === 0) {
     throw new Error(`no_site_files: bundle ${bundleId} holds no uploaded file for slug ${slug}`)
   }
-  if (typeof expected === 'string' && siteHashOf(files) !== expected) {
-    throw new Error(`site_hash_moved: bundle ${bundleId} no longer hashes to the approved bytes`)
+  if (expected === '') {
+    throw new Error(
+      `site_hash_missing: bundle ${bundleId} carries no approved siteHash, so the stored bytes ` +
+        'cannot be checked against it; rebuild the action from the hash the reviewer approved',
+    )
+  }
+  if (siteHashOf(files) !== expected) {
+    throw new Error(
+      `site_hash_moved: bundle ${bundleId} no longer hashes to the approved siteHash, so the ` +
+        'stored bytes are not the ones the reviewer approved; re-approve the bundle to issue ' +
+        'an action over the bytes stored now',
+    )
   }
   return files
 }
