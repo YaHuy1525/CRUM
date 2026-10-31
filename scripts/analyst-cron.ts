@@ -14,8 +14,9 @@ import { existsSync } from 'node:fs'
 import { parseEnv } from '../src/config/env'
 import { closeDbClient } from '../src/db/client'
 import { listActiveCampaigns } from '../src/db/marketing'
-import { listRecentSnapshots, type MetricsSnapshotRow } from '../src/db/marketing-metrics'
+import { insertSnapshot, listRecentSnapshots, type MetricsSnapshotRow } from '../src/db/marketing-metrics'
 import { campaignAnalystAgent } from '../src/mastra/agents/campaign-analyst'
+import { readCampaignMetrics, type MetricsReadbackConfig } from '../src/marketing/metrics-readback'
 import { stageCampaignStatusChange } from '../src/mastra/tools/marketing-writes'
 
 interface AggregatedMetrics {
@@ -190,6 +191,7 @@ export async function runAnalystCron(args: {
   tenantId: string
   windowStart?: Date
   windowEnd?: Date
+  metricsReadback?: MetricsReadbackConfig | null
   invokeAgent?: (input: AnalystInput) => Promise<string>
   stageStatus?: typeof stageCampaignStatusChange
 }): Promise<{
@@ -197,27 +199,74 @@ export async function runAnalystCron(args: {
   recommendations: CampaignRecommendation[]
   stagedDrafts: Array<{ campaignId: string; status: string; draftId: string }>
   errors: string[]
+  snapshotsCollected: number
 }> {
   const end = args.windowEnd ?? new Date()
   const start = args.windowStart ?? new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000)
   const invokeAgent = args.invokeAgent ?? defaultInvokeAgent
   const stageStatus = args.stageStatus ?? stageCampaignStatusChange
+  const readbackConfig = args.metricsReadback ?? null
 
-  // 1. Query recent snapshots and active campaigns.
-  const [snapshots, activeCampaigns] = await Promise.all([
-    listRecentSnapshots(args.tenantId, 7),
-    listActiveCampaigns(args.tenantId),
-  ])
+  // 1. Query active campaigns.
+  const activeCampaigns = await listActiveCampaigns(args.tenantId)
 
   if (activeCampaigns.length === 0) {
     console.log('[analyst-cron] no active campaigns; nothing to analyse')
-    return { campaignsProcessed: 0, recommendations: [], stagedDrafts: [], errors: [] }
+    return { campaignsProcessed: 0, recommendations: [], stagedDrafts: [], errors: [], snapshotsCollected: 0 }
   }
 
-  // 2. Aggregate snapshots per campaign.
+  // 2. Collect fresh metrics from Meta's Ads Insights API for each active
+  //    campaign and insert a snapshot row. This is the spec section 8.2 step:
+  //    "The cron job reads metrics for all active campaigns... then inserts a
+  //    snapshot into marketing_metrics_snapshots for each campaign."
+  const errors: string[] = []
+  let snapshotsCollected = 0
+
+  if (readbackConfig) {
+    const collectResults = await Promise.allSettled(
+      activeCampaigns.map(async (campaign) => {
+        const result = await readCampaignMetrics(campaign.adAccountId, readbackConfig, {
+          since: start.toISOString().slice(0, 10),
+          until: end.toISOString().slice(0, 10),
+        })
+        if (result.error) {
+          throw new Error(
+            `metrics_api_error for ${campaign.adAccountId}: ${result.error.message} (HTTP ${result.error.httpStatus})`,
+          )
+        }
+        await insertSnapshot(
+          args.tenantId,
+          campaign.bundleId,
+          campaign.campaignExternalId,
+          start,
+          end,
+          result.data,
+        )
+      }),
+    )
+
+    for (let i = 0; i < collectResults.length; i++) {
+      const r = collectResults[i]!
+      if (r.status === 'fulfilled') {
+        snapshotsCollected++
+      } else {
+        const reason: unknown = r.reason
+        const message = reason instanceof Error ? reason.message : String(reason)
+        errors.push(`metrics_collection_failed: ${activeCampaigns[i]!.campaignExternalId}: ${message}`)
+        console.error(`[analyst-cron] metrics collection failed for ${activeCampaigns[i]!.campaignExternalId}: ${message}`)
+      }
+    }
+  } else {
+    console.log('[analyst-cron] no metricsReadback config; skipping live collection, using existing snapshots')
+  }
+
+  // 3. Query recent snapshots (including the ones just inserted) and aggregate.
+  const snapshots = await listRecentSnapshots(args.tenantId, 7)
+
+  // 4. Aggregate snapshots per campaign.
   const aggregated = aggregateSnapshots(snapshots)
 
-  // 3. Build the analyst input, one entry per active campaign.
+  // 5. Build the analyst input, one entry per active campaign.
   const campaigns: CampaignInput[] = activeCampaigns.map((c) => {
     const key = `${c.bundleId}:${c.campaignExternalId}`
     const entry = aggregated.get(key)
@@ -234,7 +283,7 @@ export async function runAnalystCron(args: {
     campaigns,
   }
 
-  // 4. Invoke the analyst agent.
+  // 6. Invoke the analyst agent.
   let analystOutput: AnalystOutput
   try {
     const text = await invokeAgent(input)
@@ -246,13 +295,13 @@ export async function runAnalystCron(args: {
       campaignsProcessed: campaigns.length,
       recommendations: [],
       stagedDrafts: [],
-      errors: [`agent_invocation_failed: ${message}`],
+      errors: [...errors, `agent_invocation_failed: ${message}`],
+      snapshotsCollected,
     }
   }
 
-  // 5. Process each campaign recommendation.
+  // 7. Process each campaign recommendation.
   const stagedDrafts: Array<{ campaignId: string; status: string; draftId: string }> = []
-  const errors: string[] = []
 
   for (const rec of analystOutput.campaigns ?? []) {
     if (rec.recommendation === 'hold') {
@@ -284,6 +333,7 @@ export async function runAnalystCron(args: {
     recommendations: analystOutput.campaigns ?? [],
     stagedDrafts,
     errors,
+    snapshotsCollected,
   }
 }
 
@@ -316,10 +366,22 @@ async function main(): Promise<void> {
     process.exit(1)
   }
 
+  // Build the metrics readback config from env. When the access token is absent
+  // the cron falls back to using only pre-existing snapshots (useful for local
+  // dev or when Meta credentials are not provisioned on the scheduler host).
+  const metaToken = env.CRUM_META_ADS_ACCESS_TOKEN ?? null
+  const metricsReadback: MetricsReadbackConfig | null = metaToken
+    ? { accessToken: metaToken }
+    : null
+  if (!metricsReadback) {
+    console.warn('[analyst-cron] CRUM_META_ADS_ACCESS_TOKEN is unset; skipping live metrics collection')
+  }
+
   try {
-    const result = await runAnalystCron({ tenantId })
+    const result = await runAnalystCron({ tenantId, metricsReadback })
     console.log(
       `[analyst-cron] done: ${result.campaignsProcessed} campaign(s), ` +
+        `${result.snapshotsCollected} snapshot(s) collected, ` +
         `${result.stagedDrafts.length} draft(s) staged, ` +
         `${result.errors.length} error(s)`,
     )

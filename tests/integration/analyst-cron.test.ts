@@ -10,6 +10,7 @@
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { closeDbClient, getDbClient } from '../../src/db/client'
+import type { MetricsReadbackConfig, MetricsReadbackResult } from '../../src/marketing/metrics-readback'
 
 const url = process.env.CRUM_INTEGRATION_DATABASE_URL ?? ''
 if (url) process.env.DATABASE_URL = url
@@ -284,5 +285,120 @@ describe.skipIf(!url)('analyst cron', () => {
     expect(result.errors.length).toBe(1)
     expect(result.errors[0]).toContain('agent_invocation_failed')
     expect(result.stagedDrafts.length).toBe(0)
+  })
+
+  it('collects metrics from Meta API and inserts snapshots when metricsReadback is provided', async () => {
+    const db = getDbClient()
+    await db.query(`DELETE FROM marketing_metrics_snapshots WHERE tenant_id = $1`, [TENANT])
+
+    // Mock readCampaignMetrics to return fake data for each ad account.
+    const mockReadResult: MetricsReadbackResult = {
+      data: [
+        {
+          campaign_name: 'Test Campaign',
+          impressions: '1000',
+          clicks: '50',
+          spend: '25.00',
+          actions: [{ action_type: 'lead', value: '5' }],
+          date_start: '2026-10-24',
+          date_stop: '2026-10-31',
+        },
+      ],
+    }
+
+    const mockConfig: MetricsReadbackConfig = {
+      accessToken: 'test-token',
+      fetchImpl: vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ data: mockReadResult.data }),
+      }),
+    }
+
+    const { runAnalystCron } = await import('../../scripts/analyst-cron')
+    const result = await runAnalystCron({
+      tenantId: TENANT,
+      metricsReadback: mockConfig,
+      invokeAgent: () =>
+        Promise.resolve('{"recommendation":"hold","threshold":"","message":"ok","campaigns":[]}'),
+    })
+
+    // Both campaigns should have been collected.
+    expect(result.snapshotsCollected).toBe(2)
+    expect(result.errors).toEqual([])
+
+    // Verify snapshots were inserted into the database.
+    const snapResult = await db.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM marketing_metrics_snapshots WHERE tenant_id = $1`,
+      [TENANT],
+    )
+    expect(Number(snapResult.rows[0]!.count)).toBe(2)
+  })
+
+  it('skips live collection when metricsReadback is null', async () => {
+    const db = getDbClient()
+    await db.query(`DELETE FROM marketing_metrics_snapshots WHERE tenant_id = $1`, [TENANT])
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+    const { runAnalystCron } = await import('../../scripts/analyst-cron')
+    const result = await runAnalystCron({
+      tenantId: TENANT,
+      metricsReadback: null,
+      invokeAgent: () =>
+        Promise.resolve('{"recommendation":"hold","threshold":"","message":"ok","campaigns":[]}'),
+    })
+
+    expect(result.snapshotsCollected).toBe(0)
+    expect(result.errors).toEqual([])
+
+    // Verify the skip message was logged.
+    const skipLogs = logSpy.mock.calls.filter((c) =>
+      String(c[0] ?? '').includes('skipping live collection'),
+    )
+    expect(skipLogs.length).toBeGreaterThan(0)
+
+    // No snapshots should have been inserted.
+    const snapResult = await db.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM marketing_metrics_snapshots WHERE tenant_id = $1`,
+      [TENANT],
+    )
+    expect(Number(snapResult.rows[0]!.count)).toBe(0)
+
+    logSpy.mockRestore()
+  })
+
+  it('records errors when metrics collection fails for a campaign', async () => {
+    const db = getDbClient()
+    await db.query(`DELETE FROM marketing_metrics_snapshots WHERE tenant_id = $1`, [TENANT])
+
+    // Mock fetch to simulate an API error.
+    const mockConfig: MetricsReadbackConfig = {
+      accessToken: 'test-token',
+      fetchImpl: vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        json: () =>
+          Promise.resolve({
+            error: { message: 'Invalid access token', type: 'OAuthException', code: 190 },
+          }),
+      }),
+    }
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const { runAnalystCron } = await import('../../scripts/analyst-cron')
+    const result = await runAnalystCron({
+      tenantId: TENANT,
+      metricsReadback: mockConfig,
+      invokeAgent: () =>
+        Promise.resolve('{"recommendation":"hold","threshold":"","message":"ok","campaigns":[]}'),
+    })
+
+    // Both campaigns should have failed.
+    expect(result.snapshotsCollected).toBe(0)
+    expect(result.errors.length).toBe(2)
+    expect(result.errors[0]).toContain('metrics_collection_failed')
+
+    errorSpy.mockRestore()
   })
 })
