@@ -328,10 +328,12 @@ export const stageBundleTool = createTool({
         throw new Error(`bundle_not_stageable: ${bundle.id} is ${bundle.status}`)
       }
 
-      // Both refusals answer the same question — can this build say at all what
-      // approving this bundle would cause — so they are one branch, not two copies
-      // of the human-task call. An unread plan is checked first because a plan you
-      // cannot read is also a plan whose actions you cannot count (Task 5, Ruling T5-D3).
+      // All four refusals answer the same question — can this build say at all
+      // what approving this bundle would cause — so they are one branch, not four
+      // copies of the human-task call. An unread plan is checked first because a
+      // plan you cannot read is also a plan whose actions you cannot count (Task 5,
+      // Ruling T5-D3); the arms after it name the page, the slot and the adapter
+      // that would each stop a derivation somewhere further down.
       const unread = unreadPlanColumns(bundle)
       // One read, three uses: the slot check, the hash, and the artifact count the
       // payload and the message report. `countMarketingArtifacts` is gone from this

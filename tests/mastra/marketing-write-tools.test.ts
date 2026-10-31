@@ -468,6 +468,25 @@ describe('marketing.stage_bundle', () => {
     expect(stagedInsert().siteHash).toBeNull()
   })
 
+  it('counts the artifact rows it read, rather than echoing zero', async () => {
+    // The count used to come from countMarketingArtifacts; it is artifacts.length
+    // now. Three rows that claim no site slot keep siteHash null while making the
+    // number impossible to pass with a constant.
+    stubQueries(
+      stageHandlers(bundleRow(), [
+        artifactRow({ id: 'a1', kind: 'script', text_content: 'Objection handling: price is a comparison' }),
+        artifactRow({ id: 'a2', role: 'campaign-analyst', kind: 'report', text_content: 'Week one results' }),
+        artifactRow({ id: 'a3', kind: 'script', text_content: 'Follow-up call script' }),
+      ]),
+    )
+    const result = await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
+    expect(stagedInsert().artifactCount).toBe(3)
+    expect(stagedInsert().siteHash).toBeNull()
+    // The number the reviewer is told comes from the same rows the hash would
+    // cover, so the payload and the message cannot disagree.
+    expect(result.message).toContain('3 asset(s)')
+  })
+
   it('keys the draft on the bundle id and the hash recomputed from the stored row', async () => {
     stubQueries(stageHandlers(bundleRow()))
     await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })

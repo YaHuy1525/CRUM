@@ -138,6 +138,32 @@ describe('approving a marketing stage draft', () => {
     expect(calls("UPDATE marketing_bundles SET status = 'approved'")).toEqual([])
   })
 
+  it('refuses a staged draft whose plan names a slug the site cannot publish', async () => {
+    // Slice 1 fixtures wrote slugs like '/free-scan', which SLUG_PATTERN
+    // refuses, so this is reachable stored data rather than a hypothetical.
+    // resolveSite throws SlugProblemError on it, and an untranslated throw would
+    // leave this approval as a 500 instead of the refusal applyDraft reports.
+    stubQueries({
+      'SELECT receipt_id, rejected_at, committed_at FROM pending_writes': [{ receipt_id: null, rejected_at: null, committed_at: null }],
+      'FROM marketing_bundles': [
+        { id: BUNDLE, status: 'staged', objective: 'inbound_leads', funnel_plan: { page: { slug: '/free-scan' } }, media_plan: null },
+      ],
+      'FROM marketing_artifacts': [],
+    })
+    const { commitWithReceipt, UnsupportedCommitError } = await import('../../src/db/pending-writes')
+    const attempt = commitWithReceipt(stageDraft({ bundleId: BUNDLE }), {
+      approvedBy: APPROVER,
+      scope: 'crm:write',
+    })
+    await expect(attempt).rejects.toThrow(UnsupportedCommitError)
+    // The refusal carries the slug sentence, so the reviewer learns which path
+    // is unusable rather than reading a generic commit failure.
+    await expect(attempt).rejects.toThrow(/slug_.*cannot be published/)
+    await expect(attempt).rejects.toThrow(/free-scan/)
+    expect(mockQuery.mock.calls.some((c) => (c[0] as string).includes('INSERT INTO audit_receipts'))).toBe(false)
+    expect(mockQuery.mock.calls.some((c) => (c[0] as string).includes('ROLLBACK'))).toBe(true)
+  })
+
   it('approves a content-only bundle and writes the receipt against the bundle id', async () => {
     stubQueries({
       'SELECT receipt_id, rejected_at, committed_at FROM pending_writes': [{ receipt_id: null, rejected_at: null, committed_at: null }],
@@ -261,5 +287,26 @@ describe('the review-to-commit byte re-check', () => {
     await expect(attempt).rejects.toThrow(/no longer hashes/)
     // The staged side must say what it has, not print the word `null`.
     await expect(attempt).rejects.toThrow(/nothing staged/)
+  })
+
+  it('refuses to approve a page that was deleted after staging', async () => {
+    // The mirror of the case above, and the direction the last fix left
+    // untested: the payload carried the hash of a page the reviewer saw, and the
+    // page_html row is gone by approval. The plan still names a slug, so a
+    // derivation that trusted the plan alone would enqueue a publish over a file
+    // set that is now empty. The live side must read 'nothing', not a hash.
+    const client = clientWith({
+      bundle: { id: 'b1', status: 'staged', funnel_plan: { page: { slug: 'free-scan' } }, media_plan: null },
+      artifacts: [],
+    })
+    const { commitBundleApproval } = await import('../../src/marketing/outbox')
+    const attempt = commitBundleApproval(client, {
+      tenantId: TENANT,
+      bundleId: 'b1',
+      receiptId: null,
+      expectedSiteHash: PAGE_HASH,
+    })
+    await expect(attempt).rejects.toThrow(/no longer hashes/)
+    await expect(attempt).rejects.toThrow(/nothing now/)
   })
 })

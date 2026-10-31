@@ -1,5 +1,11 @@
 import type { MarketingBundleRow } from '../db/marketing'
-import { resolveSite, siteHashOf, slotProblem, type SiteArtifact } from './site'
+import {
+  SlugProblemError,
+  resolveSite,
+  siteHashOf,
+  slotProblem,
+  type SiteArtifact,
+} from './site'
 
 export const MARKETING_ACTION_NAMES = [
   'publish_page',
@@ -237,13 +243,23 @@ export async function commitBundleApproval(
   }
 
   // A bundle with an unusable slug should never reach here, because the stage tool
-  // refuses it. If one does — an older row, or a plan edited after staging — this
-  // call throws SlugProblemError and the approval fails closed, which is the right
-  // failure: no receipt over a page whose path nobody can publish.
-  const actions = deriveActions(
-    { id: row.id, funnelPlan: row.funnel_plan, mediaPlan: row.media_plan },
-    artifacts,
-  )
+  // refuses it. If one does — an older row, or a plan edited after staging — the
+  // approval still fails closed: no receipt over a page whose path nobody can
+  // publish. resolveSite throws SlugProblemError, which is translated below to the
+  // refusal type applyDraft turns into an unapprovable answer; a raw throw would
+  // surface as a 500 instead.
+  let actions: DerivedAction[]
+  try {
+    actions = deriveActions(
+      { id: row.id, funnelPlan: row.funnel_plan, mediaPlan: row.media_plan },
+      artifacts,
+    )
+  } catch (err) {
+    if (err instanceof SlugProblemError) {
+      throw new BundleNotApprovableError(err.message)
+    }
+    throw err
+  }
 
   const publish = actions.find((a) => a.action === 'publish_page')
   const liveHash = typeof publish?.payload['siteHash'] === 'string' ? publish.payload['siteHash'] : null

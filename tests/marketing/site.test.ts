@@ -23,6 +23,31 @@ describe('slugProblem', () => {
     expect(problem).toContain('Free Quote')
     expect(problem).toContain('63 characters')
   })
+
+  it.each([
+    'physio-melbourne',
+    's',
+    'a'.repeat(63),
+    '9-lives',
+    '',
+    'Free Quote',
+    'Free-Scan',
+    '../x',
+    'a/b',
+    'a'.repeat(64),
+    '-x',
+    '.x',
+    'x:y',
+    'x\n',
+    ' x',
+  ])('agrees with resolveSite on whether %j can be published', (slug) => {
+    // One table, both spellings of the same predicate: the stage tool asks
+    // slugProblem and the manifest asks resolveSite. If either is edited alone,
+    // some row here flips and the pair stops answering one question.
+    const attempt = () => resolveSite(slug, [])
+    if (slugProblem(slug) === null) expect(attempt).not.toThrow()
+    else expect(attempt).toThrow(SlugProblemError)
+  })
 })
 
 describe('slotProblem', () => {

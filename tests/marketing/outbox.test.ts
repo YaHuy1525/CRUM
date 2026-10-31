@@ -324,8 +324,23 @@ describe('slice 2 derivation', () => {
     expect(Object.keys(publish?.payload ?? {}).sort()).toEqual(['bundleId', 'siteHash', 'slug'])
   })
 
-  it('derives no publish when a slug exists but no page_html does', () => {
+  it('derives no publish when the bundle has no artifacts at all', () => {
     expect(deriveActions(bundleWithPage, [])).toEqual([])
+  })
+
+  it('publishes a thank-you page on its own, because the file set is what is approved', () => {
+    // Surprising but not wrong: derivation publishes the files resolveSite
+    // returns, and a thank_you_html is a file at <slug>/thanks/index.html. The
+    // hash the reviewer approves covers exactly that file, so nothing
+    // unapproved is published; there is simply no landing page at the slug.
+    const thanks = [{ id: 'a1', kind: 'thank_you_html', textContent: '<p>thanks</p>' }]
+    const [publish] = deriveActions(bundleWithPage, thanks)
+    expect(publish?.action).toBe('publish_page')
+    expect(publish?.payload).toEqual({
+      bundleId: 'b1',
+      slug: 'physio',
+      siteHash: siteHashOf(resolveSite('physio', thanks)),
+    })
   })
 
   it('answers the same siteHash for the same bytes', () => {

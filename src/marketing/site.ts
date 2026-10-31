@@ -93,6 +93,16 @@ export function slotProblem(artifacts: readonly SiteArtifact[]): string | null {
 }
 
 /**
+ * The publishability decision in one place. slugProblem answers it in text for
+ * the stage tool, and resolveSite throws on the same answer; a second spelling
+ * of the pattern here would let a slug pass the refusal and still fail the
+ * manifest, or the reverse.
+ */
+function slugIsPublishable(slug: string): boolean {
+  return SLUG_PATTERN.test(slug)
+}
+
+/**
  * The slug question in text for the same reason slotProblem answers in text: the
  * stage tool wants to refuse and report in a sentence a human can act on, not
  * throw inside an agent turn. A null slug is an understood plan — a bundle with
@@ -100,7 +110,7 @@ export function slotProblem(artifacts: readonly SiteArtifact[]): string | null {
  * problem.
  */
 export function slugProblem(slug: string | null): string | null {
-  if (slug === null || SLUG_PATTERN.test(slug)) return null
+  if (slug === null || slugIsPublishable(slug)) return null
   return new SlugProblemError(slug).message
 }
 
@@ -111,7 +121,7 @@ export function slugProblem(slug: string | null): string | null {
  * the site hash are built from it, and it is a phrase an agent wrote.
  */
 export function resolveSite(slug: string, artifacts: readonly SiteArtifact[]): SiteFile[] {
-  if (!SLUG_PATTERN.test(slug)) throw new SlugProblemError(slug)
+  if (!slugIsPublishable(slug)) throw new SlugProblemError(slug)
   const files: SiteFile[] = []
   for (const slot of SITE_SLOTS) {
     const rows = ofKind(artifacts, slot.kind)
