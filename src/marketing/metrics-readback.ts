@@ -78,21 +78,22 @@ export async function readCampaignMetrics(
     )
   }
 
-  const json = await response.json()
+  const json = (await response.json()) as Record<string, unknown>
 
   if (!response.ok) {
+    const errObj = json.error as Record<string, unknown> | undefined
     return {
       data: [],
       error: {
         httpStatus: response.status,
-        message: json.error?.message ?? 'Unknown error',
-        type: json.error?.type,
-        code: json.error?.code,
+        message: (errObj?.message as string) ?? 'Unknown error',
+        type: errObj?.type as string | undefined,
+        code: errObj?.code as number | undefined,
       },
     }
   }
 
   return {
-    data: json.data ?? [],
+    data: ((json.data as unknown[]) ?? []) as MetricsInsightRow[],
   }
 }

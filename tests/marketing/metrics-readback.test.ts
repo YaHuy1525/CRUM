@@ -16,7 +16,7 @@ describe('readCampaignMetrics', () => {
   it('calls the Meta Insights API with the correct query params', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({
+      json: () => ({
         data: [
           {
             campaign_name: 'Free Scan - Brisbane - Oct 2026',
@@ -40,7 +40,7 @@ describe('readCampaignMetrics', () => {
     })
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
-    const url = fetchMock.mock.calls[0][0] as string
+    const url = fetchMock.mock.calls[0]![0] as string
     expect(url).toContain('graph.facebook.com/v18.0/act_123456/insights')
     expect(url).toContain('level=campaign')
     expect(url).toContain('time_increment=1')
@@ -52,9 +52,9 @@ describe('readCampaignMetrics', () => {
     expect(url).toContain('time_range=')
 
     expect(result.data).toHaveLength(1)
-    expect(result.data[0].campaign_name).toBe('Free Scan - Brisbane - Oct 2026')
-    expect(result.data[0].impressions).toBe('1234')
-    expect(result.data[0].actions).toHaveLength(2)
+    expect(result.data[0]!.campaign_name).toBe('Free Scan - Brisbane - Oct 2026')
+    expect(result.data[0]!.impressions).toBe('1234')
+    expect(result.data[0]!.actions).toHaveLength(2)
     expect(result.error).toBeUndefined()
   })
 
@@ -62,7 +62,7 @@ describe('readCampaignMetrics', () => {
     fetchMock.mockResolvedValueOnce({
       ok: false,
       status: 400,
-      json: async () => ({
+      json: () => ({
         error: {
           message: 'Invalid ad account',
           type: 'OAuthException',
@@ -99,12 +99,12 @@ describe('readCampaignMetrics', () => {
   it('uses a default 7-day time range when none is provided', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ data: [] }),
+      json: () => ({ data: [] }),
     })
 
     await readCampaignMetrics('123456', config)
 
-    const url = fetchMock.mock.calls[0][0] as string
+    const url = fetchMock.mock.calls[0]![0] as string
     expect(url).toContain('time_range=')
     // The URL must carry since and until dates; we do not pin exact dates
     // because the clock moves, but the keys must be present.
@@ -116,7 +116,7 @@ describe('readCampaignMetrics', () => {
   it('returns an empty data array when Meta responds with no rows', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ data: [] }),
+      json: () => ({ data: [] }),
     })
 
     const result = await readCampaignMetrics('123456', config, {

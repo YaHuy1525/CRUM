@@ -57,14 +57,14 @@ describe('insertSnapshot', () => {
 
     const [call] = calls('INSERT INTO marketing_metrics_snapshots')
     expect(call).toBeDefined()
-    expect(call.sql).toContain('tenant_id')
-    expect(call.sql).toContain('bundle_id')
-    expect(call.sql).toContain('campaign_external_id')
-    expect(call.sql).toContain('window_start')
-    expect(call.sql).toContain('window_end')
-    expect(call.sql).toContain('metrics')
-    expect(call.sql).toContain('RETURNING')
-    expect(call.params).toEqual([
+    expect(call!.sql).toContain('tenant_id')
+    expect(call!.sql).toContain('bundle_id')
+    expect(call!.sql).toContain('campaign_external_id')
+    expect(call!.sql).toContain('window_start')
+    expect(call!.sql).toContain('window_end')
+    expect(call!.sql).toContain('metrics')
+    expect(call!.sql).toContain('RETURNING')
+    expect(call!.params).toEqual([
       TENANT,
       BUNDLE,
       CAMPAIGN_ID,
@@ -103,8 +103,8 @@ describe('insertSnapshot', () => {
     )
 
     const [call] = calls('INSERT INTO marketing_metrics_snapshots')
-    expect(call.params[3]).toBe('2026-10-24T00:00:00.000Z')
-    expect(call.params[4]).toBe('2026-10-31T00:00:00.000Z')
+    expect(call!.params[3]).toBe('2026-10-24T00:00:00.000Z')
+    expect(call!.params[4]).toBe('2026-10-31T00:00:00.000Z')
   })
 })
 
@@ -139,12 +139,12 @@ describe('listSnapshots', () => {
     const rows = await listSnapshots(TENANT, CAMPAIGN_ID)
 
     const [call] = calls('FROM marketing_metrics_snapshots')
-    expect(call.sql).toContain('tenant_id = $1')
-    expect(call.sql).toContain('campaign_external_id = $2')
-    expect(call.sql).toContain('ORDER BY window_start DESC')
-    expect(call.params).toEqual([TENANT, CAMPAIGN_ID])
+    expect(call!.sql).toContain('tenant_id = $1')
+    expect(call!.sql).toContain('campaign_external_id = $2')
+    expect(call!.sql).toContain('ORDER BY window_start DESC')
+    expect(call!.params).toEqual([TENANT, CAMPAIGN_ID])
     expect(rows).toHaveLength(2)
-    expect(rows[0].windowStart).toBe('2026-10-31T00:00:00.000Z')
+    expect(rows[0]!.windowStart).toBe('2026-10-31T00:00:00.000Z')
   })
 
   it('applies a LIMIT when provided', async () => {
@@ -154,8 +154,8 @@ describe('listSnapshots', () => {
     await listSnapshots(TENANT, CAMPAIGN_ID, 5)
 
     const [call] = calls('FROM marketing_metrics_snapshots')
-    expect(call.sql).toContain('LIMIT $3')
-    expect(call.params).toEqual([TENANT, CAMPAIGN_ID, 5])
+    expect(call!.sql).toContain('LIMIT $3')
+    expect(call!.params).toEqual([TENANT, CAMPAIGN_ID, 5])
   })
 
   it('returns an empty array when no snapshots match', async () => {
@@ -189,12 +189,12 @@ describe('listRecentSnapshots', () => {
     const rows = await listRecentSnapshots(TENANT, 7)
 
     const [call] = calls('FROM marketing_metrics_snapshots')
-    expect(call.sql).toContain('tenant_id = $1')
-    expect(call.sql).toContain('window_start >=')
-    expect(call.sql).toContain("' days')::interval")
-    expect(call.params).toEqual([TENANT, 7])
+    expect(call!.sql).toContain('tenant_id = $1')
+    expect(call!.sql).toContain('window_start >=')
+    expect(call!.sql).toContain("' days')::interval")
+    expect(call!.params).toEqual([TENANT, 7])
     expect(rows).toHaveLength(1)
-    expect(rows[0].campaignExternalId).toBe(CAMPAIGN_ID)
+    expect(rows[0]!.campaignExternalId).toBe(CAMPAIGN_ID)
   })
 
   it('returns an empty array when no recent snapshots exist', async () => {

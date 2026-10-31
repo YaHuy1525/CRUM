@@ -21,7 +21,18 @@ export function buildCrumMemory(
     // OM observation indexing goes silent and memory.searchMessages throws
     // (research doc §4; the GET /api/agent/search route answers 503 instead).
     ...(env.CRUM_RECALL_ENABLED && recall
-      ? { vector: recall.vector, embedder: recall.embedder }
+      ? {
+          vector: recall.vector,
+          embedder: recall.embedder,
+          // Takes the embedding provider out of the turn-critical path: without a
+          // declared dimension, both processor builders embed a probe string on
+          // every turn and a network failure there aborts the turn (the throw is
+          // outside SemanticRecall's own try/catch). RecallDeps.embeddingDimension
+          // documents the evidence; omitted when unknown, which restores the probe.
+          ...(recall.embeddingDimension !== undefined
+            ? { embeddingDimension: recall.embeddingDimension }
+            : {}),
+        }
       : {}),
     options: {
       messageHistory: {

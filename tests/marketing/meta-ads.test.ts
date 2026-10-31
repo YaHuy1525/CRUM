@@ -1,5 +1,5 @@
 // tests/marketing/meta-ads.test.ts
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { makeCreateCampaignAdapter, makeSetCampaignStatusAdapter } from '../../src/marketing/meta-ads'
 
 describe('makeCreateCampaignAdapter', () => {
@@ -57,7 +57,7 @@ describe('makeCreateCampaignAdapter', () => {
   it('calls the Meta API with the right payload', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({
+      json: () => ({
         id: '23842653876',
         account_id: 'act_123',
         status: 'PAUSED',
@@ -89,7 +89,7 @@ describe('makeCreateCampaignAdapter', () => {
       }),
     )
 
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    const body = JSON.parse((fetchMock.mock.calls[0]![1] as Record<string, unknown>).body as string) as Record<string, unknown>
     expect(body.name).toBe('Test Campaign')
     expect(body.objective).toBe('LEAD_GENERATION')
     expect(body.status).toBe('PAUSED')
@@ -100,7 +100,7 @@ describe('makeCreateCampaignAdapter', () => {
   it('stores the Meta API response in result', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({
+      json: () => ({
         id: '23842653876',
         account_id: 'act_123',
         status: 'PAUSED',
@@ -134,7 +134,7 @@ describe('makeCreateCampaignAdapter', () => {
     fetchMock.mockResolvedValueOnce({
       ok: false,
       status: 400,
-      json: async () => ({
+      json: () => ({
         error: {
           message: 'Invalid parameter',
           type: 'OAuthException',
@@ -154,7 +154,7 @@ describe('makeCreateCampaignAdapter', () => {
       },
     }
 
-    const result = await adapter.execute(action, { tenantId: 'tenant-1' })
+    const result = await adapter.execute(action, { tenantId: 'tenant-1' }) as unknown as { error?: { httpStatus: number; message: string; type: string; code: number } }
 
     expect(result.error).toEqual({
       httpStatus: 400,
@@ -169,6 +169,7 @@ describe('makeSetCampaignStatusAdapter', () => {
   const fetchMock = vi.fn()
   const adapter = makeSetCampaignStatusAdapter({
     accessToken: 'test-token',
+    adAccounts: ['act_123'],
     fetchImpl: fetchMock,
   })
 
@@ -183,7 +184,7 @@ describe('makeSetCampaignStatusAdapter', () => {
   it('calls the Meta API with the right payload', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({
+      json: () => ({
         success: true,
       }),
     })
@@ -206,7 +207,7 @@ describe('makeSetCampaignStatusAdapter', () => {
       }),
     )
 
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    const body = JSON.parse((fetchMock.mock.calls[0]![1] as Record<string, unknown>).body as string) as Record<string, unknown>
     expect(body.status).toBe('ACTIVE')
 
     expect(result).toEqual({

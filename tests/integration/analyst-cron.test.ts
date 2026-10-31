@@ -118,7 +118,7 @@ describe.skipIf(!url)('analyst cron', () => {
     const { runAnalystCron } = await import('../../scripts/analyst-cron')
     const result = await runAnalystCron({
       tenantId: TENANT,
-      invokeAgent: async () => '{"recommendation":"hold","threshold":"","message":"no campaigns","campaigns":[]}',
+      invokeAgent: () => Promise.resolve('{"recommendation":"hold","threshold":"","message":"no campaigns","campaigns":[]}'),
     })
 
     expect(result.campaignsProcessed).toBe(0)
@@ -173,9 +173,9 @@ describe.skipIf(!url)('analyst cron', () => {
     let capturedInput: unknown = null
     await runAnalystCron({
       tenantId: TENANT,
-      invokeAgent: async (input) => {
+      invokeAgent: (input) => {
         capturedInput = input
-        return '{"recommendation":"hold","threshold":"","message":"ok","campaigns":[{"bundleId":"' + BUNDLE_A + '","campaignId":"' + CAMPAIGN_A + '","recommendation":"hold","reason":"ok"}]}'
+        return Promise.resolve('{"recommendation":"hold","threshold":"","message":"ok","campaigns":[{"bundleId":"' + BUNDLE_A + '","campaignId":"' + CAMPAIGN_A + '","recommendation":"hold","reason":"ok"}]}')
       },
     })
 
@@ -195,9 +195,9 @@ describe.skipIf(!url)('analyst cron', () => {
 
     await runAnalystCron({
       tenantId: TENANT,
-      invokeAgent: async (input) => {
+      invokeAgent: (input) => {
         capturedInput = input
-        return '{"recommendation":"hold","threshold":"","message":"ok","campaigns":[]}'
+        return Promise.resolve('{"recommendation":"hold","threshold":"","message":"ok","campaigns":[]}')
       },
     })
 
@@ -217,8 +217,8 @@ describe.skipIf(!url)('analyst cron', () => {
     const { runAnalystCron } = await import('../../scripts/analyst-cron')
     const result = await runAnalystCron({
       tenantId: TENANT,
-      invokeAgent: async () =>
-        '{"recommendation":"scale","threshold":"cost_per_lead_below_5","message":"Scale it","campaigns":[{"bundleId":"' + BUNDLE_A + '","campaignId":"' + CAMPAIGN_A + '","recommendation":"scale","reason":"cost_per_lead_below_5"}]}',
+      invokeAgent: () =>
+        Promise.resolve('{"recommendation":"scale","threshold":"cost_per_lead_below_5","message":"Scale it","campaigns":[{"bundleId":"' + BUNDLE_A + '","campaignId":"' + CAMPAIGN_A + '","recommendation":"scale","reason":"cost_per_lead_below_5"}]}'),
     })
 
     expect(result.stagedDrafts.length).toBe(1)
@@ -236,8 +236,8 @@ describe.skipIf(!url)('analyst cron', () => {
     const { runAnalystCron } = await import('../../scripts/analyst-cron')
     const result = await runAnalystCron({
       tenantId: TENANT,
-      invokeAgent: async () =>
-        '{"recommendation":"kill","threshold":"cost_per_lead_above_20","message":"Kill it","campaigns":[{"bundleId":"' + BUNDLE_B + '","campaignId":"' + CAMPAIGN_B + '","recommendation":"kill","reason":"cost_per_lead_above_20"}]}',
+      invokeAgent: () =>
+        Promise.resolve('{"recommendation":"kill","threshold":"cost_per_lead_above_20","message":"Kill it","campaigns":[{"bundleId":"' + BUNDLE_B + '","campaignId":"' + CAMPAIGN_B + '","recommendation":"kill","reason":"cost_per_lead_above_20"}]}'),
     })
 
     expect(result.stagedDrafts.length).toBe(1)
@@ -258,8 +258,8 @@ describe.skipIf(!url)('analyst cron', () => {
     const { runAnalystCron } = await import('../../scripts/analyst-cron')
     const result = await runAnalystCron({
       tenantId: TENANT,
-      invokeAgent: async () =>
-        '{"recommendation":"hold","threshold":"","message":"Looking good","campaigns":[{"bundleId":"' + BUNDLE_A + '","campaignId":"' + CAMPAIGN_A + '","recommendation":"hold","reason":"metrics_ok"}]}',
+      invokeAgent: () =>
+        Promise.resolve('{"recommendation":"hold","threshold":"","message":"Looking good","campaigns":[{"bundleId":"' + BUNDLE_A + '","campaignId":"' + CAMPAIGN_A + '","recommendation":"hold","reason":"metrics_ok"}]}'),
     })
 
     expect(result.stagedDrafts.length).toBe(0)
@@ -276,8 +276,8 @@ describe.skipIf(!url)('analyst cron', () => {
     const { runAnalystCron } = await import('../../scripts/analyst-cron')
     const result = await runAnalystCron({
       tenantId: TENANT,
-      invokeAgent: async () => {
-        throw new Error('model_unavailable')
+      invokeAgent: () => {
+        return Promise.reject(new Error('model_unavailable'))
       },
     })
 

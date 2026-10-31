@@ -505,7 +505,7 @@ export async function listActiveCampaigns(tenantId: string): Promise<Array<{
         LIMIT 1`,
       [tenantId, row.campaignExternalId],
     )
-    if (statuses.rows.length === 0 || statuses.rows[0].status === 'ACTIVE') {
+    if (statuses.rows.length === 0 || statuses.rows[0]?.status === 'ACTIVE') {
       active.push({
         bundleId: row.bundle_id,
         campaignExternalId: row.campaignExternalId,

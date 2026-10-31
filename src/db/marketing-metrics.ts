@@ -70,7 +70,10 @@ export async function insertSnapshot(
       JSON.stringify(metrics),
     ],
   )
-  return toSnapshot(result.rows[0])
+  if (result.rows.length === 0) {
+    throw new Error('insertSnapshot: no row returned')
+  }
+  return toSnapshot(result.rows[0]!)
 }
 
 /**

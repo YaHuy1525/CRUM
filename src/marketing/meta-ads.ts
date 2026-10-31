@@ -61,7 +61,7 @@ export function makeCreateCampaignAdapter(config: MetaAdsConfig): MarketingActio
   return {
     name: 'create_campaign',
     async execute(action: DerivedAction, _context: ActionContext): Promise<CreateCampaignResult> {
-      const payload = action.payload as CreateCampaignPayload
+      const payload = action.payload as unknown as CreateCampaignPayload
 
       if (!payload.startPaused) {
         throw new CampaignMustBePausedError()
@@ -87,9 +87,10 @@ export function makeCreateCampaignAdapter(config: MetaAdsConfig): MarketingActio
         body: JSON.stringify(body),
       })
 
-      const json = await response.json()
+      const json = (await response.json()) as Record<string, unknown>
 
       if (!response.ok) {
+        const errObj = json.error as Record<string, unknown> | undefined
         return {
           externalId: '',
           campaignId: '',
@@ -98,19 +99,19 @@ export function makeCreateCampaignAdapter(config: MetaAdsConfig): MarketingActio
           createdTime: new Date().toISOString(),
           error: {
             httpStatus: response.status,
-            message: json.error?.message ?? 'Unknown error',
-            type: json.error?.type,
-            code: json.error?.code,
+            message: (errObj?.message as string) ?? 'Unknown error',
+            type: errObj?.type as string | undefined,
+            code: errObj?.code as number | undefined,
           },
         }
       }
 
       return {
-        externalId: json.id,
-        campaignId: json.id,
-        accountId: json.account_id ?? payload.adAccountId,
-        status: json.status ?? 'PAUSED',
-        createdTime: json.created_time ?? new Date().toISOString(),
+        externalId: json.id as string,
+        campaignId: json.id as string,
+        accountId: (json.account_id as string) ?? payload.adAccountId,
+        status: (json.status as string) ?? 'PAUSED',
+        createdTime: (json.created_time as string) ?? new Date().toISOString(),
       }
     },
   }
@@ -122,6 +123,7 @@ export interface SetCampaignStatusPayload {
 }
 
 export interface SetCampaignStatusResult {
+  externalId: string
   success: boolean
   previousStatus: string
   newStatus: string
@@ -137,7 +139,7 @@ export function makeSetCampaignStatusAdapter(config: MetaAdsConfig): MarketingAc
       action: DerivedAction,
       _context: ActionContext,
     ): Promise<SetCampaignStatusResult> {
-      const payload = action.payload as SetCampaignStatusPayload
+      const payload = action.payload as unknown as SetCampaignStatusPayload
 
       const url = `${META_API_BASE}/${payload.campaignId}`
       const body = {
@@ -152,24 +154,27 @@ export function makeSetCampaignStatusAdapter(config: MetaAdsConfig): MarketingAc
         body: JSON.stringify(body),
       })
 
-      const json = await response.json()
+      const json = (await response.json()) as Record<string, unknown>
 
       if (!response.ok) {
+        const errObj = json.error as Record<string, unknown> | undefined
         return {
+          externalId: payload.campaignId,
           success: false,
           previousStatus: 'UNKNOWN',
           newStatus: payload.status,
           error: {
             httpStatus: response.status,
-            message: json.error?.message ?? 'Unknown error',
-            type: json.error?.type,
-            code: json.error?.code,
+            message: (errObj?.message as string) ?? 'Unknown error',
+            type: errObj?.type as string | undefined,
+            code: errObj?.code as number | undefined,
           },
         }
       }
 
       return {
-        success: json.success ?? true,
+        externalId: payload.campaignId,
+        success: (json.success as boolean) ?? true,
         previousStatus: 'PAUSED',
         newStatus: payload.status,
       }

@@ -10,12 +10,12 @@ vi.mock('../../src/db/client', () => ({
 
 vi.mock('../../src/db/pending-writes', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/db/pending-writes')>()),
-  getOrCreateDraft: (...args: unknown[]) => mockGetOrCreateDraft(...args),
+  getOrCreateDraft: (...args: unknown[]): Promise<unknown> => mockGetOrCreateDraft(...args) as Promise<unknown>,
 }))
 
 vi.mock('../../src/governance/policy', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/governance/policy')>()),
-  loadPolicy: (...args: unknown[]) => mockLoadPolicy(...args),
+  loadPolicy: (...args: unknown[]): unknown => mockLoadPolicy(...args) as unknown,
 }))
 
 import { stageCampaignStatusChange } from '../../src/mastra/tools/marketing-writes'

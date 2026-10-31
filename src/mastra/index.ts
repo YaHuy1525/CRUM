@@ -148,7 +148,7 @@ export function createCrumMastra(env: CrumEnv, options: CrumMastraOptions = {}):
   if (metaToken && metaAccountsRaw) {
     let adAccounts: string[]
     try {
-      const parsed = JSON.parse(metaAccountsRaw)
+      const parsed: unknown = JSON.parse(metaAccountsRaw)
       if (!Array.isArray(parsed) || !parsed.every((a) => typeof a === 'string')) {
         throw new Error('CRUM_META_AD_ACCOUNTS must be a JSON array of strings')
       }

@@ -18,7 +18,7 @@ describe.skipIf(!url)('migration 0020: marketing_metrics_snapshots', () => {
   })
 
   it('creates the marketing_metrics_snapshots table with the right columns', async () => {
-    const { rows } = await pool.query(`
+    const { rows } = await pool.query<Record<string, string>>(`
       SELECT column_name, data_type, udt_name, is_nullable
       FROM information_schema.columns
       WHERE table_name = 'marketing_metrics_snapshots'
@@ -49,13 +49,13 @@ describe.skipIf(!url)('migration 0020: marketing_metrics_snapshots', () => {
   })
 
   it('has a primary key on id', async () => {
-    const { rows } = await pool.query(`
+    const { rows } = await pool.query<Record<string, string>>(`
       SELECT conname, contype
       FROM pg_constraint
       WHERE conrelid = 'marketing_metrics_snapshots'::regclass
         AND contype = 'p'
     `)
     expect(rows).toHaveLength(1)
-    expect(rows[0].conname).toMatch(/^pk_marketing_metrics_snapshots/)
+    expect(rows[0]!.conname).toMatch(/^pk_marketing_metrics_snapshots/)
   })
 })

@@ -27,11 +27,11 @@ const SAMPLE_CONFIG: ConversionsApiConfig = {
   accessToken: 'test-access-token',
 }
 
-function makeFetchMock(status: number, body: Record<string, unknown>): ReturnType<typeof vi.fn> {
+function _makeFetchMock(status: number, body: Record<string, unknown>): ReturnType<typeof vi.fn> {
   return vi.fn().mockResolvedValueOnce({
     ok: status >= 200 && status < 300,
     status,
-    json: async () => body,
+    json: () => body,
   })
 }
 
@@ -115,7 +115,7 @@ describe('sendConversionEvent', () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      json: async () => ({ events_received: 1 }),
+      json: () => ({ events_received: 1 }),
     })
 
     await sendConversionEvent(
@@ -125,19 +125,19 @@ describe('sendConversionEvent', () => {
     )
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
-    const [url, opts] = fetchMock.mock.calls[0]!
+    const [url, opts] = fetchMock.mock.calls[0]! as [string, Record<string, unknown>]
     expect(url).toBe(
       'https://graph.facebook.com/v18.0/999888777/events?access_token=test-access-token',
     )
     expect(opts.method).toBe('POST')
-    expect(opts.headers['Content-Type']).toBe('application/json')
+    expect((opts.headers as Record<string, unknown>)['Content-Type']).toBe('application/json')
   })
 
   it('sends the event wrapped in a data array', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      json: async () => ({ events_received: 1 }),
+      json: () => ({ events_received: 1 }),
     })
 
     await sendConversionEvent(
@@ -146,18 +146,18 @@ describe('sendConversionEvent', () => {
       logger,
     )
 
-    const body = JSON.parse(fetchMock.mock.calls[0]![1].body)
+    const body = JSON.parse((fetchMock.mock.calls[0]![1] as Record<string, unknown>).body as string) as Record<string, unknown>
     expect(body).toHaveProperty('data')
     expect(Array.isArray(body.data)).toBe(true)
     expect(body.data).toHaveLength(1)
-    expect(body.data[0].event_id).toBe('tok-abc-123')
+    expect((body.data as Array<Record<string, unknown>>)[0]!.event_id).toBe('tok-abc-123')
   })
 
   it('returns ok true and events_received on success', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      json: async () => ({ events_received: 1 }),
+      json: () => ({ events_received: 1 }),
     })
 
     const result = await sendConversionEvent(
@@ -189,7 +189,7 @@ describe('sendConversionEvent', () => {
     fetchMock.mockResolvedValueOnce({
       ok: false,
       status: 400,
-      json: async () => ({
+      json: () => ({
         error: { message: 'Invalid parameter', type: 'OAuthException', code: 100 },
       }),
     })
@@ -213,7 +213,7 @@ describe('sendConversionEvent', () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      json: async () => { throw new SyntaxError('unexpected token') },
+      json: () => { throw new SyntaxError('unexpected token') },
     })
 
     const result = await sendConversionEvent(
@@ -230,7 +230,7 @@ describe('sendConversionEvent', () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      json: async () => ({ events_received: 1 }),
+      json: () => ({ events_received: 1 }),
     })
 
     await sendConversionEvent(
@@ -239,8 +239,8 @@ describe('sendConversionEvent', () => {
       logger,
     )
 
-    const body = JSON.parse(fetchMock.mock.calls[0]![1].body)
-    expect(body.data[0].event_id).toBe(SAMPLE_INPUT.leadToken)
+    const body = JSON.parse((fetchMock.mock.calls[0]![1] as Record<string, unknown>).body as string) as Record<string, unknown>
+    expect((body.data as Array<Record<string, unknown>>)[0]!.event_id).toBe(SAMPLE_INPUT.leadToken)
   })
 })
 
@@ -256,8 +256,8 @@ describe('sendConversionEvent — parallel execution', () => {
           resolve({
             ok: true,
             status: 200,
-            json: async () => ({ events_received: 1 }),
-          } as Response)
+            json: () => ({ events_received: 1 }),
+          } as unknown as Response)
         }, 50)
       })
     })

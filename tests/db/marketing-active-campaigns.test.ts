@@ -55,12 +55,12 @@ describe('listActiveCampaigns', () => {
 
     const createCalls = calls("action = 'create_campaign'")
     expect(createCalls).toHaveLength(1)
-    expect(createCalls[0].sql).toContain("status = 'succeeded'")
-    expect(createCalls[0].params).toEqual([TENANT])
+    expect(createCalls[0]!.sql).toContain("status = 'succeeded'")
+    expect(createCalls[0]!.params).toEqual([TENANT])
 
     const statusCalls = calls("action = 'set_campaign_status'")
     expect(statusCalls).toHaveLength(1)
-    expect(statusCalls[0].params).toEqual([TENANT, CAMPAIGN_A])
+    expect(statusCalls[0]!.params).toEqual([TENANT, CAMPAIGN_A])
   })
 
   it('returns campaigns whose most recent status is ACTIVE', async () => {
@@ -87,8 +87,8 @@ describe('listActiveCampaigns', () => {
 
     const statusCalls = calls("action = 'set_campaign_status'")
     expect(statusCalls).toHaveLength(1)
-    expect(statusCalls[0].sql).toContain('ORDER BY created_at DESC')
-    expect(statusCalls[0].sql).toContain('LIMIT 1')
+    expect(statusCalls[0]!.sql).toContain('ORDER BY created_at DESC')
+    expect(statusCalls[0]!.sql).toContain('LIMIT 1')
   })
 
   it('excludes campaigns whose most recent status is PAUSED', async () => {

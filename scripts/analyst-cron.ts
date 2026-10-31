@@ -75,7 +75,7 @@ function extractMetricsFromSnapshot(snapshot: MetricsSnapshotRow): {
   if (Array.isArray(raw)) {
     dataArr = raw
   } else {
-    const inner = (raw as Record<string, unknown>).data
+    const inner = raw.data
     dataArr = Array.isArray(inner) ? inner : []
   }
 
