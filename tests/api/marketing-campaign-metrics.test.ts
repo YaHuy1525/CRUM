@@ -36,6 +36,7 @@ vi.mock('../../src/mastra/tools/marketing-writes', () => ({
 
 import { createMarketingRouter } from '../../src/api/marketing'
 import { parseEnv } from '../../src/config/env'
+import type { CampaignMetrics } from '../../console/lib/types'
 
 const TENANT = '11111111-1111-4111-8111-111111111111'
 const USER = '22222222-2222-4222-8222-222222222222'
@@ -77,7 +78,7 @@ describe('GET /api/marketing/campaign-metrics', () => {
     metricsDb.listRecentSnapshots.mockResolvedValue([])
     const res = await fetchMetrics()
     expect(res.status).toBe(200)
-    const body = await res.json()
+    const body = await res.json() as { items: CampaignMetrics[] }
     expect(body).toEqual({ items: [] })
     expect(db.listAllCampaigns).toHaveBeenCalledWith(TENANT)
     expect(metricsDb.listRecentSnapshots).toHaveBeenCalledWith(TENANT, 7)
@@ -117,10 +118,10 @@ describe('GET /api/marketing/campaign-metrics', () => {
 
     const res = await fetchMetrics()
     expect(res.status).toBe(200)
-    const body = await res.json()
+    const body = await res.json() as { items: CampaignMetrics[] }
     expect(body.items).toHaveLength(1)
 
-    const item = body.items[0]
+    const item = body.items[0]!
     expect(item.bundleId).toBe(BUNDLE)
     expect(item.campaignExternalId).toBe(CAMPAIGN_EXT)
     expect(item.campaignName).toBe('Winter outreach')
@@ -149,8 +150,8 @@ describe('GET /api/marketing/campaign-metrics', () => {
 
     const res = await fetchMetrics()
     expect(res.status).toBe(200)
-    const body = await res.json()
-    const item = body.items[0]
+    const body = await res.json() as { items: CampaignMetrics[] }
+    const item = body.items[0]!
     expect(item.impressions).toBe(0)
     expect(item.clicks).toBe(0)
     expect(item.spend).toBe(0)
@@ -179,8 +180,8 @@ describe('GET /api/marketing/campaign-metrics', () => {
 
     const res = await fetchMetrics()
     expect(res.status).toBe(200)
-    const body = await res.json()
-    expect(body.items[0].recommendation).toBe('scale')
+    const body = await res.json() as { items: CampaignMetrics[] }
+    expect(body.items[0]!.recommendation).toBe('scale')
   })
 
   it('returns null recommendation when the campaign is not in the analysis', async () => {
@@ -201,8 +202,8 @@ describe('GET /api/marketing/campaign-metrics', () => {
 
     const res = await fetchMetrics()
     expect(res.status).toBe(200)
-    const body = await res.json()
-    expect(body.items[0].recommendation).toBeNull()
+    const body = await res.json() as { items: CampaignMetrics[] }
+    expect(body.items[0]!.recommendation).toBeNull()
   })
 
   it('handles multiple campaigns in one response', async () => {
@@ -239,11 +240,11 @@ describe('GET /api/marketing/campaign-metrics', () => {
 
     const res = await fetchMetrics()
     expect(res.status).toBe(200)
-    const body = await res.json()
+    const body = await res.json() as { items: CampaignMetrics[] }
     expect(body.items).toHaveLength(2)
-    expect(body.items[0].campaignExternalId).toBe('camp_1')
-    expect(body.items[0].impressions).toBe(500)
-    expect(body.items[1].campaignExternalId).toBe('camp_2')
-    expect(body.items[1].impressions).toBe(0)
+    expect(body.items[0]!.campaignExternalId).toBe('camp_1')
+    expect(body.items[0]!.impressions).toBe(500)
+    expect(body.items[1]!.campaignExternalId).toBe('camp_2')
+    expect(body.items[1]!.impressions).toBe(0)
   })
 })
