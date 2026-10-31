@@ -1,7 +1,7 @@
 import { getDbClient } from './client'
 import { signReceipt, computeActionHash } from '../governance/receipt'
 import { dismissMergeCandidate, mergeProspects } from './prospect-merge'
-import { BundleNotApprovableError, commitBundleApproval } from '../marketing/outbox'
+import { BundleNotApprovableError, commitBundleApproval, pageSlugOf } from '../marketing/outbox'
 
 export interface PendingWrite {
   id: string
@@ -361,29 +361,6 @@ async function deleteRow(
   return id
 }
 
-/**
- * The slug the drainer's adapter needs, and the one field the promote payload
- * may not carry: a slug is a phrase an agent wrote, and prose in a scored
- * payload moves the score (spec section 5). It is read from the bundle the
- * promotion names, inside the transaction that queues the promote, so the row
- * the publisher runs and the page the owner approved are the same bundle.
- */
-async function slugOfBundle(client: Queryable, tenantId: string, bundleId: string): Promise<string> {
-  const result = await client.query<{ slug: string | null }>(
-    `SELECT funnel_plan -> 'page' ->> 'slug' AS slug
-       FROM marketing_bundles
-      WHERE id = $1 AND tenant_id = $2`,
-    [bundleId, tenantId],
-  )
-  const slug = result.rows[0]?.slug ?? null
-  if (typeof slug !== 'string' || slug.length === 0) {
-    throw new UnsupportedCommitError(
-      `marketing_promote names bundle ${bundleId}, which has no page slug, so there is no page to put on the domain`,
-    )
-  }
-  return slug
-}
-
 function mapColumns(
   target: (typeof COMMIT_TARGETS)[string],
   payload: Record<string, unknown>,
@@ -516,19 +493,60 @@ async function applyDraft(
       throw new UnsupportedCommitError('marketing_promote must name a bundle, a publish action and its hash')
     }
     // The publish the reviewer approved the promotion of has to still be the
-    // succeeded publish this payload names. Re-read inside the transaction, like
-    // commitBundleApproval, because the payload is a claim about another row.
-    const check = await client.query<{ id: string; status: string; action: string }>(
-      `SELECT id, status, action FROM marketing_actions
+    // succeeded publish this payload names, with the URL and the hash the review
+    // rode on. Re-read inside the transaction, like commitBundleApproval,
+    // because the payload is a claim about another row: a URL that is gone, or
+    // bytes that now hash differently, must refuse here rather than sign a
+    // receipt over an action that could only be recorded as a failure.
+    const check = await client.query<{
+      id: string
+      payload: { siteHash?: unknown } | null
+      result: { url?: unknown } | null
+    }>(
+      `SELECT id, payload, result FROM marketing_actions
         WHERE id = $1 AND tenant_id = $2 AND bundle_id = $3 AND action = 'publish_page' AND status = 'succeeded'`,
       [pageActionId, draft.tenantId, bundleId],
     )
-    if (!check.rows[0]) {
+    const published = check.rows[0]
+    if (!published) {
       throw new UnsupportedCommitError(
         `marketing_promote names publish action ${pageActionId}, which is not a succeeded publish on bundle ${bundleId}`,
       )
     }
-    const slug = await slugOfBundle(client, draft.tenantId, bundleId)
+    const url = published.result?.url
+    if (typeof url !== 'string' || url.length === 0) {
+      throw new UnsupportedCommitError(
+        `marketing_promote names publish action ${pageActionId}, which reported no URL, so there is no preview to put on the domain`,
+      )
+    }
+    const publishedHash = typeof published.payload?.siteHash === 'string' ? published.payload.siteHash : null
+    if (publishedHash !== siteHash) {
+      throw new UnsupportedCommitError(
+        `marketing_promote carries hash ${siteHash}, but publish action ${pageActionId} published ` +
+          `${publishedHash ?? 'nothing'}, so the bytes the reviewer approved are not the bytes that went live`,
+      )
+    }
+    // The slug the drainer's adapter needs, and the one field the promote payload
+    // may not carry: a slug is a phrase an agent wrote, and prose in a scored
+    // payload moves the score (spec section 5). It is read from the bundle the
+    // promotion names, through the same reader the stage side uses, so a plan
+    // shape cannot be understood two ways in two places.
+    const bundleRow = await client.query<{ funnel_plan: unknown }>(
+      `SELECT funnel_plan FROM marketing_bundles WHERE id = $1 AND tenant_id = $2`,
+      [bundleId, draft.tenantId],
+    )
+    const bundle = bundleRow.rows[0]
+    if (!bundle) {
+      throw new UnsupportedCommitError(
+        `marketing_promote names bundle ${bundleId}, which this tenant cannot see`,
+      )
+    }
+    const slug = pageSlugOf({ funnelPlan: bundle.funnel_plan })
+    if (slug === null) {
+      throw new UnsupportedCommitError(
+        `marketing_promote names bundle ${bundleId}, which has no page slug, so there is no page to put on the domain`,
+      )
+    }
     // receipt_id is null on purpose, for the reason the marketing_stage branch
     // gives: the receipt is signed after applyDraft returns, so no id exists yet
     // and the drainer back-fills it.

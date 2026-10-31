@@ -36,7 +36,7 @@ import {
   unreadPlanColumns,
 } from '../../marketing/outbox'
 import { promotePayload, saveRiskView, stagePayload } from '../../marketing/payload'
-import { slugProblem } from '../../marketing/site'
+import { SlugProblemError, slugProblem } from '../../marketing/site'
 
 // One role output is a JSON document, not a fixed shape: each producer owns its
 // own contract and the columns exist so an audit can say which version of which
@@ -527,17 +527,28 @@ export const stageBundleTool = createTool({
 
 export type StagePromotionResult =
   | { ok: true; pendingWriteId: string; riskScore: number }
-  | { ok: false; reason: string }
+  // `message` is prose for the owner; `reason` stays the token a caller branches
+  // on. It exists because one token can cover two sentences: moved bytes and an
+  // unpublishable slug are both site_hash_moved, and only one of them is about
+  // the hash.
+  | { ok: false; reason: string; message?: string }
+
+// The id shape the uuid column needs. The tool's inputSchema already asks for a
+// uuid, but Task 12's REST route will pass a raw path parameter, and a value that
+// is not a uuid cannot be answered by a uuid column at all.
+const BUNDLE_ID_SHAPE = z.string().uuid()
 
 /**
  * The one implementation of "ask the owner to put that preview on the domain",
  * behind the Mastra tool here and Task 12's REST route. A second copy for HTTP
  * would be a second answer to the same governance question.
  *
- * `userRole` is threaded rather than hard-coded because `gateFor` reads the role
- * out of the request context: a promotion scored as 'admin' regardless of who
- * asked would report a different gate to the owner than the policy would apply.
- * Task 11's `stageRetry` takes the same parameter for the same reason.
+ * `userRole` is threaded rather than hard-coded so the signature is stable once
+ * `gateFor` consumes it. Today `src/governance/policy.ts` does `void context`
+ * and returns a gate that depends only on the score and the declared class: a
+ * promotion scored as 'admin' regardless of who asked would report a different
+ * gate to the owner than the policy would apply the day it reads a role. Task
+ * 11's `stageRetry` takes the same parameter for the same reason.
  */
 export async function stagePromotion(params: {
   tenantId: string
@@ -545,6 +556,10 @@ export async function stagePromotion(params: {
   userRole: string
   bundleId: string
 }): Promise<StagePromotionResult> {
+  if (!BUNDLE_ID_SHAPE.safeParse(params.bundleId).success) {
+    return { ok: false, reason: 'bad_bundle_id' }
+  }
+
   const bundle = await getMarketingBundle(params.tenantId, params.bundleId)
   if (!bundle) return { ok: false, reason: 'not_found' }
   // `live` is accepted because the owner may ask again for a page already on the
@@ -569,7 +584,25 @@ export async function stagePromotion(params: {
   // The same recomputation the bundle approval does, one step later: a promotion
   // authorises the bytes that are already on the preview URL, and if the bundle
   // was re-saved since, those bytes are not what the reviewer looked at.
-  const liveHash = await currentSiteHash(params.tenantId, params.bundleId)
+  let liveHash: string | null
+  try {
+    liveHash = await currentSiteHash(params.tenantId, params.bundleId)
+  } catch (err) {
+    // currentSiteHash resolves the slug through resolveSite, which throws rather
+    // than returns null when the slug cannot name a page. The approval path
+    // translates the same throw (src/marketing/outbox.ts:276-281). The token
+    // stays site_hash_moved because both answers mean the preview the reviewer
+    // saw is not publishable now; the message names the slug, because that is
+    // the part a human can fix.
+    if (err instanceof SlugProblemError) {
+      return {
+        ok: false,
+        reason: 'site_hash_moved',
+        message: 'the page slug cannot be published, so the preview bytes cannot be put on the domain',
+      }
+    }
+    throw err
+  }
   if (liveHash === null || liveHash !== pageAction.siteHash) {
     return { ok: false, reason: 'site_hash_moved' }
   }
@@ -632,7 +665,11 @@ export const promoteBundleTool = createTool({
       policy.risk,
       'marketing.promote_bundle',
     )
-    return policy.gateFor('marketing.promote_bundle', assessment, { requestContext }) === 'approval'
+    // The same plain record stagePromotion passes, not Mastra's context wrapper:
+    // `gateFor` declares a record, and one shape at both call sites is one thing
+    // to keep true when it starts reading the role.
+    const rc = requestContext?.all as Record<string, unknown> | undefined
+    return policy.gateFor('marketing.promote_bundle', assessment, { requestContext: rc }) === 'approval'
   },
 
   execute: async (input, context) =>
@@ -648,6 +685,7 @@ export const promoteBundleTool = createTool({
         // Refusing as a queue entry rather than a throw, the same way the stage
         // tool does: an owner reading a refusal can act on it, and a failed turn
         // leaves no record of why nothing went live.
+        const why = result.message ?? readableReason(result.reason)
         const humanTaskId = await createHumanTask(
           {
             tenantId: rc.tenantId,
@@ -655,7 +693,7 @@ export const promoteBundleTool = createTool({
             toolName: 'marketing.promote_bundle',
             riskScore: 0,
             title: `Refused promotion of bundle ${input.bundleId}`,
-            body: `Not staged: ${result.reason}. Nothing went live.`,
+            body: `Not staged: ${why}. Nothing went live.`,
             requestedBy: rc.userId,
           },
           'refusal',
@@ -664,7 +702,7 @@ export const promoteBundleTool = createTool({
           pendingWriteId: humanTaskId,
           riskScore: 0,
           gate: 'approval' as const,
-          message: `Promotion refused (${readableReason(result.reason)}). A human task was created; nothing is staged.`,
+          message: `Promotion refused (${why}). A human task was created; nothing is staged.`,
         }
       }
       return {

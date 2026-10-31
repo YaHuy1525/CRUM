@@ -249,6 +249,86 @@ describe.skipIf(!url)('publish drain against a local pages stand-in', () => {
   })
 
   /**
+   * The in-transaction re-read is the receipt's last chance to notice that the
+   * publish it names has changed since staging. The drainer would record such a
+   * promotion as a failure, but the receipt would still attest to an action that
+   * could never have succeeded; that is the signed lie the re-read prevents.
+   */
+  it('refuses to sign a promotion whose publish row moved after it was staged', async () => {
+    const db = getDbClient()
+    const unregisterPublish = registerActionAdapter(makePublishPageAdapter(config))
+    const unregisterPromote = registerActionAdapter(makePromotePageAdapter(config))
+    try {
+      const slug = 'physio-moved'
+      const bundle = await db.query<{ id: string }>(
+        `INSERT INTO marketing_bundles
+           (tenant_id, brief, objective, status, funnel_plan, prompt_version, draft_hash)
+         VALUES ($1, 'A brief long enough to pass the tool floor for this probe', 'inbound_leads',
+                 'staged', jsonb_build_object('page', jsonb_build_object('slug',$3::text)),
+                 'v1', $2)
+         RETURNING id`,
+        [TENANT, `probe-moved-${Date.now()}`, slug],
+      )
+      const bundleId = bundle.rows[0]!.id
+      await db.query(
+        `INSERT INTO marketing_artifacts (tenant_id, bundle_id, role, kind, text_content)
+         VALUES ($1, $2, 'funnel-builder', 'page_html', $3)`,
+        [TENANT, bundleId, PAGE_HTML],
+      )
+      await commitBundleApproval(db, {
+        tenantId: TENANT, bundleId, receiptId: null, expectedSiteHash: siteHashFor(slug),
+      })
+      expect((await drainOnce({ bundleId })).succeeded).toBe(1)
+
+      const publish = await db.query<{ id: string; payload: { siteHash: string } }>(
+        `SELECT id, payload FROM marketing_actions WHERE bundle_id = $1 AND action = 'publish_page'`,
+        [bundleId],
+      )
+      const publishRow = publish.rows[0]!
+      const staged = await stagePromotion({ tenantId: TENANT, userId: APPROVER, userRole: 'admin', bundleId })
+      if (!staged.ok) throw new Error(`expected a staged promotion, was refused with ${staged.reason}`)
+      const draft = await getPendingWrite(staged.pendingWriteId, TENANT)
+      if (!draft) throw new Error('the staged promotion draft is not visible to its own tenant')
+
+      // Bytes that moved under the review: the row still names a succeeded
+      // publish of this bundle, but no longer the hash the draft carries.
+      await db.query(
+        `UPDATE marketing_actions SET payload = jsonb_set(payload, '{siteHash}', to_jsonb($2::text)) WHERE id = $1`,
+        [publishRow.id, 'f'.repeat(64)],
+      )
+      await expect(
+        commitWithReceipt(draft, { approvedBy: APPROVER, scope: 'marketing:promote' }),
+      ).rejects.toThrow(/not the bytes that went live/)
+
+      // A publish that no longer reports a URL is the other refusal: the owner
+      // has no preview to click, so the promotion has nothing to point at.
+      await db.query(
+        `UPDATE marketing_actions
+            SET payload = jsonb_set(payload, '{siteHash}', to_jsonb($2::text)),
+                result = result - 'url'
+          WHERE id = $1`,
+        [publishRow.id, publishRow.payload.siteHash],
+      )
+      await expect(
+        commitWithReceipt(draft, { approvedBy: APPROVER, scope: 'marketing:promote' }),
+      ).rejects.toThrow(/reported no URL/)
+
+      const queued = await db.query<{ n: string }>(
+        `SELECT count(*) AS n FROM marketing_actions WHERE bundle_id = $1 AND action = 'promote_page'`,
+        [bundleId],
+      )
+      expect(Number(queued.rows[0]!.n)).toBe(0)
+      // Neither refusal signed anything, so the draft is still open.
+      expect((await getPendingWrite(staged.pendingWriteId, TENANT))?.receiptId).toBeNull()
+
+      await db.query('DELETE FROM marketing_bundles WHERE id = $1', [bundleId])
+    } finally {
+      unregisterPublish()
+      unregisterPromote()
+    }
+  })
+
+  /**
    * The preview-side half of "an action may not be approvable before it is
    * executable": a succeeded publish row that never reported a URL is not a
    * preview the owner has seen or can link, so there is no promotion to stage.
