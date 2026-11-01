@@ -41,6 +41,15 @@ export function parseAssetPrompts(textContent: string | null | undefined): Promp
     )
   }
 
+  // A bare `null` parses as valid JSON and answers null, and `null.assets` is a
+  // TypeError. This function's contract is a refusal the tool can turn into a
+  // code the owner reads; an exception instead is an agent turn dying.
+  if (parsed === null || typeof parsed !== 'object') {
+    return unparsable(
+      `designer artifact is JSON but not an object (it is ${JSON.stringify(parsed)}), so it cannot carry an "assets" array`,
+    )
+  }
+
   const raw = (parsed as { assets?: unknown }).assets
   if (!Array.isArray(raw) || raw.length === 0) {
     return unparsable('designer artifact JSON has no non-empty "assets" array')

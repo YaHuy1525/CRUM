@@ -112,6 +112,13 @@ describe('insertAssetDocument', () => {
     })
     expect(result.deduplicated).toBe(true)
     expect(result.id).toBe(DOC)
+    expect(result.status).toBe('ready')
+    // The lookup behind the reuse is the tenant-scoped hash read, and its pair is
+    // ordered (tenant, hash). A swapped pair asks Postgres for "the tenant whose
+    // id is this digest", matches nothing, and pays for an image the tenant
+    // already owns — which no other assertion in this case can see.
+    const [lookup] = calls('FROM documents WHERE tenant_id = $1 AND content_hash = $2')
+    expect(lookup!.params).toEqual([TENANT, HASHED])
     // A reused hash must not touch the byte lane a second time, and must not
     // overwrite a status a human already set.
     expect(calls('INSERT INTO documents')).toHaveLength(0)
@@ -138,10 +145,12 @@ describe('insertAssetDocument', () => {
     // The `as Record<string, unknown>` is not decoration: `no-unsafe-assignment`
     // is an error in this repo, and a bare JSON.parse hands back `any`.
     const raw = JSON.parse(insert!.params[12] as string) as Record<string, unknown>
-    expect(raw.negativePrompt).toBe('watermark')
-    expect(raw.seed).toBe(4217)
-    expect(raw.replicateId).toBe('pred-1')
-    expect(raw.prompt).toBe(PROVENANCE.prompt)
+    // All seven provenance fields, not a picked four: raw_extract exists so that a
+    // future re-fetch (spec section 9) can redo this exact render, and a model
+    // name, an aspect ratio or a cost that quietly stopped travelling is precisely
+    // the loss a subset assertion cannot see. `toEqual` rather than
+    // `toMatchObject` because this column holds the provenance and nothing else.
+    expect(raw).toEqual(PROVENANCE)
   })
 
   it('names the sha256 of the bytes, not of the prompt, as the content hash', async () => {
@@ -149,11 +158,50 @@ describe('insertAssetDocument', () => {
       { match: 'FROM documents WHERE tenant_id = $1 AND content_hash = $2', rows: [] },
       { match: 'INSERT INTO documents', rows: [{ id: DOC, status: 'needs_review', confidence: null, is_new: true }] },
     ])
-    // Only the hash helper is exercised here; destructuring `insertAssetDocument`
-    // as well would trip `no-unused-vars`, which is an error in this repo.
-    const { hashImageBytes } = await load()
-    expect(hashImageBytes(BYTES)).toBe(HASHED)
-    expect(HASHED).not.toBe(sha(new TextEncoder().encode(PROVENANCE.prompt)))
+    const { insertAssetDocument, hashImageBytes } = await load()
+    const result = await insertAssetDocument({
+      tenantId: TENANT,
+      ownerId: OWNER,
+      title: 'hero-image',
+      bytes: BYTES,
+      mime: 'image/png',
+      provenance: PROVENANCE,
+    })
+    // Both sides go through the module's own helper, so this compares two things
+    // the code hashed rather than two things the test hashed: `sha()` above is the
+    // test's copy of the digest, so an implementation that stringified its input
+    // still satisfied it. The first line is the discriminator — a lane that hashed
+    // the prompt would answer the prompt digest here and fail.
+    expect(result.contentHash).toBe(hashImageBytes(BYTES))
+    expect(result.contentHash).not.toBe(hashImageBytes(new TextEncoder().encode(PROVENANCE.prompt)))
+    // And the value that reached the hash column is the value returned, position 7
+    // of the INSERT list (`content_hash` is the seventh column at
+    // src/db/documents.ts:197).
+    const [insert] = calls('INSERT INTO documents')
+    expect(insert!.params[6]).toBe(result.contentHash)
+  })
+
+  it('refuses an image with no bytes, because its digest is the empty-text digest', async () => {
+    route([
+      { match: 'FROM documents WHERE tenant_id = $1 AND content_hash = $2', rows: [] },
+      { match: 'INSERT INTO documents', rows: [{ id: DOC, status: 'needs_review', confidence: null, is_new: true }] },
+    ])
+    const { insertAssetDocument } = await load()
+    await expect(
+      insertAssetDocument({
+        tenantId: TENANT,
+        ownerId: OWNER,
+        title: 'empty',
+        bytes: new Uint8Array(0),
+        mime: 'image/png',
+        provenance: PROVENANCE,
+      }),
+    ).rejects.toThrow(/0 bytes/)
+    // The refusal is before the database, so neither door is reached: a row written
+    // here would be a document whose bytes are absent, which is the state this
+    // guard exists to keep out of the asset lane.
+    expect(calls('FROM documents WHERE tenant_id')).toHaveLength(0)
+    expect(calls('INSERT INTO documents')).toHaveLength(0)
   })
 })
 
@@ -207,11 +255,29 @@ describe('the reads', () => {
     const [call] = calls('FROM marketing_artifacts a')
     expect(call!.sql).toContain("a.kind = 'image'")
     expect(call!.sql).toContain('JOIN documents d')
+    // The predicate and the pair, not only the projection. Task 8 reads an EMPTY
+    // list as "this bundle has no images, so there is nothing to refuse", so a
+    // dropped `a.tenant_id = $1` or a swapped [bundleId, tenantId] shows another
+    // tenant's images as absent and stages a bundle full of unreviewed faces. The
+    // mock answers that broken query with the same row this test supplies, which
+    // is exactly why the SQL text and the parameter order have to be asserted here
+    // rather than inferred from the mapped result.
+    expect(call!.sql).toContain('a.tenant_id = $1')
+    expect(call!.sql).toContain('a.bundle_id = $2')
+    expect(call!.params).toEqual([TENANT, BUNDLE])
   })
 
   it('lists the bundles that carry a document, for the bytes-route gate', async () => {
     route([{ match: 'FROM marketing_artifacts', rows: [{ bundle_id: BUNDLE }] }])
     const { listBundleIdsForDocument } = await load()
     expect(await listBundleIdsForDocument(TENANT, DOC)).toEqual([BUNDLE])
+    // Same reason as the stage list above, with the directions reversed: this read
+    // gates Task 12's bytes route, so an unscoped version answers SOME bundle for
+    // any caller and serves a document to a tenant that does not own it. Asserting
+    // only the mapped array would pass against that query.
+    const [call] = calls('DISTINCT bundle_id')
+    expect(call!.sql).toContain('tenant_id = $1')
+    expect(call!.sql).toContain('document_id = $2')
+    expect(call!.params).toEqual([TENANT, DOC])
   })
 })

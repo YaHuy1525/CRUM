@@ -64,6 +64,16 @@ export async function insertAssetDocument(params: {
   mime: string
   provenance: AssetProvenance
 }): Promise<{ id: string; status: string; contentHash: string; deduplicated: boolean }> {
+  // Refused before the hash rather than after it. `hashImageBytes(new Uint8Array(0))`
+  // is `e3b0c442…`, which is also sha256 of the empty string — the fingerprint the
+  // text lane gives a document with nothing extracted from it. So an empty image
+  // would dedup onto somebody's blank invoice row and return a `document_id` whose
+  // kind is not `marketing_asset`: a bytes route that 404s forever, for an asset
+  // that was never stored. Task 3's download already refuses zero bytes, so this is
+  // the lane defending itself against the caller spec section 9 asks for later.
+  if (params.bytes.byteLength === 0) {
+    throw new Error(`insertAssetDocument: "${params.title}" carries 0 bytes, which is not an image`)
+  }
   const contentHash = hashImageBytes(params.bytes)
   const existing = await findAssetByHash(params.tenantId, contentHash)
   if (existing) {
@@ -106,7 +116,15 @@ export async function getAssetBytes(
     kind: string
     status: string
     mime: string
-    data: Uint8Array | Buffer
+    // node-pg hands a `bytea` back as a Buffer, and `@types/node` declares
+    // `interface Buffer extends Uint8Array`, so `Uint8Array` already types both
+    // the driver's value and a test's plain view. An explicit
+    // `instanceof Uint8Array ? … : new Uint8Array(…)` fallback was here and is
+    // gone: TypeScript narrows its false branch to `never`, and the runtime it
+    // imagined was worse than the crash it prevented — `new Uint8Array(5)`
+    // answers five zero bytes and `new Uint8Array('abc')` answers none, so a
+    // malformed driver value would have been served as a silently empty 200.
+    data: Uint8Array
   }>(
     `SELECT d.kind, d.status, f.mime, f.data
        FROM document_files f
@@ -117,14 +135,7 @@ export async function getAssetBytes(
   )
   const row = result.rows[0]
   if (!row) return null
-  return {
-    kind: row.kind,
-    status: row.status,
-    mime: row.mime,
-    // node-pg hands a bytea back as a Buffer, which IS a Uint8Array; the guard is
-    // for the driver-free paths in tests, not for production.
-    data: row.data instanceof Uint8Array ? row.data : new Uint8Array(row.data),
-  }
+  return { kind: row.kind, status: row.status, mime: row.mime, data: row.data }
 }
 
 /**

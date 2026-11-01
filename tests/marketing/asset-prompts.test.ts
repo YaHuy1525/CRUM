@@ -42,6 +42,17 @@ describe('parseAssetPrompts', () => {
     })
   })
 
+  it('refuses an artifact that is valid JSON but not an object, and never throws', () => {
+    // The literal string `null` is the case that matters: JSON.parse answers
+    // null, and reading `.assets` off null is a TypeError that would leave this
+    // module's contract (a refusal, always) and reach the tool as an exception.
+    // 123, "text" and [] are the neighbours that already refused, pinned so a
+    // future refactor cannot fix one lane and break the other.
+    for (const text of ['null', '123', '"a clinic"', '[]', 'true']) {
+      expect(parseAssetPrompts(text)).toMatchObject({ ok: false, reason: 'asset_prompts_unparsable' })
+    }
+  })
+
   it('refuses the whole set when one entry has no prompt, rather than paying for the others', () => {
     const parsed = parseAssetPrompts(JSON.stringify({ assets: [HERO, { name: 'b-roll' }] }))
     expect(parsed).toMatchObject({ ok: false, reason: 'asset_prompts_unparsable' })
