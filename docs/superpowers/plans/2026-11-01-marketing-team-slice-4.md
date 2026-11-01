@@ -2860,6 +2860,30 @@ describe('marketing.generate_assets refuses before it costs anything', () => {
     expect(h.generate).not.toHaveBeenCalled()
     expect(h.createHumanTask).toHaveBeenCalledTimes(1)
   })
+
+  it('names every asset a ceiling refusal stopped, because "1 refusal" hides three', async () => {
+    // The run-level `'*'` shape this case used to have is what Step 8's
+    // integration test contradicts: two pending assets must read back as two
+    // named refusals and a human task titled "refused 2 asset(s)".
+    h.getDesignerArtifactText.mockResolvedValue(promptJson('a', 'b', 'c'))
+    ledger(1990)
+    const result = await run({ bundleId: BUNDLE })
+    expect(result.refused.map((refusal) => refusal.name)).toEqual(['a', 'b', 'c'])
+    const [task] = h.createHumanTask.mock.calls[0] as [{ title: string }]
+    expect(task.title).toContain('refused 3 asset(s)')
+  })
+
+  it('keeps a refusal detail to one sentence when the artifact echoes back at it', async () => {
+    // `asset-prompts.ts:47-50` interpolates JSON.stringify(parsed) into the detail,
+    // and a designer artifact that is a JSON-encoded long string makes that detail
+    // as long as the artifact. This tool writes that string into its own output and
+    // into human_tasks.body, so the bound belongs here.
+    h.getDesignerArtifactText.mockResolvedValue(JSON.stringify('x'.repeat(5000)))
+    const result = await run({ bundleId: BUNDLE })
+    expect(result.refused[0]!.code).toBe('asset_prompts_unparsable')
+    expect(result.refused[0]!.detail).toHaveLength(400)
+    expect(result.refused[0]!.detail.endsWith('\u2026')).toBe(true)
+  })
 })
 
 describe('marketing.generate_assets spends', () => {
@@ -3000,6 +3024,39 @@ describe('marketing.generate_assets spends', () => {
     expect(result.spentMinor).toBe(4)
   })
 
+  it('invoices a prediction the document lane refused, then stops rather than paying again', async () => {
+    // The hole this case closes: `insertAssetDocument` rejects on 0 bytes before it
+    // touches the database (src/db/marketing-assets.ts:75) and a real document
+    // write can reject for its own reasons, while the money is already gone. With
+    // the spend booked after an uncalled-for catch, the rejection escapes `execute`
+    // and spec section 9's billed-but-unusable prediction never reaches the ledger.
+    h.getDesignerArtifactText.mockResolvedValue(promptJson('a', 'b'))
+    h.generate.mockResolvedValue(okImage('a'))
+    h.insertAssetDocument.mockRejectedValue(
+      new Error('insertAssetDocument: "a" carries 0 bytes, which is not an image'),
+    )
+    const result = await run({ bundleId: BUNDLE })
+    expect(h.generate).toHaveBeenCalledTimes(1)
+    expect(h.recordImageSpend).toHaveBeenCalledWith({
+      tenantId: TENANT,
+      documentId: null,
+      costMinor: 4,
+      rawExtract: {
+        predictionId: 'pred-a',
+        model: 'black-forest-labs/flux-1.1-pro',
+        costUsd: '0.04',
+      },
+    })
+    expect(result.refused.map((refusal) => refusal.code)).toEqual([
+      'asset_storing_failed',
+      'asset_storing_failed',
+    ])
+    expect(result.refused.map((refusal) => refusal.name)).toEqual(['a', 'b'])
+    expect(result.spentMinor).toBe(4)
+    expect(result.assets).toEqual([])
+    expect(h.insertMarketingArtifacts).not.toHaveBeenCalled()
+  })
+
   it('keeps going after one asset fails, so a rate limit never loses the other images', async () => {
     h.getDesignerArtifactText.mockResolvedValue(promptJson('a', 'b'))
     h.generate
@@ -3076,6 +3133,7 @@ Create `src/marketing/image-provider.ts`.
  */
 import { DEFAULT_REPLICATE_MODEL, generateImage } from './replicate'
 import type { ImageOutcome, ImageRequest } from './replicate'
+import { REPLICATE_PROVIDER } from './image-spend'
 
 export interface ImageAdapter {
   provider: string
@@ -3098,7 +3156,10 @@ export interface ReplicateAdapterParams {
 export function makeReplicateAdapter(params: ReplicateAdapterParams): ImageAdapter {
   const model = params.model ?? DEFAULT_REPLICATE_MODEL
   return {
-    provider: 'replicate',
+    // The constant, not a fresh literal: `src/marketing/image-spend.ts:9` already
+    // spells this string and writes it into every ledger row, and two copies of a
+    // provider name is how a report ends up counting one provider as two.
+    provider: REPLICATE_PROVIDER,
     model,
     ceilingMinor: params.ceilingMinor,
     costMinorPerImage: params.costMinorPerImage,
@@ -3189,17 +3250,23 @@ import { createHash } from 'node:crypto'
 Then append the tool. Every branch below is one of the tests in Step 1; the refusal chain order is spec section 6's numbered list, and the two early returns exist so that a run which cannot start never reaches the ceiling arithmetic or the provider.
 
 ```ts
-const ASSET_REFUSAL_CODES = [
-  'bundle_not_generable',
-  'not_found',
-  'no_asset_prompts',
-  'asset_prompts_unparsable',
-  'image_provider_not_configured',
-  'image_spend_ceiling_reached',
-  'asset_too_large',
-  'image_generation_failed',
-  'policy_gate_raised',
-] as const
+/**
+ * The codes this tool can put in `refused[].code`, in the order the refusal chain
+ * reaches them: run-level `not_found`, `bundle_not_generable`,
+ * `no_asset_prompts`, `asset_prompts_unparsable`, `image_provider_not_configured`,
+ * `image_spend_ceiling_reached`, `policy_gate_raised`; per-asset
+ * `image_generation_failed`, `image_generation_timeout`, `asset_too_large`,
+ * `prompt_too_long`, `unsupported_aspect_ratio` (the five `ImageFailureCode` values
+ * `src/marketing/replicate.ts:26-31` can answer with, carried through verbatim) and
+ * `asset_storing_failed`.
+ *
+ * This is a comment and not a `const`, for two reasons an implementer would
+ * otherwise hit in Step 7: a module-scope `const` nothing reads is a
+ * `no-unused-vars` error in this repo, and the first draft of this list named only
+ * two of the five adapter codes, so any list-shaped assertion would have been
+ * wrong. Task 13's console groups by code and cannot import across its package
+ * boundary, so no consumer of an array here exists to keep it honest.
+ */
 
 // A bundle someone already shipped or already threw away is not a bundle to buy
 // art for. Everything else in the enum (draft, staged, approved, publishing,
@@ -3245,6 +3312,37 @@ const GenerateAssetsOutputSchema = z.object({
 function seedFor(bundleId: string, assetName: string): number {
   const hex = createHash('sha256').update(`${bundleId}\u0000${assetName}`).digest('hex')
   return Number.parseInt(hex.slice(0, 8), 16) % 2147483647
+}
+
+/**
+ * A refusal detail is owner-facing copy: it goes into the tool output the model
+ * reads and into `human_tasks.body`, where it is joined with every other detail in
+ * the run. Task 5's parser is the reason this bound exists —
+ * `src/marketing/asset-prompts.ts:49` interpolates `JSON.stringify(parsed)`, so a
+ * designer artifact that is a 2 MB JSON array produces a 2 MB refusal string, and
+ * the parked finding at the end of Task 5's review named this layer as the one that
+ * owns message length. The adapter's own `detail` is the other lane: it carries
+ * provider prose. Every `detail:` built from text this tool did not write passes
+ * through here; the template literals in between interpolate only ids, statuses and
+ * numbers.
+ */
+const DETAIL_LIMIT = 400
+
+function boundedDetail(detail: string): string {
+  return detail.length <= DETAIL_LIMIT ? detail : `${detail.slice(0, DETAIL_LIMIT - 1)}\u2026`
+}
+
+/**
+ * The prose half of a human task. The tool output keeps every refusal — an owner
+ * deciding what the bundle is missing reads that list — but `human_tasks.body` is
+ * one line in a queue, and `pending.length` is bounded only by the document ceiling
+ * the designer's artifact was written under. Without this, a bundle whose artifact
+ * is a 5,000-prompt array writes 5,000 sentences into one row.
+ */
+function refusedProse(entries: Array<{ name: string; code: string; detail: string }>): string {
+  const shown = entries.slice(0, 10).map((entry) => `${entry.name}: ${entry.code}: ${entry.detail}`)
+  const more = entries.length - shown.length
+  return more > 0 ? `${shown.join(' ')} \u2026and ${more} more.` : shown.join(' ')
 }
 
 export const generateAssetsTool = createTool({
@@ -3300,7 +3398,7 @@ export const generateAssetsTool = createTool({
         const stored = await getDesignerArtifactText(rc.tenantId, bundle.id)
         const parsed = parseAssetPrompts(stored)
         if (!parsed.ok) {
-          refused.push({ name: '*', code: parsed.reason, detail: parsed.detail })
+          refused.push({ name: '*', code: parsed.reason, detail: boundedDetail(parsed.detail) })
         } else {
           prompts = parsed.prompts
         }
@@ -3376,14 +3474,24 @@ export const generateAssetsTool = createTool({
             assetCount: pending.length,
           })
         ) {
-          refused.push({
-            name: '*',
-            code: 'image_spend_ceiling_reached',
-            detail:
-              `Today's image spend is ${committedMinor} minor with a ${adapter.ceilingMinor} ceiling, ` +
-              `and ${pending.length} asset(s) at ${adapter.costMinorPerImage} minor each need ${estimatedCostMinor}. ` +
-              'Raise CRUM_IMAGE_SPEND_CEILING_MINOR or run tomorrow. Nothing was requested.',
-          })
+          // One refusal per pending asset, not one `'*'` for the whole run. Two
+          // reasons, and they point the same way: the mid-loop boundary refusal
+          // below already names every asset left in the queue, because an owner
+          // reading the human task has to be able to tell what the bundle is
+          // missing; and Step 8's integration case reads `refused.map(r => r.code)`
+          // as two `image_spend_ceiling_reached` entries under a human task titled
+          // "refused 2 asset(s)". A run-level `'*'` here writes one entry and titles
+          // it "1", so the plan's two halves disagreed with each other.
+          for (const entry of pending) {
+            refused.push({
+              name: entry.name,
+              code: 'image_spend_ceiling_reached',
+              detail:
+                `Not attempted: today's image spend is ${committedMinor} minor with a ${adapter.ceilingMinor} ceiling, ` +
+                `and ${pending.length} asset(s) at ${adapter.costMinorPerImage} minor each need ${estimatedCostMinor}. ` +
+                'Raise CRUM_IMAGE_SPEND_CEILING_MINOR or run tomorrow. Nothing was requested.',
+            })
+          }
         }
       }
 
@@ -3436,7 +3544,7 @@ export const generateAssetsTool = createTool({
               })
               spentMinor += outcome.charge.costMinor
             }
-            refused.push({ name: entry.name, code: outcome.code, detail: outcome.detail })
+            refused.push({ name: entry.name, code: outcome.code, detail: boundedDetail(outcome.detail) })
             if (outcome.deadToken) {
               for (const stopped of pending.slice(index + 1)) {
                 refused.push({
@@ -3450,22 +3558,70 @@ export const generateAssetsTool = createTool({
             continue
           }
 
-          const document = await insertAssetDocument({
-            tenantId: rc.tenantId,
-            ownerId: rc.userId,
-            title: entry.name,
-            bytes: outcome.image.bytes,
-            mime: outcome.image.mime,
-            provenance: {
-              replicateId: outcome.image.predictionId,
-              model: outcome.image.model,
-              aspectRatio: outcome.image.aspectRatio,
-              negativePrompt: entry.negativePrompt,
+          // The provider has already been charged by the time this line runs, and
+          // `insertAssetDocument` rejects before it touches the database when the
+          // bytes handed to it are 0 long (`src/db/marketing-assets.ts:75`), while
+          // any real document write can reject too. The first draft of this tool
+          // booked the spend *after* the insert with nothing around it, so such a
+          // rejection escaped `execute`: no ledger row for money already spent, no
+          // human task, and a tool error as the only trace. Spec section 9's
+          // "money spent, nothing usable" case is the one that must still be
+          // invoiced, and `src/marketing/image-spend.ts:65-69` already says an
+          // invoice for an image we failed to save is a real cost.
+          //
+          // The run stops here rather than continuing to the next asset, for the
+          // same reason a 401 stops it above: a lane that refuses one image is
+          // refusing them all, and each remaining asset would buy a prediction CRUM
+          // cannot store. `asset_storing_failed` is deterministic per adapter
+          // output, so nothing is lost by stopping — the next run reuses the bytes
+          // it already has and re-orders only what is genuinely missing.
+          let document: { id: string; status: string; deduplicated: boolean }
+          try {
+            document = await insertAssetDocument({
+              tenantId: rc.tenantId,
+              ownerId: rc.userId,
+              title: entry.name,
+              bytes: outcome.image.bytes,
+              mime: outcome.image.mime,
+              provenance: {
+                replicateId: outcome.image.predictionId,
+                model: outcome.image.model,
+                aspectRatio: outcome.image.aspectRatio,
+                negativePrompt: entry.negativePrompt,
+                costMinor: outcome.image.costMinor,
+                seed,
+                prompt: entry.prompt,
+              },
+            })
+          } catch (err) {
+            // Not wrapped, on purpose: a ledger write that cannot be made is the
+            // tool failing loudly, which is Task 4's fail-closed ruling. Defaulting
+            // it would silently un-invoice the run.
+            await recordImageSpend({
+              tenantId: rc.tenantId,
+              documentId: null,
               costMinor: outcome.image.costMinor,
-              seed,
-              prompt: entry.prompt,
-            },
-          })
+              rawExtract: {
+                predictionId: outcome.image.predictionId,
+                model: outcome.image.model,
+                costUsd: outcome.image.costUsd,
+              },
+            })
+            spentMinor += outcome.image.costMinor
+            refused.push({
+              name: entry.name,
+              code: 'asset_storing_failed',
+              detail: boundedDetail(err instanceof Error ? err.message : String(err)),
+            })
+            for (const stopped of pending.slice(index + 1)) {
+              refused.push({
+                name: stopped.name,
+                code: 'asset_storing_failed',
+                detail: 'Not attempted: the document lane refused the previous image, so the run stopped rather than paying for pictures CRUM cannot store.',
+              })
+            }
+            break
+          }
 
           // Booked after the insert and pointing at the row the insert returned,
           // so a re-run that reused the bytes still books the prediction that
@@ -3519,7 +3675,7 @@ export const generateAssetsTool = createTool({
             title: `Image run for bundle ${bundle.id} refused ${refused.length} asset(s)`,
             body:
               `Refused codes: ${codes}. Newly stored: ${attached.length}. Reused from the bundle: ${assets.length - attached.length}. ` +
-              `Recorded spend: ${spentMinor} minor. ${refused.map((entry) => `${entry.name}: ${entry.detail}`).join(' ')}`,
+              `Recorded spend: ${spentMinor} minor. ${refusedProse(refused)}`,
             requestedBy: rc.userId,
           },
           'refusal',
@@ -3603,7 +3759,7 @@ Two spaces, not four: `crumToolRegistry` is a top-level object, and the four mar
 
 `docs/TECHNICAL_PLAN.md` section 4.6.2: one table row for `marketing.generate_assets`, `auto`, with its scope and idempotency key.
 
-`tests/governance/marketing-payload.test.ts`: extend the existing sweep rather than adding a file. Add a case beside the one at line 84 that pushes `generateAssetsRiskView` through `forbiddenTermsIn` and expects `[]`, and a second that asserts `scoreRisk` of the same view lands on `risk.preflight.scores.benign`. The strings that would break it are in `ASSET_REFUSAL_CODES` and in the message text, and neither reaches the scorer — the view is four keys, which is the Step 1 test at the end of this task's file.
+`tests/governance/marketing-payload.test.ts`: extend the existing sweep rather than adding a file. Add a case beside the one at line 84 that pushes `generateAssetsRiskView` through `forbiddenTermsIn` and expects `[]`, and a second that asserts `scoreRisk` of the same view lands on `risk.preflight.scores.benign`. The strings that would break it are the refusal code literals and the message text, and neither reaches the scorer — the view is four keys, which is the Step 1 test at the end of this task's file.
 
 - [ ] **Step 7: Run everything this task owns**
 
@@ -3615,7 +3771,7 @@ Expected: clean. The usual first failure here is `AssetPrompt` imported as a val
 
 - [ ] **Step 8: Prove the paid lane's database half against real constraints**
 
-The Step 1 suite mocks every `src/db` call, which is what makes 21 cases affordable. What it cannot see is a CHECK constraint: `marketing_artifacts` requires a `document_id` on an `image` row, `documents.kind` admits `marketing_asset` only after migration 0021, and `marketing_image_spend.document_id` is nullable by design. Create `tests/integration/marketing-generate-assets.test.ts`, following `tests/integration/marketing-bundle.test.ts` for the env, context and skip conventions:
+The Step 1 suite mocks every `src/db` call, which is what makes 24 cases affordable. What it cannot see is a CHECK constraint: `marketing_artifacts` requires a `document_id` on an `image` row, `documents.kind` admits `marketing_asset` only after migration 0021, and `marketing_image_spend.document_id` is nullable by design. Create `tests/integration/marketing-generate-assets.test.ts`, following `tests/integration/marketing-bundle.test.ts` for the env, context and skip conventions:
 
 ```ts
 // tests/integration/marketing-generate-assets.test.ts
@@ -3659,7 +3815,12 @@ function stubAdapter(ceilingMinor = 40): ImageAdapter {
     maxBytes: 1024,
     async generate(request) {
       promptsAskedFor.push(request.prompt)
-      const bytes = promptsAskedFor.length === 2 ? PNG_B : PNG_A
+      // Derived from the prompt, not from a call counter. A counter makes the bytes
+      // depend on how many cases ran first — case two's re-order would then hand
+      // both assets the same PNG and one of them would dedup against the other
+      // inside a single run — and an integration file that only passes in one
+      // order is a file that cannot be re-run.
+      const bytes = request.prompt.includes('reception') ? PNG_A : PNG_B
       return {
         ok: true,
         image: {
@@ -3729,8 +3890,23 @@ async function rows<T>(sql: string, params: unknown[]): Promise<T[]> {
   return (await getDbClient().query<T>(sql, params)).rows
 }
 
-beforeAll(() => {
+beforeAll(async () => {
   if (url === '') return
+  // Same habit as `tests/integration/marketing-bundle.test.ts:87-101`: this tenant
+  // is private to this file, and the file must be re-runnable. Without the reset,
+  // run two finds run one's hashes, its ledger, and its artifact rows, and the very
+  // first assertion (`committedSpendMinor` is 8) reads 16 and fails for a reason
+  // that has nothing to do with the code under test. `documents` cascades
+  // `document_files` (0009:55) and the parse tables; `marketing_artifacts.document_id`
+  // references documents WITHOUT a cascade (0018:65), so artifacts go before the
+  // rows they point at; and `marketing_image_spend.document_id` has no foreign key
+  // at all (0021:35), so only its own tenant filter clears it.
+  const db = getDbClient()
+  await db.query('DELETE FROM marketing_image_spend WHERE tenant_id = $1', [TENANT])
+  await db.query('DELETE FROM marketing_artifacts WHERE tenant_id = $1', [TENANT])
+  await db.query("DELETE FROM documents WHERE tenant_id = $1 AND kind = 'marketing_asset'", [TENANT])
+  await db.query('DELETE FROM marketing_bundles WHERE tenant_id = $1', [TENANT])
+  await db.query('DELETE FROM human_tasks WHERE tenant_id = $1', [TENANT])
   setImageAdapter(stubAdapter())
 })
 
@@ -3783,14 +3959,19 @@ describe.skipIf(url === '')('marketing.generate_assets against Postgres', () => 
   it('buys nothing on the second pass, because every title is already there', async () => {
     const bundleId = await saveDesignerBundle()
     const first = await generate(bundleId)
-    const spentAfterFirst = first.spentMinor
+    expect(first.spentMinor).toBe(8)
+    // The day's total, read back, not the run's number. `spentMinor` is what THIS
+    // call paid, and by now the tenant has paid for case one too, so comparing the
+    // second pass with a per-run figure compares two different things and fails for
+    // a reason that belongs to the test rather than the tool.
+    const committedAfterFirst = await committedSpendMinor(TENANT)
     promptsAskedFor.length = 0
 
     const second = await generate(bundleId)
     expect(promptsAskedFor).toEqual([])
     expect(second.spentMinor).toBe(0)
     expect(second.assets.every((a) => a.deduplicated)).toBe(true)
-    expect(await committedSpendMinor(TENANT)).toBe(spentAfterFirst)
+    expect(await committedSpendMinor(TENANT)).toBe(committedAfterFirst)
   })
 
   it('refuses the whole pass before paying when the day is already spent', async () => {
