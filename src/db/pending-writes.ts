@@ -754,6 +754,43 @@ export async function getPendingWrite(id: string, tenantId: string): Promise<Pen
   return row ? rowToPendingWrite(row) : null
 }
 
+/**
+ * The one open stage draft for one bundle, newest first, or null.
+ *
+ * Spec section 4.3 is the predicate, and it is written here rather than inline
+ * in a route because three callers need the identical answer: the bundle GET
+ * decides whether to withhold the copy, the prediction POST decides whether it
+ * has anything to attach to, and the asset bytes route decides whether to
+ * withhold a picture. `listPendingWrites` (line 884) filters on a receipt and a
+ * rejection but never on `target_id`, and a route that wanted only this bundle's
+ * stage draft would have to fetch the tenant's whole queue to find it.
+ *
+ * `expires_at > now()` is the difference between a decision and a forgery: the
+ * slice 2 M3 work made an expired draft rejectable but not approvable, so a
+ * prediction against one would anchor a reviewer to a document no approval can
+ * honour any more.
+ */
+export async function getOpenStageDraft(
+  tenantId: string,
+  bundleId: string,
+): Promise<PendingWrite | null> {
+  const db = getDbClient()
+  const result = await db.query<Record<string, unknown>>(
+    `SELECT * FROM pending_writes
+      WHERE target_id = $1
+        AND tenant_id = $2
+        AND object_type = 'marketing_stage'
+        AND receipt_id IS NULL
+        AND rejected_at IS NULL
+        AND expires_at > now()
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [bundleId, tenantId],
+  )
+  const row = result.rows[0]
+  return row ? rowToPendingWrite(row) : null
+}
+
 export interface Receipt {
   id: string
   tenantId: string
