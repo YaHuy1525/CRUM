@@ -100,7 +100,7 @@ describe.skipIf(!url)('the image spend ledger against real Postgres', () => {
     }
   })
 
-  it('keeps one tenant spend out of another tenant ceiling read', async () => {
+  it('keeps the spend of one tenant out of the ceiling read of another', async () => {
     const mine = await uniqueTenant()
     const other = await uniqueTenant()
     try {
