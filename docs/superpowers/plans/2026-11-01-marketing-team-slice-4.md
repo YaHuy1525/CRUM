@@ -418,8 +418,11 @@ const mockQuery = vi.fn()
 // One mock function for both doors, the way tests/db/marketing.test.ts:3 does
 // it: queryRows goes through pool.query and insertDocument goes through
 // client.query, so a separate mock for each records only half the calls.
+// `() => Promise.resolve(mockClient)` rather than `async () => mockClient`:
+// `@typescript-eslint/require-await` is an error in this repo and a checked-out
+// client mock has nothing to await.
 const mockClient = { query: mockQuery, release: vi.fn() }
-const mockPool = { query: mockQuery, connect: vi.fn(async () => mockClient), end: vi.fn() }
+const mockPool = { query: mockQuery, connect: vi.fn(() => Promise.resolve(mockClient)), end: vi.fn() }
 
 vi.mock('pg', () => ({ Pool: vi.fn(() => mockPool) }))
 vi.mock('../../src/config/env', () => ({
@@ -1933,6 +1936,17 @@ describe('parseAssetPrompts', () => {
     })
   })
 
+  it('refuses an artifact that is valid JSON but not an object, and never throws', () => {
+    // The literal string `null` is the case that matters: JSON.parse answers
+    // null, and reading `.assets` off null is a TypeError that would leave this
+    // module's contract (a refusal, always) and reach the tool as an exception.
+    // 123, "text" and [] are the neighbours that already refused, pinned so a
+    // future refactor cannot fix one lane and break the other.
+    for (const text of ['null', '123', '"a clinic"', '[]', 'true']) {
+      expect(parseAssetPrompts(text)).toMatchObject({ ok: false, reason: 'asset_prompts_unparsable' })
+    }
+  })
+
   it('refuses the whole set when one entry has no prompt, rather than paying for the others', () => {
     const parsed = parseAssetPrompts(JSON.stringify({ assets: [HERO, { name: 'b-roll' }] }))
     expect(parsed).toMatchObject({ ok: false, reason: 'asset_prompts_unparsable' })
@@ -2016,6 +2030,15 @@ export function parseAssetPrompts(textContent: string | null | undefined): Promp
     )
   }
 
+  // A bare `null` parses as valid JSON and answers null, and `null.assets` is a
+  // TypeError. This function's contract is a refusal the tool can turn into a
+  // code the owner reads; an exception instead is an agent turn dying.
+  if (parsed === null || typeof parsed !== 'object') {
+    return unparsable(
+      `designer artifact is JSON but not an object (it is ${JSON.stringify(parsed)}), so it cannot carry an "assets" array`,
+    )
+  }
+
   const raw = (parsed as { assets?: unknown }).assets
   if (!Array.isArray(raw) || raw.length === 0) {
     return unparsable('designer artifact JSON has no non-empty "assets" array')
@@ -2065,7 +2088,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockQuery = vi.fn()
 const mockClient = { query: mockQuery, release: vi.fn() }
-const mockPool = { query: mockQuery, connect: vi.fn(async () => mockClient), end: vi.fn() }
+// `() => Promise.resolve(mockClient)` and not `async () => mockClient`: this repo
+// lints with `@typescript-eslint/require-await` as an error, so an async body with
+// nothing to await fails the gate. Same shape as tests/db/documents-asset-lane.test.ts:9.
+const mockPool = { query: mockQuery, connect: vi.fn(() => Promise.resolve(mockClient)), end: vi.fn() }
 
 vi.mock('pg', () => ({ Pool: vi.fn(() => mockPool) }))
 vi.mock('../../src/config/env', () => ({
@@ -2091,13 +2117,15 @@ function calls(fragment: string): Array<{ sql: string; params: unknown[] }> {
 /**
  * Route by SQL fragment so one mock answers the hash lookup, the document insert
  * and the file insert without any test having to know which call number it is on.
+ * The handler returns a resolved Promise instead of being `async` because
+ * `require-await` is an error here and there is nothing to await.
  */
 function route(handlers: Array<{ match: string; rows: unknown[] }>) {
-  mockQuery.mockImplementation(async (sql: unknown) => {
+  mockQuery.mockImplementation((sql: unknown) => {
     for (const handler of handlers) {
-      if ((sql as string).includes(handler.match)) return { rows: handler.rows }
+      if ((sql as string).includes(handler.match)) return Promise.resolve({ rows: handler.rows })
     }
-    return { rows: [] }
+    return Promise.resolve({ rows: [] })
   })
 }
 
@@ -2191,7 +2219,9 @@ describe('insertAssetDocument', () => {
     const [insert] = calls('INSERT INTO documents')
     // raw_extract is the thirteenth parameter and the thirteenth value is passed
     // through JSON.stringify by insertDocument (src/db/documents.ts:214).
-    const raw = JSON.parse(insert!.params[12] as string)
+    // The `as Record<string, unknown>` is not decoration: `no-unsafe-assignment`
+    // is an error in this repo, and a bare JSON.parse hands back `any`.
+    const raw = JSON.parse(insert!.params[12] as string) as Record<string, unknown>
     expect(raw.negativePrompt).toBe('watermark')
     expect(raw.seed).toBe(4217)
     expect(raw.replicateId).toBe('pred-1')
@@ -2203,7 +2233,9 @@ describe('insertAssetDocument', () => {
       { match: 'FROM documents WHERE tenant_id = $1 AND content_hash = $2', rows: [] },
       { match: 'INSERT INTO documents', rows: [{ id: DOC, status: 'needs_review', confidence: null, is_new: true }] },
     ])
-    const { insertAssetDocument, hashImageBytes } = await load()
+    // Only the hash helper is exercised here; destructuring `insertAssetDocument`
+    // as well would trip `no-unused-vars`, which is an error in this repo.
+    const { hashImageBytes } = await load()
     expect(hashImageBytes(BYTES)).toBe(HASHED)
     expect(HASHED).not.toBe(sha(new TextEncoder().encode(PROVENANCE.prompt)))
   })
