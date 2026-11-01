@@ -1315,10 +1315,12 @@ Two honest notes for the implementer. The `429` retry reuses `createInit`, the o
 
 Every transport throw resolves. The create, the retry, every poll and the `arrayBuffer()` read are each inside a `try`, because `generateImage`'s contract is `Promise<ImageOutcome>` and a rejection escaping an adapter is a bug the adapter owns, not a problem for the tool layer to catch. Four cases in the test file hold that contract, one per lane, and the download case must still carry the `charge` — a body that dies half-read is money spent.
 
+Six cases the review added, beyond the twelve listed above: `resolves when Replicate cannot be reached at all`, `resolves when the rate-limit retry cannot reach Replicate`, `resolves when a poll cannot reach Replicate` (which must keep `charge: null`, because nothing was ever read), `carries the charge when the delivery dies mid-body`, `keeps the money a failed prediction actually cost` (a `status: 'failed'` response reporting `'0.02'` must hand back `{ predictionId, costUsd: '0.02', costMinor: 2 }`), and `still calls a dead token dead when the 401 arrives after a 429`. The first case also asserts the poll URL carries the prediction id, and the 429 case asserts `sleep` received `5000`.
+
 - [ ] **Step 4: Run the tests**
 
 Run: `npx vitest run tests/marketing/replicate.test.ts`
-Expected: PASS on all twelve cases. Then `npm run typecheck` — clean.
+Expected: PASS on all eighteen cases (the twelve drafted above plus the six the review named). Then `npm run typecheck` — clean.
 
 - [ ] **Step 5: Commit**
 
