@@ -4370,57 +4370,93 @@ git commit -m "docs(mastra): tell the designer and the primary agent what the im
 ### Task 8: `marketing.stage_bundle` refuses an unreviewed image, by name
 
 **Files:**
-- Modify: `src/db/marketing-assets.ts` (add `listUnreviewedImageTitles`)
-- Modify: `src/mastra/tools/marketing-writes.ts` (the `stageBundleTool` refusal chain, plus its import block)
-- Test: `tests/db/marketing-assets.test.ts` (Task 5's file, two more cases)
-- Test: `tests/mastra/marketing-write-tools.test.ts` (one new case in `describe('marketing.stage_bundle')`)
+- Modify: `src/db/marketing-assets.ts` (`listImageAssetStatuses` gains one projected column; no new function — Ruling 8a)
+- Modify: `src/mastra/tools/marketing-writes.ts` (the `stageBundleTool` refusal chain only; the read this task needs is already imported at line 46)
+- Test: `tests/db/marketing-assets.test.ts` (Task 5's `listImageAssetStatuses` case grows, plus one new case in `describe('the reads')`)
+- Test: `tests/mastra/marketing-write-tools.test.ts` (three new cases in `describe('marketing.stage_bundle')`)
+- Test: `tests/marketing/generate-assets-tool.test.ts` (two mock rows gain the new field)
 
 **Interfaces:**
-- Consumes: `listMarketingArtifacts`'s rows, which the stage tool already reads at `src/mastra/tools/marketing-writes.ts:415`, and the `documents.status` column migration 0021 left alone.
-- Produces: `listUnreviewedImageTitles(tenantId: string, bundleId: string): Promise<string[]>`, and a refusal string of the shape `unreviewed images: hero-image, founder-portrait` that reaches `result.reason`, the human-task title and body, and the console's existing stage-refusal line.
+- Consumes: `listMarketingArtifacts`'s rows, which the stage tool already reads at `src/mastra/tools/marketing-writes.ts:426`, and `listImageAssetStatuses`, already imported in that same file at line 46 for Task 6's carry check.
+- Produces: a refusal string of the shape `unreviewed images: hero-image, founder-portrait` that reaches `result.reason`, the human-task title and body, and the console's existing stage-refusal line. `listImageAssetStatuses`'s rows gain `kind: string`.
 
 Spec section 6.1 puts the gate at staging, and the placement is the design: `generate_assets` must be allowed to attach what it just paid for, so it cannot be the one refusing a `needs_review` row, and approving a bundle is the last moment before a human takes responsibility for it.
 
-**The read is behind a cheap in-memory check, and that is not a micro-optimisation.** `artifacts.some((a) => a.kind === 'image')` gates the query, so a bundle with no image never issues it. Two consequences: every existing stage test keeps passing without an added handler row, because none of their fixtures carries an image artifact, and the refusal cannot fire on a bundle that has no pictures to refuse. Do not "simplify" this by moving the read above the check: doing so would make fourteen unrelated tests throw `unexpected query` and would look like a regression in the stage tool rather than a missing fixture row.
+**Ruling 8a: the status filter lives in the caller, not in a second query.** This task was drafted with a new `listUnreviewedImageTitles` whose SQL was filtered to `d.status <> 'ready'`. Three facts on `main` argue against that. First, `listImageAssetStatuses`'s own doc comment (`src/db/marketing-assets.ts:160`) already says the stage tool "refuses on a non-ready row found here and names the title", so a second function would leave that sentence describing a lane that does not exist. Second, that read already answers the same join with the same `a.kind = 'image'` predicate and is already imported by `marketing-writes.ts:46`; a second one is the same SQL with its projection trimmed to the answer. Third and decisive: spec section 6.1 names this task's load-bearing test as "stage a bundle with one `ready` and one `needs_review` image and assert the refusal names the second by title", and `stubQueries` ignores the `WHERE` clause it is handed. An SQL-side filter can therefore only be tested by quoting its own text back — which is what the drafted case did, and its own comment admitted it ("an empty handler row list is the honest answer for a reviewed image, because this mock ignores the WHERE clause the real query carries"). A filter the code performs is a filter the test can demonstrate: the mock hands back both rows because the real read really does return both rows, and the assertion is about the refusal picking one out of them.
+
+**Ruling 8b: the document kind travels as a column, not as a predicate.** The drafted brief argued that a `kind = 'marketing_asset'` guard matters, because "an artifact that once pointed at an invoice would otherwise have its `needs_review` refused as an unreviewed image". That is right, and under this ruling it is testable instead of asserted in a comment: the read projects `d.kind` and the stage filter keeps the rows whose kind is an asset. The `WHERE` gains nothing, which is also what protects Task 6: `generate_assets` builds its carry map from this same read (`src/mastra/tools/marketing-writes.ts:1200-1205`) and must go on seeing a `ready` image it has already bought, or the idempotency rule becomes a re-payment. `tests/marketing/generate-assets-tool.test.ts:346` and `:365` carry the two mock rows that prove that skip, and both gain the new field so the mocks keep the shape of the real return value.
+
+**Ruling 8c: no second tenant predicate on the document side.** The drafted query constrained `d.tenant_id` as well as `a.tenant_id`, on the grounds that "a join can cross a boundary that either side alone would not". Here it cannot: the join is `d.id = a.document_id` and `documents.id` is a `uuid PRIMARY KEY` (`migrations/0009_crum_documents.sql:2`), so a row reached through it is either the artifact's own document or there is no row. The predicate would be decoration, and decoration on a shared read costs Task 5's pinned SQL an assertion it does not need. Nothing about the artifact-side constraint changes.
+
+**The read is behind a cheap in-memory check, and that is not a micro-optimisation.** `artifacts.some((a) => a.kind === 'image')` gates the query, so a bundle with no image never issues it. Two consequences: every existing stage test keeps passing without an added handler row — none of the fourteen cases in `describe('marketing.stage_bundle')` carries an `image` artifact — and the refusal cannot fire on a bundle that has no pictures to refuse. Do not "simplify" this by moving the read above the check: doing so would make fourteen unrelated tests throw `unexpected query` and would look like a regression in the stage tool rather than a missing fixture row.
+
+**And the fragment keys are load-bearing, for a reason the draft got backwards.** `stubQueries` answers from the first fragment the SQL contains, in insertion order, and `listImageAssetStatuses`'s SQL begins `SELECT a.document_id, d.title, d.status, d.kind FROM marketing_artifacts a JOIN documents d` — so it *does* contain the artifacts key the existing handlers use. The three new cases below put `'JOIN documents d'` first, which appears in the status read and in neither `listMarketingArtifacts`'s single-table select (`src/db/marketing.ts:152`) nor the bundle read. Put the key after `'FROM marketing_artifacts'` and the status read is answered with artifact rows: `status: 'active'`, no `kind`, no title, and case 1 fails for a reason that has nothing to do with the arm under test.
 
 **The residual, stated rather than hidden.** `staged` is a generable status in Task 6, so an owner can run `generate_assets` after staging and attach a fresh `needs_review` image to a bundle sitting in the queue. That image reaches nothing outside CRUM — the publish lane writes page files, and slice 3's campaign spec carries no creative — so the hole is a reviewer approving a bundle that gained a picture after they last looked, not a picture going live. Task 14's report names it. Closing it means re-checking at approval, which is a draft-payload question, and spec section 7 forbids prose in a payload: the check would have to re-read the database inside the approval transaction, which section 3 forbids. That is a slice 5 design question, not a line to add here.
 
 - [ ] **Step 1: Write the failing tests**
 
-Add to `tests/db/marketing-assets.test.ts`, beside the cases Task 5 wrote for `listImageAssetStatuses`:
+In `tests/db/marketing-assets.test.ts`, grow the case Task 5 wrote at line 244 so the fixture row and the expectation both carry the kind, and the SQL assertion names the projected column. Its current body routes one row `{ document_id: DOC, title: 'hero-image', status: 'needs_review' }` and expects `{ documentId: DOC, title: 'hero-image', status: 'needs_review' }`; both gain `kind: 'marketing_asset'` (`rows[0]!.kind` after the map, `d.kind` in the SQL), and every other line in that case stays:
 
 ```ts
-describe('listUnreviewedImageTitles', () => {
-  it('asks the database for the not-ready images of one bundle in this tenant', async () => {
-    route({ 'FROM documents d': [{ title: 'hero-image' }] })
-    const { listUnreviewedImageTitles } = await import('../../src/db/marketing-assets')
-    expect(await listUnreviewedImageTitles(TENANT, BUNDLE)).toEqual(['hero-image'])
-    const call = lastCall('FROM documents d')
-    expect(call.sql).toContain("a.kind = 'image'")
-    expect(call.sql).toContain("d.status <> 'ready'")
-    expect(call.sql).toContain('d.tenant_id = $1')
-    expect(call.params).toEqual([TENANT, BUNDLE])
-  })
-
-  it('returns an empty list, not null, when every image is reviewed', async () => {
-    route({ 'FROM documents d': [] })
-    const { listUnreviewedImageTitles } = await import('../../src/db/marketing-assets')
-    expect(await listUnreviewedImageTitles(TENANT, BUNDLE)).toEqual([])
-  })
-})
+      {
+        match: 'FROM marketing_artifacts a',
+        rows: [{ document_id: DOC, title: 'hero-image', status: 'needs_review', kind: 'marketing_asset' }],
+      },
 ```
 
-Use the `route` and `lastCall` helpers Task 5's file already defines; if that file named its dispatcher differently, follow its name rather than coining a second one. `documents d` is the fragment, and Task 5's other cases route on their own fragments, so the key is new rather than overloaded.
+```ts
+    expect(await listImageAssetStatuses(TENANT, BUNDLE)).toEqual([
+      { documentId: DOC, title: 'hero-image', status: 'needs_review', kind: 'marketing_asset' },
+    ])
+    const [call] = calls('FROM marketing_artifacts a')
+    expect(call!.sql).toContain('d.kind')
+```
 
-Add to `tests/mastra/marketing-write-tools.test.ts` inside `describe('marketing.stage_bundle')`, after the ambiguous-slot case at line 755:
+Then add a second case to the same `describe('the reads')`, which is Ruling 8a's guarantee written down — the read stays general so two callers can each answer their own question from it:
 
 ```ts
-  it('refuses a bundle carrying an unreviewed image, naming it by title', async () => {
+  it('carries the document kind and still returns a reviewed image, because the caller decides', async () => {
+    route([
+      {
+        match: 'FROM marketing_artifacts a',
+        rows: [
+          { document_id: DOC, title: 'hero-image', status: 'ready', kind: 'marketing_asset' },
+          { document_id: DOC, title: 'founder-portrait', status: 'needs_review', kind: 'marketing_asset' },
+        ],
+      },
+    ])
+    const { listImageAssetStatuses } = await load()
+    const rows = await listImageAssetStatuses(TENANT, BUNDLE)
+    // Both rows survive the read. Task 6's carry check is the reason: it pays for
+    // an asset only when this list does not already name it, so a `ready` row
+    // filtered out here would re-buy an image the tenant owns. The stage refusal
+    // is the other caller, and it does its own filtering (Ruling 8a).
+    expect(rows).toHaveLength(2)
+    expect(rows.map((row) => row.title).sort()).toEqual(['founder-portrait', 'hero-image'])
+    expect(rows.every((row) => row.kind === 'marketing_asset')).toBe(true)
+  })
+```
+
+Note the two helpers this file actually defines: `route` takes an array of `{ match, rows }`, and there is no `lastCall` — the file's own shape is `const [call] = calls(fragment)`. Use those, and `TENANT`, `BUNDLE` and `DOC`, which are already declared at lines 17 and 20.
+
+Add to `tests/mastra/marketing-write-tools.test.ts` inside `describe('marketing.stage_bundle')`, after the ambiguous-slot case that ends at line 768:
+
+```ts
+  it('refuses the unreviewed image by title while a reviewed one in the same bundle passes', async () => {
     stubQueries({
-      // Most specific first: stubQueries returns on the fragment that matches, so
-      // the documents read has to be keyed before the artifacts read or it would
-      // be answered with artifact rows.
-      'FROM documents d': [{ title: 'founder-portrait' }],
+      // First, because listImageAssetStatuses's SQL also contains the artifacts
+      // fragment below and stubQueries answers from the first match. `JOIN
+      // documents d` is in that read and in nothing else this tool issues.
+      'JOIN documents d': [
+        { document_id: DOCUMENT_ID, title: 'hero-image', status: 'ready', kind: 'marketing_asset' },
+        {
+          document_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+          title: 'founder-portrait',
+          status: 'needs_review',
+          kind: 'marketing_asset',
+        },
+      ],
       'FROM marketing_bundles': [bundleRow()],
       'FROM marketing_artifacts': [
         artifactRow({ id: 'a1', kind: 'script', text_content: 'Brand rules' }),
@@ -4431,29 +4467,36 @@ Add to `tests/mastra/marketing-write-tools.test.ts` inside `describe('marketing.
           document_id: DOCUMENT_ID,
           text_content: null,
         }),
+        artifactRow({
+          id: 'a3',
+          role: 'creative-designer',
+          kind: 'image',
+          document_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+          text_content: null,
+        }),
       ],
       'INSERT INTO human_tasks': [{ id: '66666666-6666-4666-8666-666666666666' }],
     })
     const result = await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
     expect(result).toMatchObject({ proceed: false })
-    // The title, not the uuid: the reviewer has to be able to tell which picture
-    // they are being asked to look at, and a uuid names nothing they recognisable.
+    // The title, not the uuid, and only the unreviewed one. The second line is
+    // spec section 6.1's load-bearing case, and it is the reason the status filter
+    // sits in this file rather than in a WHERE clause the mock above cannot exercise.
     expect(String(result.reason)).toContain('unreviewed images: founder-portrait')
+    expect(String(result.reason)).not.toContain('hero-image')
     expect(String(call('INSERT INTO human_tasks')?.params[4])).toContain('founder-portrait')
     expect(call('INSERT INTO pending_writes')).toBeUndefined()
     expect(call('UPDATE marketing_bundles')).toBeUndefined()
   })
 
-  it('stages a bundle whose only image is reviewed, without asking the documents lane twice', async () => {
+  it('stages a bundle whose only image is reviewed', async () => {
     stubQueries({
-      // The read happens, finds nothing, and the bundle stages. An empty handler
-      // row list is the honest answer for a reviewed image, because this mock
-      // ignores the WHERE clause the real query carries.
-      'FROM documents d': [],
+      'JOIN documents d': [
+        { document_id: DOCUMENT_ID, title: 'hero-image', status: 'ready', kind: 'marketing_asset' },
+      ],
       'FROM marketing_bundles': [bundleRow()],
       'FROM marketing_artifacts': [
         artifactRow({
-          id: 'a2',
           role: 'creative-designer',
           kind: 'image',
           document_id: DOCUMENT_ID,
@@ -4467,67 +4510,84 @@ Add to `tests/mastra/marketing-write-tools.test.ts` inside `describe('marketing.
     })
     const result = await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
     expect(result.proceed).not.toBe(false)
-    expect(call('FROM documents d')).toBeDefined()
+    // The read happens and the bundle still stages: an empty refusal is the
+    // difference between "reviewed" and "there were no pictures to ask about", and
+    // only this assertion tells them apart.
+    expect(call('JOIN documents d')).toBeDefined()
+  })
+
+  it('does not refuse a bundle over a document that is not a marketing asset', async () => {
+    stubQueries({
+      'JOIN documents d': [
+        { document_id: DOCUMENT_ID, title: 'october-invoice', status: 'needs_review', kind: 'invoice' },
+      ],
+      'FROM marketing_bundles': [bundleRow()],
+      'FROM marketing_artifacts': [
+        artifactRow({
+          role: 'creative-designer',
+          kind: 'image',
+          document_id: DOCUMENT_ID,
+          text_content: null,
+        }),
+      ],
+      'INSERT INTO pending_writes': [
+        pendingWriteRow({ object_type: 'marketing_stage', gate: 'approval' }),
+      ],
+      'UPDATE marketing_bundles': [{ id: BUNDLE_ID }],
+    })
+    const result = await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
+    // An image artifact pointing at somebody's invoice is a data problem, not a
+    // review queue full of invoices. Ruling 8b is the filter this case exists for.
+    expect(result.proceed).not.toBe(false)
+    expect(String(result.reason ?? '')).not.toContain('october-invoice')
   })
 ```
 
 - [ ] **Step 2: Run them to make sure they fail**
 
 Run: `npx vitest run tests/db/marketing-assets.test.ts tests/mastra/marketing-write-tools.test.ts`
-Expected: FAIL — `listUnreviewedImageTitles is not exported`, and `unexpected query: SELECT d.title` for the two new stage cases. The other twelve stage cases keep passing, and that is the point of gating the read on `artifacts.some(...)`.
+Expected: FAIL, in four places and no more. The db file's grown case fails on the missing `kind` in both the mapped row and the SQL text. In the stage file, case 1 fails because the bundle stages instead of refusing, and case 2 fails because `call('JOIN documents d')` is undefined — no refusal chain member issues that read yet. Case 3 passes before the change and is a regression guard, not a red step; say so in the report rather than dressing it up.
 
-- [ ] **Step 3: Add the read**
+The other fourteen stage cases keep passing, and that is the point of gating the read on `artifacts.some(...)`.
 
-Append to `src/db/marketing-assets.ts`:
+- [ ] **Step 3: Widen the read**
+
+Modify `listImageAssetStatuses` in `src/db/marketing-assets.ts`: add `kind: string` to the return type and to the `db.query<...>` parameter, add `d.kind` to the projection, add `kind: row.kind` to the mapped object, and rewrite the doc comment's first paragraph so it stops claiming a refusal that this slice is only now building. Keep the `WHERE` exactly as Task 5 shipped it — no status predicate (Ruling 8a), no document-side tenant predicate (Ruling 8c).
 
 ```ts
 /**
- * The titles of this bundle's images that a human has not approved yet.
+ * Every image artifact in a bundle with the kind and status of the document behind
+ * it. One read, two questions: `marketing.generate_assets` uses it as "what does
+ * this bundle already carry", keyed on the title, and `marketing.stage_bundle`
+ * uses it as "what must a reviewer look at before this bundle can be decided",
+ * which is the rows whose kind is `marketing_asset` and whose status is not
+ * `ready`. The status filter is deliberately not in the SQL, because the first
+ * caller has to keep seeing a reviewed image it has already paid for, and because
+ * a refusal a unit test cannot reach is a refusal nobody can prove (Ruling 8a).
  *
- * Task 5's `listImageAssetStatuses` answers "what does this bundle carry", for
- * the asset pass's idempotent skip; this answers "what must a reviewer look at
- * before this bundle can be decided", which is a different question and a
- * different lane: the `kind = 'image'` filter lives on the artifact and the
- * `status` filter lives on the document, so the artifact's own `status` column —
- * which says whether the attachment row is active, not whether the picture is
- * approved — is deliberately not consulted. Both tenant columns are constrained
- * because a join can cross a boundary that either side alone would not.
- *
- * `d.kind = 'marketing_asset'` is not redundant with the artifact join: a
- * document id is a uuid, and an artifact that once pointed at an invoice would
- * otherwise have its `needs_review` refused as an unreviewed image.
+ * Both the artifact's own `status` column and the `kind = 'image'` filter live
+ * where Task 5 put them: the artifact says whether the attachment row is active,
+ * which is not the same fact as whether the picture is approved. The title travels
+ * rather than a bare uuid because an owner told "needs_review" has to work out
+ * which picture is meant.
  */
-export async function listUnreviewedImageTitles(
-  tenantId: string,
-  bundleId: string,
-): Promise<string[]> {
-  const db = getDbClient()
-  const result = await db.query<{ title: string }>(
-    `SELECT d.title
-       FROM documents d
-       JOIN marketing_artifacts a ON a.document_id = d.id
-      WHERE d.tenant_id = $1
-        AND a.tenant_id = $1
-        AND a.bundle_id = $2
-        AND a.kind = 'image'
-        AND d.kind = 'marketing_asset'
-        AND d.status <> 'ready'
-      ORDER BY a.created_at ASC`,
-    [tenantId, bundleId],
-  )
-  return result.rows.map((row) => row.title)
-}
 ```
 
 - [ ] **Step 4: Add the arm**
 
-Modify `src/mastra/tools/marketing-writes.ts`. Add `listUnreviewedImageTitles` to the `../../db/marketing-assets` import Task 6 created, then insert immediately after the line `const slotIssue = slotProblemCheck(artifacts)` — find it with `grep -n "slotProblemCheck(artifacts)" src/mastra/tools/marketing-writes.ts`; it is at line 423 of the file on `main` today, and Task 6's import block has already pushed it down by the time this task runs:
+Modify `src/mastra/tools/marketing-writes.ts`. `listImageAssetStatuses` is already in the `../../db/marketing-assets` import at line 46, so there is no import change. Insert immediately after the line `const slotIssue = slotProblemCheck(artifacts)` — find it with `grep -n "slotProblemCheck(artifacts)" src/mastra/tools/marketing-writes.ts`; it is at line 434 of the file on this branch today, and treat that as a hint, not a requirement:
 
 ```ts
       // Behind the in-memory check, so a bundle with no picture never issues the
-      // query and no existing stage fixture has to learn about it.
+      // second read and no existing stage fixture has to learn about it. The read
+      // is Task 5's, not a fresh one filtered to not-ready rows, because the
+      // filtering has to be somewhere a test can reach (Ruling 8a) — and because
+      // a document that is not a marketing asset is not a picture under review
+      // (Ruling 8b).
       const unreviewedTitles = artifacts.some((artifact) => artifact.kind === 'image')
-        ? await listUnreviewedImageTitles(rc.tenantId, bundle.id)
+        ? (await listImageAssetStatuses(rc.tenantId, bundle.id))
+            .filter((row) => row.kind === 'marketing_asset' && row.status !== 'ready')
+            .map((row) => row.title)
         : []
 ```
 
@@ -4539,12 +4599,22 @@ and add one arm at the end of the `refusal` chain, after the `blocked.length > 0
                   : null
 ```
 
-Last, because the chain's stated rule is cheapest question first (the comment at line 421 says so) and this is the only arm that needs a second database read. Nothing about the other four changes.
+Last, the chain's comment above `const refusal` currently reads "The arms stay in this order because each is a cheaper question than the next" and then names four. The fifth is still last, and it is last for a reason the sentence does not yet say, so extend it rather than leaving a comment that lists four of five:
+
+```ts
+      // The arms stay in this order because each is a cheaper question than the
+      // next: an unread plan cannot be counted, an unnameable page cannot be
+      // placed, an ambiguous slot cannot be hashed, and a name with no adapter is
+      // a build question, not a bundle question. The fifth is the only one that
+      // costs a second read, so it goes after the four that do not.
+```
+
+Nothing about the other four arms changes.
 
 - [ ] **Step 5: Run it green**
 
 Run: `npx vitest run tests/db/marketing-assets.test.ts tests/mastra/marketing-write-tools.test.ts tests/marketing/generate-assets-tool.test.ts`
-Expected: PASS.
+Expected: PASS. The two `generate-assets-tool.test.ts` fixtures at lines 346 and 365 need `kind: 'marketing_asset'` added to their mock rows so the mocks stay shaped like the real return value; the carry behaviour they assert does not read the field.
 
 Run: `npm run typecheck && npm run lint`
 Expected: clean.
@@ -4553,7 +4623,8 @@ Expected: clean.
 
 ```bash
 git add src/db/marketing-assets.ts src/mastra/tools/marketing-writes.ts \
-  tests/db/marketing-assets.test.ts tests/mastra/marketing-write-tools.test.ts
+  tests/db/marketing-assets.test.ts tests/mastra/marketing-write-tools.test.ts \
+  tests/marketing/generate-assets-tool.test.ts
 git commit -m "feat(marketing): staging refuses a bundle whose images nobody has reviewed"
 ```
 
