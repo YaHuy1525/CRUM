@@ -1607,11 +1607,6 @@ export async function committedSpendMinor(tenantId: string): Promise<number> {
   return Number(total)
 }
 
-/**
- * The section 9 audit handle, declared here rather than only in the Interfaces
- * block above: `recordImageSpend` takes it in its signature, so the module does
- * not compile without the type.
- */
 export interface SpendRawExtract {
   predictionId: string
   model: string
