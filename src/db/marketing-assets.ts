@@ -167,8 +167,8 @@ export async function getDesignerArtifactText(tenantId: string, bundleId: string
  * a refusal a unit test cannot reach is a refusal nobody can prove (Ruling 8a).
  *
  * The artifact's own `status` is deliberately not read here. It is a review state
- * on the attachment row (`pending_review`, `approved`, `rejected` in
- * migrations/0018_crum_marketing.sql:67), which is a different question from
+ * on the attachment row (`pending_review`, `approved`, `rejected` — the CHECK at
+ * migrations/0018_crum_marketing.sql:68), which is a different question from
  * whether the picture has been approved, and a `rejected` attachment row still has
  * to name its picture to whoever is staging the bundle. The title travels rather
  * than a bare uuid because an owner told "needs_review" has to work out which

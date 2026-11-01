@@ -780,6 +780,19 @@ describe('marketing.stage_bundle', () => {
           status: 'needs_review',
           kind: 'marketing_asset',
         },
+        // A third status, and the reason it is here: documents.status is
+        // `('pending','processing','ready','needs_review','failed')`
+        // (migrations/0009_crum_documents.sql:38), and with only two values in the
+        // fixture no test can tell `status !== 'ready'` from `status ===
+        // 'needs_review'`. Those are different products — under the second, a
+        // picture whose generation failed or is still running stages as if it had
+        // been looked at.
+        {
+          document_id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+          title: 'scan-fail',
+          status: 'failed',
+          kind: 'marketing_asset',
+        },
       ],
       'FROM marketing_bundles': [bundleRow()],
       'FROM marketing_artifacts': [
@@ -798,6 +811,13 @@ describe('marketing.stage_bundle', () => {
           document_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
           text_content: null,
         }),
+        artifactRow({
+          id: 'a4',
+          role: 'creative-designer',
+          kind: 'image',
+          document_id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+          text_content: null,
+        }),
       ],
       'INSERT INTO human_tasks': [{ id: '66666666-6666-4666-8666-666666666666' }],
     })
@@ -807,6 +827,11 @@ describe('marketing.stage_bundle', () => {
     // spec section 6.1's load-bearing case, and it is the reason the status filter
     // sits in this file rather than in a WHERE clause the mock above cannot exercise.
     expect(String(result.reason)).toContain('unreviewed images: founder-portrait')
+    // The `failed` picture has to be named too, in the same list. This is the
+    // assertion that makes the arm's own operator load-bearing: read as
+    // `status === 'needs_review'` it refuses one title instead of two, and every
+    // other case in this file stays green.
+    expect(String(result.reason)).toContain('unreviewed images: founder-portrait, scan-fail')
     expect(String(result.reason)).not.toContain('hero-image')
     expect(String(call('INSERT INTO human_tasks')?.params[4])).toContain('founder-portrait')
     // params[4] is the title and params[5] is the body, and the body is the half
