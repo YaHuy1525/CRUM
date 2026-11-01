@@ -198,9 +198,17 @@ function bundleReceipt(
 }
 
 /**
- * `marketing.generate_assets` reports what it stored and what it refused, and
- * the refusal half matters for the gate: a fixture that always succeeds teaches
- * the model to promise pictures.
+ * The ten keys `marketing.generate_assets` returns, copied from
+ * `GenerateAssetsOutputSchema` (`src/mastra/tools/marketing-writes.ts:1065`)
+ * rather than from the tool's prose. Two things the fixture has to get right.
+ * The stored half always arrives as `needs_review`, because that is the status
+ * the write sets (`src/db/marketing-assets.ts:95`) and an item that showed a
+ * ready image would teach the model to promise approved creative; and this run
+ * buys one picture, so its `costMinor` and the run's `spentMinor` are written
+ * once and reused rather than typed twice — a receipt that disagrees with
+ * itself teaches a model to report a sum it never added. A refusal fixture is
+ * deliberately not here: this item's sentence asks for the buy, and the
+ * `refused` array being empty is the honest answer to it.
  */
 function assetReceipt(
   bundleId: string,
@@ -209,7 +217,7 @@ function assetReceipt(
 ) {
   return {
     bundleId,
-    assets: [{ name: 'hero-image', documentId: ASSET_DOCUMENT, status: 'needs_review', deduplicated: false, costMinor: 4 }],
+    assets: [{ name: 'hero-image', documentId: ASSET_DOCUMENT, status: 'needs_review', deduplicated: false, costMinor: spentMinor }],
     refused: [],
     spentMinor,
     provider: 'replicate',
@@ -220,7 +228,6 @@ function assetReceipt(
     message,
   }
 }
-
 
 interface World {
   customers: CustomerSeed[]
