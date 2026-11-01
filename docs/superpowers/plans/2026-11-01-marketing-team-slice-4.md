@@ -22,6 +22,7 @@
 - Tool names must satisfy `src/governance/schema.ts:16`. `marketing.generate_assets` is legal; `marketing.generateAssets` is a boot failure. `idempotency_key` must come from the closed `IDEMPOTENCY_KEYS` enum in `src/governance/schema.ts:8`; the new tool declares `draftHash`.
 - Any commit that changes the declared tool surface changes `policy/tools.yaml`, `SPEC_TOOL_SURFACE` in `tests/governance/conformance.test.ts`, the counts in `tests/governance/policy.test.ts:57,69`, the counts in `tests/mastra/active-tools.test.ts:44,70-82,142`, the registry count in `tests/mastra/agent.test.ts:51-53`, and the golden item count in `tests/evals/dataset-seed.test.ts:6,8,23` and `tests/evals/golden-gate.test.ts:184,185` whenever an item is added (Task 7), and the `docs/TECHNICAL_PLAN.md` section 4.6.2 table **in the same commit** (Task 6), or `npm run test:policy` fails.
 - **One golden item moves two assertions.** `getGoldenItems()`'s length is asserted in `tests/evals/dataset-seed.test.ts` and again, as `summary.totalItems`, in `tests/evals/golden-gate.test.ts`. A task that adds an item moves 42 to 43 in both, or Task 14's paid run fails on an arithmetic fact instead of on the behaviour it exists to check.
+- **Line numbers in this plan are read off `main` at writing time; the named anchor is the instruction.** Every task after Task 6 appends to files that other tasks also touch, so a number cited in a later task is already stale by the time it is reachable. `grep -n` for the quoted code, insert beside what you find, and say so in the report if the number and the file disagree. A number is a hint; the quoted line is the requirement.
 - **Run Vitest with explicit file paths, never a bare `--project unit`.** `tests/evals/golden-gate.test.ts` sits in the unit project and calls the live model, so an unfiltered project run costs about twelve model-minutes per go. `npx vitest run tests/marketing/replicate.test.ts`, not `npx vitest run --project unit`.
 - `npm run verify` is red in this repository for reasons unrelated to this slice (backlog M1: six integration failures). This plan's gate is `npm run typecheck`, `npm run lint`, the named test files, and one filtered integration run. Task 14 compares the final full-suite shape against the slice 3 baseline and reports it without hiding it.
 - The working tree carries another effort's uncommitted edits to `.env.example`, `src/mastra/memory.ts`, `src/mastra/recall.ts`, `tests/mastra/memory.test.ts` and `tests/mastra/recall.test.ts`. **Never stage one of those paths.** `git add` takes an explicit file list every time; `git add -A` and `git add .` are forbidden in this plan. `.env.example` is not modified by any task: spec section 14 records the four variables in the spec instead of staging that file.
@@ -3597,7 +3598,7 @@ git commit -m "docs(mastra): tell the designer and the primary agent what the im
 
 **Files:**
 - Modify: `src/db/marketing-assets.ts` (add `listUnreviewedImageTitles`)
-- Modify: `src/mastra/tools/marketing-writes.ts:428-437` (the refusal chain) and its import block
+- Modify: `src/mastra/tools/marketing-writes.ts` (the `stageBundleTool` refusal chain, plus its import block)
 - Test: `tests/db/marketing-assets.test.ts` (Task 5's file, two more cases)
 - Test: `tests/mastra/marketing-write-tools.test.ts` (one new case in `describe('marketing.stage_bundle')`)
 
@@ -3747,7 +3748,7 @@ export async function listUnreviewedImageTitles(
 
 - [ ] **Step 4: Add the arm**
 
-Modify `src/mastra/tools/marketing-writes.ts`. Add `listUnreviewedImageTitles` to the `../../db/marketing-assets` import Task 6 created, then insert immediately after the `const slotIssue = slotProblemCheck(artifacts)` line (418):
+Modify `src/mastra/tools/marketing-writes.ts`. Add `listUnreviewedImageTitles` to the `../../db/marketing-assets` import Task 6 created, then insert immediately after the line `const slotIssue = slotProblemCheck(artifacts)` — find it with `grep -n "slotProblemCheck(artifacts)" src/mastra/tools/marketing-writes.ts`; it is at line 423 of the file on `main` today, and Task 6's import block has already pushed it down by the time this task runs:
 
 ```ts
       // Behind the in-memory check, so a bundle with no picture never issues the
@@ -4629,12 +4630,14 @@ git commit -m "feat(governance): one prediction per open stage draft, before the
 ### Task 11: The prediction door, and the GET that withholds the copy
 
 **Files:**
-- Modify: `src/api/marketing.ts:71-86` (the bundle GET) and a new POST beside it
+- Modify: `src/api/marketing.ts:76-89` (the bundle GET handler) and a new POST beside it
 - Modify: `tests/api/marketing.test.ts:48-58` (the response gained two keys in this task, so the one case that compares the whole body moves with it)
 - Test: `tests/api/marketing-prediction.test.ts` (new)
 
+Line numbers in this task are read off `src/api/marketing.ts` as it stands at 397 lines. Locate the handler by its signature (`app.get('/bundles/:id', async (c) =>`), not by the number: Task 11 is the first marketing edit of the two that touch this file, and Task 12 appends the bytes route below it. `IdSchema` is the file-level `z.string().uuid()` on line 36, and the `auth` closure the new POST calls is on lines 63 to 73.
+
 **Interfaces:**
-- Consumes: `bundlePredictionGate` and `insertPrediction` (Task 10), the `auth` closure already inside `createMarketingRouter` (`src/api/marketing.ts:60-70`), `IdSchema` (line 42).
+- Consumes: `bundlePredictionGate` and `insertPrediction` (Task 10), the `auth` closure already inside `createMarketingRouter` (`src/api/marketing.ts:63-73`), `IdSchema` (line 36).
 - Produces: `GET /api/marketing/bundles/:id` answering `{ bundle, artifacts?, actions, predictionRequired, prediction }`, and `POST /api/marketing/bundles/:id/prediction` answering `200 { prediction, existed }`. Task 13's console reads both shapes; Task 12's bytes route reuses the same `bundlePredictionGate` answer.
 
 Spec section 8.3 is the contract. Two decisions inside it are worth stating before the code, because they are the two a reviewer of this task will ask about.
