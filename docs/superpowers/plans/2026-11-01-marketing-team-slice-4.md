@@ -715,7 +715,15 @@ const BYTES = new Uint8Array([137, 80, 78, 71])
 const REQUEST = { prompt: 'a physio clinic reception at dawn', aspectRatio: '16:9', seed: 4217 }
 
 function json(status: number, body: unknown) {
-  return { ok: status >= 200 && status < 300, status, json: async () => body } as Response
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => body,
+    // The adapter reads text on a refused create, so a double without it throws
+    // a TypeError instead of reporting the status it should have refused on.
+    // Use `as unknown as Response` here if the direct assertion complains.
+    text: async () => JSON.stringify(body),
+  } as Response
 }
 
 function succeeded(predictionId = 'pred-1') {
@@ -863,8 +871,10 @@ describe('generateImage', () => {
     expect(outcome.ok).toBe(false)
     if (outcome.ok) return
     expect(outcome.code).toBe('image_generation_timeout')
-    // 20 polls and no 21st, so one image can cost at most 40 seconds of a turn.
-    expect(sleep).toHaveBeenCalledTimes(20)
+    // 20 polls and no 21st, with a 2 second gap between each — 19 gaps, because
+    // the loop does not wait once it has decided to give up. That is the 40
+    // second ceiling on a turn, and it is sleep plus twenty request latencies.
+    expect(sleep).toHaveBeenCalledTimes(19)
   })
 
   it('stops the run at a revoked token instead of burning 20 more calls on it', async () => {
@@ -1063,6 +1073,11 @@ export function isAspectRatio(value: string): boolean {
  * under-reads every image and the ceiling then quietly means less than it says.
  */
 export function costUsdToMinor(costUsd: string): number {
+  // `parseFloat` stops at a second dot, so "0.0.1" parses as 0 and would
+  // otherwise enter the ledger as a free image. Shape first, then value.
+  if (!/^\d+(\.\d+)?$/.test(costUsd)) {
+    throw new Error(`cost: "${costUsd}" is not a dollar amount Replicate should have reported`)
+  }
   const dollars = Number.parseFloat(costUsd)
   if (!Number.isFinite(dollars) || dollars < 0) {
     throw new Error(`cost: "${costUsd}" is not a dollar amount Replicate should have reported`)
