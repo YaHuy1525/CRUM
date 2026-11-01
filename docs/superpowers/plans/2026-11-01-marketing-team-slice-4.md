@@ -4578,11 +4578,13 @@ Modify `listImageAssetStatuses` in `src/db/marketing-assets.ts`: add `kind: stri
  * caller has to keep seeing a reviewed image it has already paid for, and because
  * a refusal a unit test cannot reach is a refusal nobody can prove (Ruling 8a).
  *
- * Both the artifact's own `status` column and the `kind = 'image'` filter live
- * where Task 5 put them: the artifact says whether the attachment row is active,
- * which is not the same fact as whether the picture is approved. The title travels
- * rather than a bare uuid because an owner told "needs_review" has to work out
- * which picture is meant.
+ * The artifact's own `status` is deliberately not read here. It is a review state
+ * on the attachment row (`pending_review`, `approved`, `rejected` in
+ * migrations/0018_crum_marketing.sql:67), which is a different question from
+ * whether the picture has been approved, and a `rejected` attachment row still has
+ * to name its picture to whoever is staging the bundle. The title travels rather
+ * than a bare uuid because an owner told "needs_review" has to work out which
+ * picture is meant.
  */
 ```
 
@@ -4608,7 +4610,11 @@ and add one arm at the end of the `refusal` chain, after the `blocked.length > 0
 
 ```ts
                 : unreviewedTitles.length > 0
-                  ? `unreviewed images: ${unreviewedTitles.join(', ')}`
+                  ? // `documents.title` is NOT NULL with no unique constraint
+                    // (migrations/0009_crum_documents.sql:30), so two pictures can
+                    // share a name. Listing it twice tells the reviewer nothing they
+                    // can act on twice, so the refusal names each title once.
+                    `unreviewed images: ${[...new Set(unreviewedTitles)].join(', ')}`
                   : null
 ```
 
@@ -4618,8 +4624,12 @@ Last, the chain's comment above `const refusal` currently reads "The arms stay i
       // The arms stay in this order because each is a cheaper question than the
       // next: an unread plan cannot be counted, an unnameable page cannot be
       // placed, an ambiguous slot cannot be hashed, and a name with no adapter is
-      // a build question, not a bundle question. The fifth is the only one that
-      // costs a second read, so it goes after the four that do not.
+      // a build question, not a bundle question. The fifth is the only question
+      // that needs the database at all, and the read above pays for it whether or
+      // not this arm is reached — an earlier refusal throws the answer away. That
+      // is one indexed SELECT against marketing_artifacts_bundle_idx on a path
+      // that already writes a human task, so the read stays where a test can see
+      // it rather than becoming a closure the chain cannot be read through.
 ```
 
 Nothing about the other four arms changes.
@@ -4634,13 +4644,19 @@ Add to `tests/mastra/instructions.test.ts`, after the marketing case Task 7 left
   it('promises the staging refusal that now exists', () => {
     // Green on arrival, and deliberately so: the sentence has been in the
     // instruction since Task 7, so this is a seal rather than a RED. What it
-    // buys is the forward direction — a later edit that drops the sentence while
-    // the arm stays, or rewrites the paragraph to promise something the arm does
-    // not do, has to pass this case on purpose. The behaviour half lives in
-    // `tests/mastra/marketing-write-tools.test.ts`, where Step 1's first case
-    // reads the refusal reason a human actually sees; a pin on prose cannot
+    // buys is the direction that matters — a later edit that drops this sentence
+    // while the arm stays has to pass this case on purpose. The behaviour half
+    // lives in `tests/mastra/marketing-write-tools.test.ts`, where Step 1's first
+    // case reads the refusal reason a human actually sees; a pin on prose cannot
     // detect a deleted arm, and pretending otherwise here would be the same
-    // species of claim this task exists to stop.
+    // species of claim this task exists to stop. It cannot police the rest of the
+    // paragraph either: a rewrite that keeps these words passes, which is why the
+    // arm's own cases, not this one, are the contract.
+    //
+    // One line of the pinned sentence sits on one source line
+    // (src/mastra/instructions.ts:99), so re-wrapping that prose breaks this case
+    // with no change of meaning. Treat that failure as "the prose moved, restate
+    // the pin", not as a lost refusal.
     expect(CRUM_INSTRUCTIONS).toContain(
       'staging refuses a bundle that still carries an unreviewed image',
     )
@@ -4650,10 +4666,63 @@ Add to `tests/mastra/instructions.test.ts`, after the marketing case Task 7 left
 Run: `npx vitest run tests/mastra/instructions.test.ts`
 Expected: PASS, 14 tests (13 before this case).
 
+- [ ] **Step 5b: The four assertions the review round added**
+
+None of these were in the first draft, and each one exists because a mutation the reviewer
+ran — reproduced independently before shipping — stayed green without it. They are listed
+together because they are one commit (`8cdad3d`), and separately because each is a different
+kind of hole.
+
+Ruling 8a's guard rail, in the `names each image artifact with its document status` case in
+`tests/db/marketing-assets.test.ts`, directly after `expect(call!.sql).toContain('d.kind')`:
+
+```ts
+    // Ruling 8a's guard rail, stated as a prohibition: `d.kind` and `d.status`
+    // may appear as projected columns and nowhere else, because a SQL-side
+    // filter hides the `ready` rows Task 6's carry check reads and the bundle
+    // re-buys an image the tenant already owns.
+    expect(call!.sql).not.toMatch(/d\.(status|kind)\s*(=|<>|!=)/)
+```
+
+Positive `toContain` assertions on a predicate cannot fail when text is *appended after*
+them, and the mock ignores `WHERE`, so before this line the exact SQL-side filter Ruling 8a
+rejected passed the whole suite at 70 green.
+
+The refusal body, in the title case in `describe('marketing.stage_bundle')`:
+
+```ts
+    // params[4] is the title and params[5] is the body, and the body is the half
+    // the reviewer actually opens. Both interpolate the same `refusal` string in
+    // the createHumanTask call, so this is one line of insurance against a body
+    // that stops quoting it.
+    expect(String(call('INSERT INTO human_tasks')?.params[5])).toContain('founder-portrait')
+```
+
+The dedup case, and `[...new Set(unreviewedTitles)]` in the fifth arm (Step 4 shows the
+shipped expression). `documents.title` is NOT NULL with no unique constraint
+(`migrations/0009_crum_documents.sql:30`; the only UNIQUE there is `(tenant_id, content_hash)`
+at `:49`), so two pictures can share a name with no bug involved, and a reviewer told
+`hero-image, hero-image` cannot tell which one to open. The assertion is `toBe` on the whole
+reason string, which is what makes it kill the mutation rather than note it.
+
+The flip case, which is spec section 10's third section 6.1 case and was owned by no task:
+`reviewDocument` (`src/db/documents.ts:543`) writes `status = 'ready'`, this arm accepts that
+literal, and nothing outside this case pinned the two against each other —
+`tests/api/documents.test.ts:205` stubs its own UPDATE with its own `'ready'`. It refuses on a
+`needs_review` row, asserts no `pending_writes` insert, restubs the same read with the
+reviewed row, stages, and asserts the payload's `artifactCount`.
+
+The two comment corrections are in Step 3 and Step 4 above, in their shipped form: the read
+never touched `a.status` and `marketing_artifacts.status` is a review state, not an active
+flag; and the read is paid eagerly, so the ordering sentence has to say so rather than claim a
+saving. Task 8 review finding 7's always-plural wording (`1 picture` prints as `images:`) is
+carried to Task 14, and finding 9 (the Task 8 report said the refusal string was pinned in two
+test files; it is one, plus the source) is a report inaccuracy, not shipped text.
+
 - [ ] **Step 6: Run it green**
 
 Run: `npx vitest run tests/db/marketing-assets.test.ts tests/mastra/marketing-write-tools.test.ts tests/marketing/generate-assets-tool.test.ts tests/mastra/instructions.test.ts`
-Expected: PASS. The two `generate-assets-tool.test.ts` fixtures at lines 346 and 365 need `kind: 'marketing_asset'` added to their mock rows so the mocks stay shaped like the real return value; the carry behaviour they assert does not read the field.
+Expected: PASS. The two `generate-assets-tool.test.ts` fixtures at lines 346 and 365 need `kind: 'marketing_asset'` added to their mock rows so the mocks stay shaped like the real return value; the carry behaviour they assert does not read the field. After Step 5b this is 86 tests across the four files (84 at the first commit, +2 cases).
 
 Run: `npm run typecheck && npm run lint`
 Expected: clean.
@@ -4846,13 +4915,13 @@ Modify `src/mastra/index.ts`. Line 17's `document-intake` import becomes:
 import { documentIntakeWorkflow, MAX_DOCUMENT_BYTES } from './workflows/document-intake'
 ```
 
-and after line 43's Meta import add:
+and after line 41's Meta import add:
 
 ```ts
 import { makeReplicateAdapter, setImageAdapter } from '../marketing/image-provider'
 ```
 
-Beside `logMetaLaneOnce` (lines 115-124) add the third lane logger, following the existing two exactly — a module-level `let lastImageLane: 'replicate' | 'none' | undefined` above it, next to `lastLane` and `lastMetaLane`:
+Beside `logMetaLaneOnce` (lines 115-123) add the third lane logger, following the existing two exactly — a module-level `let lastImageLane: 'replicate' | 'none' | undefined` above it, next to `lastLane` and `lastMetaLane`:
 
 ```ts
 function logImageLaneOnce(lane: 'replicate' | 'none'): void {
