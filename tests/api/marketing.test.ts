@@ -7,10 +7,21 @@ const db = vi.hoisted(() => ({
   listMarketingActions: vi.fn(),
 }))
 
+const predictions = vi.hoisted(() => ({
+  bundlePredictionGate: vi.fn(),
+  insertPrediction: vi.fn(),
+}))
+
 vi.mock('../../src/db/marketing', () => ({
   getMarketingBundle: db.getMarketingBundle,
   listMarketingArtifacts: db.listMarketingArtifacts,
   listMarketingActions: db.listMarketingActions,
+}))
+
+vi.mock('../../src/db/reviewer-predictions', () => ({
+  bundlePredictionGate: predictions.bundlePredictionGate,
+  insertPrediction: predictions.insertPrediction,
+  getPredictionForDraft: vi.fn(),
 }))
 
 // The router imports the stagers from this module, and while marketing-writes is
@@ -44,6 +55,7 @@ function fetchBundle(id = BUNDLE, headers: Record<string, string> = AUTH) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  predictions.bundlePredictionGate.mockResolvedValue({ required: false, pendingWriteId: null, prediction: null })
 })
 
 describe('GET /api/marketing/bundles/:id', () => {
@@ -57,6 +69,8 @@ describe('GET /api/marketing/bundles/:id', () => {
       bundle: { id: BUNDLE, tenantId: TENANT, status: 'staged' },
       artifacts: [{ id: 'a1', role: 'marketer-copywriter' }],
       actions: [{ id: 'm1', action: 'publish_page' }],
+      predictionRequired: false,
+      prediction: null,
     })
     expect(db.getMarketingBundle).toHaveBeenCalledWith(TENANT, BUNDLE)
     expect(db.listMarketingActions).toHaveBeenCalledWith(TENANT, BUNDLE)

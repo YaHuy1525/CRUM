@@ -8,6 +8,7 @@ import { stagePromotion, stageRetry } from '../mastra/tools/marketing-writes'
 import { getMarketingBundle, listAllCampaigns, listMarketingActions, listMarketingArtifacts } from '../db/marketing'
 import { listRecentSnapshots, type MetricsSnapshotRow } from '../db/marketing-metrics'
 import { bundleForLeadToken, countLeadsSince, normalizeEmail, recordLead } from '../db/marketing-leads'
+import { bundlePredictionGate, insertPrediction } from '../db/reviewer-predictions'
 import { sendConversionEvent, type ConversionsApiConfig } from '../marketing/meta-conversions'
 import type { CampaignMetrics } from '../../console/lib/types'
 
@@ -34,6 +35,30 @@ export interface MarketingRouterDeps {
 }
 
 const IdSchema = z.string().uuid()
+
+/**
+ * The fields that carry a proposal, as opposed to a pointer to one.
+ *
+ * A gated bundle with no prediction gets these deleted rather than nulled, and
+ * `artifacts` gets omitted from the response rather than returned empty: spec
+ * section 8.2's whole argument is that a reviewer must not be able to read what
+ * they have not yet committed to, and a `null` under a familiar key is a fact
+ * about the shape of the proposal. `brief` stays because the owner wrote it, and
+ * it is the only thing that tells them which bundle they are looking at.
+ */
+const PROSE_BUNDLE_KEYS = [
+  'strategy',
+  'copy',
+  'mediaPlan',
+  'funnelPlan',
+  'analysis',
+  'audienceNote',
+] as const
+
+// 2000 characters is a prediction. A pasted bundle is not one, and the cap is a
+// schema rule rather than an `if` so the same number answers a missing field and
+// an oversized one: both are `prediction_required_text`, both are 400.
+const PredictionSchema = z.object({ predictedOutcome: z.string().trim().min(1).max(2000) })
 
 const LeadFormSchema = z.object({
   name: z.string().trim().min(1).max(200),
@@ -83,9 +108,72 @@ export function createMarketingRouter(deps: MarketingRouterDeps): Hono {
     const bundle = await getMarketingBundle(gate.identity.tenantId, parsed.data)
     if (!bundle) return c.json({ error: 'not_found' }, 404)
 
-    const artifacts = await listMarketingArtifacts(gate.identity.tenantId, bundle.id)
+    const predictionGate = await bundlePredictionGate(gate.identity.tenantId, bundle.id)
     const actions = await listMarketingActions(gate.identity.tenantId, bundle.id)
-    return c.json({ bundle, artifacts, actions })
+
+    if (predictionGate.required && predictionGate.prediction === null) {
+      const stripped: Record<string, unknown> = { ...bundle }
+      for (const key of PROSE_BUNDLE_KEYS) delete stripped[key]
+      // No artifacts read at all: a withheld list is still a list that was read,
+      // and the console renders the gate from predictionRequired alone.
+      return c.json({
+        bundle: stripped,
+        actions,
+        predictionRequired: true,
+        prediction: null,
+      })
+    }
+
+    const artifacts = await listMarketingArtifacts(gate.identity.tenantId, bundle.id)
+    return c.json({
+      bundle,
+      artifacts,
+      actions,
+      predictionRequired: predictionGate.required,
+      prediction: predictionGate.prediction,
+    })
+  })
+
+  // The cognitive forcing gate's write door (spec section 8.2). It stages
+  // nothing and decides nothing: approving still goes through POST
+  // /api/approvals/drafts/:id/decision, so this route only records what the
+  // reviewer expected, which is the half of the device that makes the number
+  // unfakeable after the fact.
+  app.post('/bundles/:id/prediction', async (c) => {
+    const gate = await auth(c)
+    if ('error' in gate) return gate.error
+    const parsed = IdSchema.safeParse(c.req.param('id'))
+    if (!parsed.success) return c.json({ error: 'invalid_id' }, 400)
+
+    // The tenant check first, on purpose: bundlePredictionGate answers "is there
+    // an open stage draft for this id", and letting a caller probe another
+    // tenant's bundle through it would make a 409 leak the existence of a draft.
+    const bundle = await getMarketingBundle(gate.identity.tenantId, parsed.data)
+    if (!bundle) return c.json({ error: 'not_found' }, 404)
+
+    const body: unknown = await c.req.json().catch(() => null)
+    const parsedBody = PredictionSchema.safeParse(body)
+    if (!parsedBody.success) return c.json({ error: 'prediction_required_text' }, 400)
+    // The schema trims before it measures, so the stored text has no trailing
+    // newline and a whitespace-only field is the same 400 as a missing one.
+    const outcome = parsedBody.data.predictedOutcome
+
+    const predictionGate = await bundlePredictionGate(gate.identity.tenantId, bundle.id)
+    if (!predictionGate.required) return c.json({ error: 'prediction_bundle_not_staged' }, 409)
+
+    // A second submission is not a second prediction: the row that exists is the
+    // answer, and `existed` is how the console says so without telling a reviewer
+    // they failed.
+    if (predictionGate.prediction !== null) {
+      return c.json({ prediction: predictionGate.prediction, existed: true }, 200)
+    }
+
+    const stored = await insertPrediction({
+      tenantId: gate.identity.tenantId,
+      pendingWriteId: predictionGate.pendingWriteId,
+      predictedOutcome: outcome,
+    })
+    return c.json({ prediction: stored.prediction, existed: !stored.created }, 200)
   })
 
   // Two staging doors, no deciding door. These create the same pending write the
