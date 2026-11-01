@@ -4177,10 +4177,10 @@ git commit -m "feat(marketing): generate_assets spends the daily image budget on
 **Files:**
 - Modify: `src/mastra/agents/creative-designer.ts:4-14` (the one `INSTRUCTIONS` string)
 - Modify: `src/mastra/instructions.ts` (a new `<section id="marketing">` before `<section id="tools">` at line 80)
-- Modify: `tests/mastra/marketing-agents.test.ts` (one case)
+- Modify: `tests/mastra/marketing-agents.test.ts` (one case, in the `the marketing team shape` describe)
 - Modify: `tests/mastra/instructions.test.ts` (one case)
 - Modify: `src/evals/golden-items.ts` (one item, one receipt helper)
-- Modify: `tests/evals/dataset-seed.test.ts:6,8,23` (42 becomes 43, `write` 10 becomes 11)
+- Modify: `tests/evals/dataset-seed.test.ts:6,8,22` (42 becomes 43, `write` 10 becomes 11)
 - Modify: `tests/evals/golden-gate.test.ts:18,166,184,185` (the same 42 in a comment, a comment, a title and an expectation)
 
 **Interfaces:**
@@ -4191,22 +4191,27 @@ Spec section 7 has the sentences; write them verbatim. Both are load-bearing in 
 
 - [ ] **Step 1: Add the failing instruction assertions**
 
-In `tests/mastra/marketing-agents.test.ts`, add one case inside the `describe.each(PAIRS)` block. It runs for all six roles, so guard on the role:
+In `tests/mastra/marketing-agents.test.ts`, add one case to the `describe('the marketing team shape')` block at line 69, **not** inside `describe.each(PAIRS)`. The role guard this step first drafted (`if (role !== 'creative-designer') return`) makes five of the six generated runs assert nothing at all — a green suite whose count overstates what it checks — and the file already imports both designer objects at line 7, so one direct case costs nothing and runs once:
 
 ```ts
   it('tells the designer that a downstream machine, not a human, will run its prompts', async () => {
-    if (role !== 'creative-designer') return
-    const instructions = (await agent.getInstructions()) as string
-    // The substring is the sentence spec section 7 adds. An instruction that
-    // drops it leaves the designer writing prompts sized for a person.
+    // The two substrings are the sentence spec section 7 adds. An instruction
+    // that drops it leaves the designer writing prompts sized for a person.
+    const instructions = (await creativeDesignerAgent.getInstructions()) as string
     expect(instructions).toContain('executed by an asset pass outside your control')
     expect(instructions).toContain('a wasted payment')
-    // Still tool-less after slice 4, and asserted here because the whole design
-    // depends on the designer not being able to spend.
-    expect(Object.keys(agent.tools ?? {})).toHaveLength(0)
-    expect(subagent.tools).toBeUndefined()
+    // Still tool-less after slice 4, and read through the public API rather than
+    // a property: `tools` is not a member of the Agent type, so the draft's
+    // `Object.keys(agent.tools ?? {})` fails typecheck and, had it compiled,
+    // would have measured an empty object it invented (probed against the real
+    // agent: `'tools' in creativeDesignerAgent` is false, `listTools()` returns
+    // no keys). This is the Agent-instance half; the subagent declaration's
+    // `tools: {}` is already pinned for all six roles by the case at line 44.
+    expect(Object.keys(await creativeDesignerAgent.listTools())).toHaveLength(0)
   })
 ```
+
+Two assertions the first draft of this step carried are gone on purpose, and both were wrong rather than merely redundant: `expect(subagent.tools).toBeUndefined()` contradicts line 46 of the same file, which asserts that same field `toEqual({})` and is true (`creative-designer.ts:32` declares `tools: {}`), and the `agent.tools` read above does not exist on the class.
 
 In `tests/mastra/instructions.test.ts`, inside `describe('CRUM instruction block')`:
 
@@ -4222,12 +4227,12 @@ In `tests/mastra/instructions.test.ts`, inside `describe('CRUM instruction block
   })
 ```
 
-Add `import { CRUM_INSTRUCTIONS } from '../../src/mastra/instructions'` if that file does not already import it; check the top of the file first, because the existing cases read the same constant.
+Add `import { CRUM_INSTRUCTIONS } from '../../src/mastra/instructions'` if that file does not already import it — it does, at line 2, so on today's branch this line is a check rather than an edit. Nothing in the existing seven cases reads a marketing word: `grep -i "marketing|bundle|designer|campaign"` over `src/mastra/instructions.ts` returns nothing today, which is why all three assertions above are genuinely red rather than three quarters of a formality.
 
 - [ ] **Step 2: Run them to make sure they fail**
 
 Run: `npx vitest run tests/mastra/marketing-agents.test.ts tests/mastra/instructions.test.ts`
-Expected: FAIL on the three `toContain` assertions above; the six-role cases keep passing.
+Expected: FAIL, one case per file and no more. `marketing-agents.test.ts` fails the designer case on both `toContain` lines (its `listTools()` assertion passes in RED, correctly — the designer was already tool-less and this task does not change that); `instructions.test.ts` fails the marketing case on all three `toContain` lines. The other cases in both files keep passing, which is the point of the two numbers. And at Step 6, when the markup exists, a case beyond these two that has gone red is the section disturbing something else — in this file that almost always means the articles/whys equality at `instructions.test.ts:16-23`.
 
 - [ ] **Step 3: Write the designer sentence**
 
@@ -4258,25 +4263,28 @@ Modify `src/mastra/instructions.ts`, inserting between the `</section>` that clo
 ```
   <section id="marketing">
     <h2>Campaign bundles and creative</h2>
-    <p>When a campaign needs creative, delegate to
-    <code>creative-designer</code> and pass its JSON object to
-    <code>marketing.save_bundle</code> as one artifact with role
-    <code>creative-designer</code>, kind <code>script</code>, and its full text
-    in <code>textContent</code>. That stored prompt set is the only thing
-    <code>marketing.generate_assets</code> will spend money on, so a bundle
-    without it cannot have images.</p>
-    <p class="why">The asset pass reads the stored artifact row and never takes
-    prompts as arguments, because a bundle whose pictures were bought with
-    prompts nobody reviewed is a bundle nobody can approve. Passing the
-    designer's own text through save is what keeps the reviewed thing and the
-    paid-for thing the same thing.</p>
+    <article>
+      <h3>Creative is stored before it is paid for</h3>
+      <p>When a campaign needs creative, delegate to
+      <code>creative-designer</code> and pass its JSON object to
+      <code>marketing.save_bundle</code> as one artifact with role
+      <code>creative-designer</code>, kind <code>script</code>, and its full text
+      in <code>textContent</code>. That stored prompt set is the only thing
+      <code>marketing.generate_assets</code> will spend money on, so a bundle
+      without it cannot have images.</p>
+      <p class="why">The asset pass reads the stored artifact row and never takes
+      prompts as arguments, because a bundle whose pictures were bought with
+      prompts nobody reviewed is a bundle nobody can approve. Passing the
+      designer's own text through save is what keeps the reviewed thing and the
+      paid-for thing the same thing.</p>
+    </article>
     <p>Generated images arrive as <code>needs_review</code>. Say so when you
     report a run: they are not approved creative until the owner reviews them,
     and staging refuses a bundle that still carries an unreviewed image.</p>
   </section>
 ```
 
-The `<p class="why">` pattern is the file's own: every rule in `rules` carries one, and `tests/mastra/instructions.test.ts:16` asserts the file explains the why behind its rules. A section without a `why` reads like a rule nobody thought about.
+The `<article>` wrapper is not decoration, and this is the one place in the task where the shape of the markup decides whether the suite is green. `tests/mastra/instructions.test.ts:16-23` counts `<article>\s*<h3>` and `<p class="why">` and asserts the two counts are **equal** — the file's rule is that every rule carries its why, expressed as an equality rather than a proportion. A marketing section that adds a bare `<p class="why">` with no `<article><h3>` above it therefore turns a passing test red: five articles against six whys. Wrapping the contract paragraph and its rationale in one article keeps them at six and six, and the same article is what makes the paragraph read like a rule rather than a note. `articles.length >= 5` still holds at six, and the examples case is untouched because this section carries no `<article class="example">`.
 
 - [ ] **Step 5: Add the golden item**
 
@@ -4307,6 +4315,8 @@ function assetReceipt(
   }
 }
 ```
+
+`assetReceipt` is the tool's own ten output keys, checked against `GenerateAssetsOutputSchema` at `src/mastra/tools/marketing-writes.ts:1065-1090` rather than against the Interfaces list above: `bundleId`, `assets` (five fields each, `status` a plain string so `'needs_review'` is legal), `refused`, `spentMinor`, the two nullable `provider`/`model`, the nullable `humanTaskId`, `riskScore` in 0..100, `gate` from the three-value enum, and `message`. A fixture that drifts from the schema is a golden item that trains the model on an answer the tool cannot give.
 
 `ASSET_DOCUMENT` is a new uuid constant beside the existing `BUNDLE_PHYSIO` and `WRITE_BUNDLE_DRAFT`; mint it as `const ASSET_DOCUMENT = 'bbbbbbbb-1111-4111-8111-111111111111'` in the same block, matching the local style rather than inventing a generator. Then add the item after the second marketing item (the save-then-stage one at line 502):
 
