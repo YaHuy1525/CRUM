@@ -1041,8 +1041,8 @@ export const retryPublishTool = createTool({
  * `src/marketing/replicate.ts:26-31` can answer with, carried through verbatim) and
  * `asset_storing_failed`.
  *
- * The adapter check (`getImageAdapter()` at :1175) comes before the artifact read
- * (`getDesignerArtifactText` at :1186) on purpose, so a run with no adapter
+ * The adapter check (`getImageAdapter()`) comes before the artifact read
+ * (`getDesignerArtifactText`) on purpose, so a run with no adapter
  * registered and an unparsable artifact answers `image_provider_not_configured`,
  * not `asset_prompts_unparsable`: the adapter is the cheaper of the two questions
  * and it is the one that decides whether any request could leave at all. Both
