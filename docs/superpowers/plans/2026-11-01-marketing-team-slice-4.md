@@ -414,8 +414,11 @@ Create `tests/db/documents-asset-lane.test.ts`. This is a unit test, so `pg` is 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockQuery = vi.fn()
+// One mock function for both doors, the way tests/db/marketing.test.ts:3 does
+// it: queryRows goes through pool.query and insertDocument goes through
+// client.query, so a separate mock for each records only half the calls.
 const mockClient = { query: mockQuery, release: vi.fn() }
-const mockPool = { query: vi.fn(), connect: vi.fn(async () => mockClient), end: vi.fn() }
+const mockPool = { query: mockQuery, connect: vi.fn(async () => mockClient), end: vi.fn() }
 
 vi.mock('pg', () => ({ Pool: vi.fn(() => mockPool) }))
 vi.mock('../../src/config/env', () => ({
@@ -566,7 +569,7 @@ describe('listDocuments', () => {
 - [ ] **Step 2: Run them to make sure they fail**
 
 Run: `npx vitest run tests/db/documents-asset-lane.test.ts`
-Expected: FAIL. The TypeScript-only assertions fail at compile (`'marketing_asset'` is not assignable to `kind`), and the first byte-lane case fails with `expected 0 to be 1` from `calls('INSERT INTO document_files')` — that is the spec's silent byte loss, reproduced as a red test.
+Expected: FAIL, and name which cases fail rather than forcing the others to. Vitest strips types without checking them, so the widened unions are not a red assertion — `npm run typecheck` at Step 5 is what proves them. The behavioural RED is: the first case fails `expected 0 to be 1` from `calls('INSERT INTO document_files')`, which is spec section 4.1's silent byte loss reproduced as a test, and both `listDocuments` cases fail because no `d.kind <> 'marketing_asset'` exists yet. The second and third cases pass in RED and must pass in GREEN: today's code already writes both lanes for an upload that has a parse run, and already writes nothing for a duplicate hash.
 
 - [ ] **Step 3: Widen the two unions and hoist the guard**
 
