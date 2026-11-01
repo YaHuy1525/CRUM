@@ -2603,14 +2603,17 @@ git commit -m "feat(marketing): add the asset prompt parser and the generated im
 - Modify: `src/mastra/tools/marketing-writes.ts` (append `generateAssetsTool`)
 - Modify: `src/marketing/payload.ts` (add `generateAssetsRiskView`)
 - Modify: `policy/tools.yaml` (declare the tool immediately above the `# ── approval (13)` header at line 184, and bump the `# ── auto (6)` header comment at line 141 to `# ── auto (7)`)
-- Modify: `src/mastra/processors/write-claim-guard.ts:8-24` (`MUTATING_TOOL_IDS`)
+- Modify: `src/mastra/processors/write-claim-guard.ts:8-25` (`MUTATING_TOOL_IDS`)
 - Modify: `src/mastra/agent.ts:36,88` (the `marketing-writes` import and the registry)
-- Modify: `tests/governance/conformance.test.ts:51-55,94`
+- Modify: `tests/governance/conformance.test.ts:51-55,92`
 - Modify: `tests/governance/policy.test.ts:57,69`
 - Modify: `tests/governance/marketing-payload.test.ts`
-- Modify: `tests/mastra/active-tools.test.ts:44,70,71,74,76,80,82,142` (one `AUTO_TOOLS` entry, two derived list comments, two titles, three assertions)
+- Modify: `tests/mastra/active-tools.test.ts:44,70,71,74,76,80,82,143` (one `AUTO_TOOLS` entry, two derived list comments, two titles, three assertions)
+- Modify: `tests/mastra/agent.test.ts:51-53` (the registry count and its title)
+- Modify: `tests/mastra/processors/write-claim-guard.test.ts:52` plus two `toContain` rows
 - Modify: `docs/TECHNICAL_PLAN.md` section 4.6.2
 - Test: `tests/marketing/generate-assets-tool.test.ts`
+- Test: `tests/integration/marketing-generate-assets.test.ts`
 
 **Interfaces:**
 - Consumes: `parseAssetPrompts` + `AssetPrompt` (Task 5), `insertAssetDocument` + `getDesignerArtifactText` + `listImageAssetStatuses` (Task 5), `admitsRun` + `committedSpendMinor` + `recordImageSpend` (Task 4), `generateImage` + `ImageOutcome` + `ImageRequest` (Task 3), `insertMarketingArtifacts` + `getMarketingBundle` + `ArtifactInput` from `src/db/marketing.ts`, `createHumanTask` from `src/db/pending-writes.ts`, `loadPolicy` + `scoreRisk` + `policy.gateFor`.
@@ -2762,17 +2765,19 @@ function failImage(code: string, detail: string, charge: unknown = null, deadTok
  */
 function ledger(start = 0) {
   let committed = start
-  h.committedSpendMinor.mockImplementation(async () => committed)
-  h.recordImageSpend.mockImplementation(async (params: { costMinor: number }) => {
+  // Not `async () =>`: this repo's lint rejects an async arrow with no await in it,
+  // and a promise literal keeps the ledger's timing identical.
+  h.committedSpendMinor.mockImplementation(() => Promise.resolve(committed))
+  h.recordImageSpend.mockImplementation((params: { costMinor: number }) => {
     committed += params.costMinor
-    return 'spend-row'
+    return Promise.resolve('spend-row')
   })
   return { get committed() { return committed } }
 }
 
 async function run(input: { bundleId: string }) {
   const { generateAssetsTool } = await import('../../src/mastra/tools/marketing-writes')
-  return (await generateAssetsTool.execute!(input as never, context)) as {
+  return (await generateAssetsTool.execute!(input, context)) as {
     bundleId: string
     assets: Array<{ name: string; documentId: string; status: string; deduplicated: boolean; costMinor: number }>
     refused: Array<{ name: string; code: string; detail: string }>
@@ -2831,7 +2836,17 @@ describe('marketing.generate_assets refuses before it costs anything', () => {
 
   it('refuses a missing bundle', async () => {
     h.getMarketingBundle.mockResolvedValue(null)
-    expect((await run({ bundleId: BUNDLE })).refused[0]!.code).toBe('not_found')
+    const result = await run({ bundleId: BUNDLE })
+    expect(result.refused[0]!.code).toBe('not_found')
+    // The prose has to match the rows: `bundle` is null here, so the human-task
+    // block is skipped and no task exists. This case is the only cover for that
+    // branch of the refused-branch message, which used to promise a task
+    // unconditionally.
+    expect(result.humanTaskId).toBeNull()
+    expect(h.createHumanTask).not.toHaveBeenCalled()
+    expect(result.message).toContain('not_found')
+    expect(result.message).toContain('No human task was created')
+    expect(result.message).not.toContain('A human task was created.')
   })
 
   it('refuses with no_asset_prompts when the designer artifact row is absent', async () => {
@@ -2873,6 +2888,27 @@ describe('marketing.generate_assets refuses before it costs anything', () => {
     expect(task.title).toContain('refused 3 asset(s)')
   })
 
+  it('keeps the refusal prose to ten entries but reports every refusal', async () => {
+    // `refusedProse`'s `slice(0, 10)` is the only bound on how much text a run can
+    // write into one `human_tasks.body` row (ruling 6d): an artifact of five
+    // thousand prompts would otherwise put five thousand sentences in it. Nothing
+    // else in this file reaches ten refusals — the largest is three — so the
+    // `…and N more.` tail was never executed and never asserted. Eleven is the
+    // smallest set that runs the tail, and the tool output must still hold all
+    // eleven, because the prose is capped for the queue, not for the owner.
+    const names = Array.from({ length: 11 }, (_unused, index) => `asset-${index + 1}`)
+    h.getDesignerArtifactText.mockResolvedValue(promptJson(...names))
+    h.generate.mockResolvedValue(
+      failImage('image_generation_failed', 'replicate rejected the api token (401)', null, true),
+    )
+    const result = await run({ bundleId: BUNDLE })
+    expect(result.refused).toHaveLength(11)
+    const [task] = h.createHumanTask.mock.calls[0] as [{ body: string }]
+    expect(task.body).toContain('\u2026and 1 more.')
+    expect(task.body).toContain('asset-1: image_generation_failed')
+    expect(task.body).not.toContain('asset-11')
+  })
+
   it('keeps a refusal detail to one sentence when the artifact echoes back at it', async () => {
     // `asset-prompts.ts:47-50` interpolates JSON.stringify(parsed) into the detail,
     // and a designer artifact that is a JSON-encoded long string makes that detail
@@ -2892,10 +2928,13 @@ describe('marketing.generate_assets spends', () => {
     // must have come out of the artifact row. That is the assertion, and it is the
     // reason the tool cannot be talked into an image the reviewer never read.
     const result = await run({ bundleId: BUNDLE })
+    // `as number` because `expect.any` returns `any`, and this repo's lint fails an
+    // unsafe assignment. The matcher still asserts "some number"; the seed's value
+    // is pinned by the case below, not here.
     expect(h.generate).toHaveBeenCalledWith({
       prompt: 'a prompt for hero-image',
       aspectRatio: '16:9',
-      seed: expect.any(Number),
+      seed: expect.any(Number) as number,
       negativePrompt: null,
     })
     expect(result.assets).toHaveLength(1)
@@ -2927,12 +2966,21 @@ describe('marketing.generate_assets spends', () => {
       tenantId: TENANT,
       documentId: DOC,
       costMinor: 7,
+      // Named explicitly by the tool, not left to `image-spend.ts`'s
+      // REPLICATE_PROVIDER default: the ledger row and the answer below have to
+      // agree about who was paid even when the registered adapter is not Replicate.
+      provider: 'replicate',
       rawExtract: {
         predictionId: 'pred-hero-image',
         model: 'black-forest-labs/flux-1.1-pro',
         costUsd: '0.04',
       },
     })
+    // The pair the owner reads. `provider` used to be typed in the output schema
+    // and asserted nowhere, so a tool that booked every row under the default while
+    // answering with `adapter?.provider` passed; these two lines are what close it.
+    expect(result.provider).toBe('replicate')
+    expect(result.model).toBe('black-forest-labs/flux-1.1-pro')
     expect(result.spentMinor).toBe(7)
     expect(result.assets[0]).toEqual({
       name: 'hero-image',
@@ -3012,6 +3060,7 @@ describe('marketing.generate_assets spends', () => {
       tenantId: TENANT,
       documentId: null,
       costMinor: 4,
+      provider: 'replicate',
       // The failed path takes the model name from the adapter, because a charge
       // carries a prediction id and a price but not the model that made it.
       rawExtract: {
@@ -3041,6 +3090,7 @@ describe('marketing.generate_assets spends', () => {
       tenantId: TENANT,
       documentId: null,
       costMinor: 4,
+      provider: 'replicate',
       rawExtract: {
         predictionId: 'pred-a',
         model: 'black-forest-labs/flux-1.1-pro',
@@ -3101,7 +3151,9 @@ describe('marketing.generate_assets stays an auto tool governance can see', () =
 })
 ```
 
-Three things this file deliberately does not mock, and why: `image-spend`'s arithmetic is imported for real through `importActual`, because the boundary cases are the point of the task; `asset-prompts` is imported for real, because the refusal reasons come from its exact strings; and `governance/policy` is not mocked at all, so the tool's `loadPolicy()` reads the repository `policy/tools.yaml` and Step 5's governance edits are what turn this suite green.
+Three things this file deliberately does not mock, and why: `image-spend`'s arithmetic is imported for real through `importActual`, because the boundary cases are the point of the task; `asset-prompts` is imported for real, because the refusal reasons come from its exact strings; and `governance/policy` is not mocked at all, so the tool's `loadPolicy()` reads the repository `policy/tools.yaml` and Step 6's governance edits are what turn this suite green.
+
+Twenty-four cases, and four of them are the controller's rather than the plan author's, each because a bound or a lane the tool owns had no test: the named-asset ceiling refusal (a run-level refusal must name every pending asset, not one `'*'` row), the 400-character detail bound on a provider message, the invoice for a prediction the document lane refused, and — added by this task's review round — the ten-entry cap on the refusal prose. That last one is the case that keeps `refusedProse`'s `slice(0, 10)` honest: eleven names through a dead-token failure assert `refused.length === 11` while the human-task body carries `…and 1 more.` and stops at `asset-10`. Without it the cap is a number in a file that nothing executes, and the thing it exists to prevent — a 5,000-prompt artifact writing 5,000 sentences into `human_tasks.body` — goes untested.
 
 - [ ] **Step 2: Run them to make sure they fail**
 
@@ -3253,12 +3305,20 @@ Then append the tool. Every branch below is one of the tests in Step 1; the refu
 /**
  * The codes this tool can put in `refused[].code`, in the order the refusal chain
  * reaches them: run-level `not_found`, `bundle_not_generable`,
- * `no_asset_prompts`, `asset_prompts_unparsable`, `image_provider_not_configured`,
+ * `image_provider_not_configured`, `no_asset_prompts`, `asset_prompts_unparsable`,
  * `image_spend_ceiling_reached`, `policy_gate_raised`; per-asset
  * `image_generation_failed`, `image_generation_timeout`, `asset_too_large`,
  * `prompt_too_long`, `unsupported_aspect_ratio` (the five `ImageFailureCode` values
  * `src/marketing/replicate.ts:26-31` can answer with, carried through verbatim) and
  * `asset_storing_failed`.
+ *
+ * The adapter check (`getImageAdapter()`) comes before the artifact read
+ * (`getDesignerArtifactText`) on purpose, so a run with no adapter
+ * registered and an unparsable artifact answers `image_provider_not_configured`,
+ * not `asset_prompts_unparsable`: the adapter is the cheaper of the two questions
+ * and it is the one that decides whether any request could leave at all. Both
+ * refusals bail before a cent is spent, so the order costs nothing but the code,
+ * which is why it is not reordered.
  *
  * This is a comment and not a `const`, for two reasons an implementer would
  * otherwise hit in Step 7: a module-scope `const` nothing reads is a
@@ -3536,6 +3596,12 @@ export const generateAssetsTool = createTool({
                 tenantId: rc.tenantId,
                 documentId: null,
                 costMinor: outcome.charge.costMinor,
+                // Named, not left to image-spend.ts's default. That default is
+                // REPLICATE_PROVIDER, so omitting it would book a row saying
+                // 'replicate' while this run's output reports `adapter.provider`
+                // in its own return — the ledger and the answer disagreeing for
+                // any adapter that is not Replicate.
+                provider: adapter.provider,
                 rawExtract: {
                   predictionId: outcome.charge.predictionId,
                   model: adapter.model,
@@ -3601,6 +3667,7 @@ export const generateAssetsTool = createTool({
               tenantId: rc.tenantId,
               documentId: null,
               costMinor: outcome.image.costMinor,
+              provider: adapter.provider,
               rawExtract: {
                 predictionId: outcome.image.predictionId,
                 model: outcome.image.model,
@@ -3631,6 +3698,7 @@ export const generateAssetsTool = createTool({
             tenantId: rc.tenantId,
             documentId: document.id,
             costMinor: outcome.image.costMinor,
+            provider: adapter.provider,
             rawExtract: {
               predictionId: outcome.image.predictionId,
               model: outcome.image.model,
@@ -3682,13 +3750,31 @@ export const generateAssetsTool = createTool({
         )
       }
 
+      // One path leaves `bundle` null: the `not_found` refusal above. It always
+      // fills `refused`, so a run with no row to name is a run that bought nothing
+      // because there was nothing to buy — and a refusal message that interpolates
+      // `bundle.id` on its way to saying so throws instead of saying it. The id the
+      // caller asked for is the id worth naming when there is no row, and it is the
+      // same expression the `bundleId` field below returns, hoisted here so the
+      // prose and the field cannot drift apart.
+      const bundleLabel = bundle?.id ?? input.bundleId
+
+      // The human-task block above is guarded by `bundle !== null`, so the
+      // `not_found` run files no task at all. Prose that promised one would be
+      // this tool telling an owner it parked something it never parked, so the
+      // sentence follows `humanTaskId` rather than the refusal.
+      const taskSentence =
+        humanTaskId === null
+          ? ' No human task was created because there is no bundle row to file one against.'
+          : ' A human task was created.'
+
       const message =
         refused.length === 0
-          ? `Stored ${attached.length} new image(s) for bundle ${bundle.id}, reused ${assets.length - attached.length}, recorded ${spentMinor} minor of image spend. Each new image is needs_review until you review it.`
-          : `Refused ${refused.length} asset(s) for bundle ${bundle.id} (${Array.from(new Set(refused.map((entry) => entry.code))).join(', ')}). Stored ${attached.length}, recorded ${spentMinor} minor. A human task was created.`
+          ? `Stored ${attached.length} new image(s) for bundle ${bundleLabel}, reused ${assets.length - attached.length}, recorded ${spentMinor} minor of image spend. Each new image is needs_review until you review it.`
+          : `Refused ${refused.length} asset(s) for bundle ${bundleLabel} (${Array.from(new Set(refused.map((entry) => entry.code))).join(', ')}). Stored ${attached.length}, recorded ${spentMinor} minor.${taskSentence}`
 
       return {
-        bundleId: bundle?.id ?? input.bundleId,
+        bundleId: bundleLabel,
         assets,
         refused,
         spentMinor,
@@ -3737,6 +3823,8 @@ Leave the `# ── approval (13)` header on line 184 reading 13. It is already 
 
 Do not touch `WRITE_VERB` on line 31. The tool's own `message` says "Stored" and "recorded", both already in that alternation, which is deliberate: widening the regex to admit "generated" would make every agent sentence containing that past participle a claimed write, and the guard's whole value is that it fires on a small set of verbs it can name.
 
+`tests/mastra/processors/write-claim-guard.test.ts` has the same number problem in the other direction, and it is this commit's to fix. The case titled "lists every write tool by registry id" ends with `expect(MUTATING_TOOL_IDS).toHaveLength(14)` on line 52 while the set this edit grows to sixteen, and its `toContain` list above never names `marketing.set_campaign_status` or `marketing.generate_assets`. So: 14 becomes 16, and add the two rows. The count was already wrong at 15 before this task (slice 3's `set_campaign_status` moved the array and left the number behind), which is a fact for the report, not a reason to leave it wrong — a commit that moves a set owns the assertion that counts it, exactly as `agent.test.ts` and `active-tools.test.ts` do above. Name both ids in the `toContain` list rather than trusting the count alone: a number says how many entries exist, and only the rows say whether the two that a reviewer would look for are among them.
+
 `src/mastra/agent.ts`: add `generateAssetsTool` to the `marketing-writes` import on line 36, and one entry as the last key of `crumToolRegistry`, after `'marketing.retry_publish': retryPublishTool,` on line 88:
 
 ```ts
@@ -3763,19 +3851,22 @@ Two spaces, not four: `crumToolRegistry` is a top-level object, and the four mar
 
 - [ ] **Step 7: Run everything this task owns**
 
-Run: `npx vitest run tests/marketing/generate-assets-tool.test.ts tests/governance/marketing-payload.test.ts tests/governance/conformance.test.ts tests/governance/policy.test.ts tests/mastra/active-tools.test.ts tests/mastra/agent.test.ts`
-Expected: PASS, all of it. Six files, and the last two are the two that count: `active-tools.test.ts` counts what a role can reach, `agent.test.ts` counts what is in the registry, and this task adds one tool to both. If either fails on a number after Step 6, the number moved and the assertion did not.
+Run: `npx vitest run tests/marketing/generate-assets-tool.test.ts tests/governance/marketing-payload.test.ts tests/governance/conformance.test.ts tests/governance/policy.test.ts tests/mastra/active-tools.test.ts tests/mastra/agent.test.ts tests/mastra/processors/write-claim-guard.test.ts`
+Expected: PASS, all of it. Seven files, and the last three are the ones that count: `active-tools.test.ts` counts what a role can reach, `agent.test.ts` counts what is in the registry, and `write-claim-guard.test.ts` counts what the outbox guard treats as a write. This task adds one tool to all three. If any of them fails on a number after Step 6, the number moved and the assertion did not.
 
 Run: `npm run typecheck && npm run lint`
 Expected: clean. The usual first failure here is `AssetPrompt` imported as a value; it is a type-only import.
 
 - [ ] **Step 8: Prove the paid lane's database half against real constraints**
 
-The Step 1 suite mocks every `src/db` call, which is what makes 24 cases affordable. What it cannot see is a CHECK constraint: `marketing_artifacts` requires a `document_id` on an `image` row, `documents.kind` admits `marketing_asset` only after migration 0021, and `marketing_image_spend.document_id` is nullable by design. Create `tests/integration/marketing-generate-assets.test.ts`, following `tests/integration/marketing-bundle.test.ts` for the env, context and skip conventions:
+The Step 1 suite mocks every `src/db` call, which is what makes 24 cases affordable. What it cannot see is a CHECK constraint: `marketing_artifacts` requires a `document_id` on an `image` row, `documents.kind` admits `marketing_asset` only after migration 0021, and `marketing_image_spend.document_id` is nullable by design. Create `tests/integration/marketing-generate-assets.test.ts`, following `tests/integration/marketing-bundle.test.ts` for the env, context and skip conventions. Two conventions from the plan-wide Integration-cluster rule bind this file and were both missed on the first pass, so they are stated here rather than left to inference: it calls `migrate(pool)` in its own `beforeAll`, because a file that assumes a sibling left the shared cluster migrated passes today and dies on a fresh database with `relation "marketing_image_spend" does not exist`; and it cannot get three bundles by calling `saveBundleTool` three times with the same payload, because `computeBundleHash` covers `input.brief` and identical payloads collapse to one content-addressed bundle — the brief varies per case instead. The file:
 
 ```ts
 // tests/integration/marketing-generate-assets.test.ts
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import type { QueryResultRow } from 'pg'
+import { Pool } from 'pg'
+import { migrate } from '../../scripts/db-migrate'
 import { closeDbClient, getDbClient } from '../../src/db/client'
 import { generateAssetsTool, saveBundleTool } from '../../src/mastra/tools/marketing-writes'
 import { setImageAdapter, type ImageAdapter } from '../../src/marketing/image-provider'
@@ -3792,6 +3883,8 @@ import { committedSpendMinor } from '../../src/marketing/image-spend'
 const url = process.env.CRUM_INTEGRATION_DATABASE_URL ?? ''
 if (url) process.env.DATABASE_URL = url
 process.env.APPROVAL_HMAC_SECRET ??= 'crum-integration-receipt-secret-0123456789'
+
+let pool: Pool
 
 const TENANT = 'a1000000-0000-4000-8000-000000000021'
 const USER = 'a2000000-0000-4000-8000-000000000021'
@@ -3813,7 +3906,9 @@ function stubAdapter(ceilingMinor = 40): ImageAdapter {
     ceilingMinor,
     costMinorPerImage: 4,
     maxBytes: 1024,
-    async generate(request) {
+    // Not `async`: this repo's lint fails an async method with no `await` in it,
+    // and the adapter contract is a promise, which `Promise.resolve` hands back.
+    generate(request) {
       promptsAskedFor.push(request.prompt)
       // Derived from the prompt, not from a call counter. A counter makes the bytes
       // depend on how many cases ran first — case two's re-order would then hand
@@ -3821,7 +3916,7 @@ function stubAdapter(ceilingMinor = 40): ImageAdapter {
       // inside a single run — and an integration file that only passes in one
       // order is a file that cannot be re-run.
       const bytes = request.prompt.includes('reception') ? PNG_A : PNG_B
-      return {
+      return Promise.resolve({
         ok: true,
         image: {
           predictionId: `pred-${promptsAskedFor.length}`,
@@ -3833,7 +3928,7 @@ function stubAdapter(ceilingMinor = 40): ImageAdapter {
           model: 'stub/flux-1.1-pro',
           aspectRatio: request.aspectRatio,
         },
-      }
+      })
     },
   }
 }
@@ -3855,10 +3950,17 @@ const ASSET_TEXT = JSON.stringify({
   ],
 })
 
-async function saveDesignerBundle() {
+// One bundle per case, named by `tag`. `saveBundleTool` is content-addressed:
+// `computeBundleHash` covers the `brief` column (src/mastra/tools/marketing-writes.ts:189-200)
+// and the draft is keyed `bundle:${draftHash}`, so three saves of one identical
+// payload are three names for the SAME bundle. Left identical, case two would find
+// case one's two titles already attached, pay nothing on what it calls its first
+// pass, and case three would refuse nothing because nothing is pending. The tag is
+// the only thing that differs, so each case buys and re-reads a bundle of its own.
+async function saveDesignerBundle(tag: string) {
   const saved = (await saveBundleTool.execute!(
     {
-      brief: 'Book more physio assessments in Melbourne for owner-led clinics',
+      brief: `Book more physio assessments in Melbourne for owner-led clinics (${tag})`,
       objective: 'outreach_support',
       audienceNote: 'owner-led clinics with 2 to 8 staff',
       strategy: { position: 'the clinic that answers within an hour' },
@@ -3877,7 +3979,7 @@ async function saveDesignerBundle() {
 }
 
 async function generate(bundleId: string) {
-  return (await generateAssetsTool.execute!({ bundleId } as never, context)) as {
+  return (await generateAssetsTool.execute!({ bundleId }, context)) as {
     assets: Array<{ name: string; documentId: string | null; deduplicated: boolean; costMinor: number }>
     refused: Array<{ name: string; code: string }>
     spentMinor: number
@@ -3886,12 +3988,24 @@ async function generate(bundleId: string) {
   }
 }
 
-async function rows<T>(sql: string, params: unknown[]): Promise<T[]> {
+// `T extends QueryResultRow` because `getDbClient()` hands back a pg `Pool` and
+// `Pool.query<T>` constrains `T` to `QueryResultRow`; the bound is what lets the
+// row shapes below stay literal instead of degenerating to `Record<string, unknown>`.
+async function rows<T extends QueryResultRow>(sql: string, params: unknown[]): Promise<T[]> {
   return (await getDbClient().query<T>(sql, params)).rows
 }
 
 beforeAll(async () => {
   if (url === '') return
+  // The convention of the other integration files (marketing-image-spend.ts:38-41,
+  // marketing-assets-migration.ts:27-30, and seven more): a file that needs the
+  // schema applies it itself instead of borrowing the state another file left
+  // behind. `migrate` is idempotent — it tracks applied versions in its own table
+  // — so on an already-migrated cluster this is one extra SELECT, and on a fresh
+  // one it is the reason the DELETE below finds `marketing_image_spend` at all.
+  // Without it this file only passes after some other integration file has run.
+  pool = new Pool({ connectionString: url, max: 2 })
+  await migrate(pool)
   // Same habit as `tests/integration/marketing-bundle.test.ts:87-101`: this tenant
   // is private to this file, and the file must be re-runnable. Without the reset,
   // run two finds run one's hashes, its ledger, and its artifact rows, and the very
@@ -3907,17 +4021,38 @@ beforeAll(async () => {
   await db.query("DELETE FROM documents WHERE tenant_id = $1 AND kind = 'marketing_asset'", [TENANT])
   await db.query('DELETE FROM marketing_bundles WHERE tenant_id = $1', [TENANT])
   await db.query('DELETE FROM human_tasks WHERE tenant_id = $1', [TENANT])
+  // `pending_writes` and its receipts are in the reset too, or the second run of
+  // this file cannot start: the draft is content-addressed as well, so a leftover
+  // committed row makes `commitAutoWrite` (src/db/pending-writes.ts:722-725) hand
+  // back the bundle id it committed last time — a row the statement above has just
+  // deleted — and `insertMarketingArtifacts` then dies on
+  // `marketing_artifacts_bundle_id_fkey`. Same shape as
+  // tests/integration/marketing-bundle.test.ts:87-101.
+  await db.query('DELETE FROM audit_receipts WHERE tenant_id = $1', [TENANT])
+  await db.query('DELETE FROM pending_writes WHERE tenant_id = $1', [TENANT])
   setImageAdapter(stubAdapter())
 })
 
 afterAll(async () => {
   setImageAdapter(null)
-  if (url !== '') await closeDbClient()
+  if (url !== '') {
+    await closeDbClient()
+    await pool.end()
+  }
 })
 
 describe.skipIf(url === '')('marketing.generate_assets against Postgres', () => {
+  // CASE ORDER IS LOAD-BEARING: this case must stay first. The reset is
+  // `beforeAll`, not `beforeEach`, deliberately — case two reads the tenant's
+  // whole day on purpose ("by now the tenant has paid for case one too"), so the
+  // ledger is shared state across the file by design. The consequence is that the
+  // absolute numbers below (`spentMinor` 8, `committedSpendMinor(TENANT)` 8) are
+  // only exact because nothing had spent before them. Reorder this file, or add a
+  // case above this one, and those two assertions fail for test order rather than
+  // for the tool. `tests/integration/marketing-image-spend.test.ts:28-35` is the
+  // alternative shape (a minted tenant per case) if this file ever needs it.
   it('writes the document, the bytes, the artifact and the ledger for two prompts', async () => {
-    const bundleId = await saveDesignerBundle()
+    const bundleId = await saveDesignerBundle('two prompts')
     const out = await generate(bundleId)
 
     expect(out.gate).toBe('auto')
@@ -3957,7 +4092,7 @@ describe.skipIf(url === '')('marketing.generate_assets against Postgres', () => 
   })
 
   it('buys nothing on the second pass, because every title is already there', async () => {
-    const bundleId = await saveDesignerBundle()
+    const bundleId = await saveDesignerBundle('second pass')
     const first = await generate(bundleId)
     expect(first.spentMinor).toBe(8)
     // The day's total, read back, not the run's number. `spentMinor` is what THIS
@@ -3975,7 +4110,7 @@ describe.skipIf(url === '')('marketing.generate_assets against Postgres', () => 
   })
 
   it('refuses the whole pass before paying when the day is already spent', async () => {
-    const bundleId = await saveDesignerBundle()
+    const bundleId = await saveDesignerBundle('already spent')
     setImageAdapter(stubAdapter(4))
     try {
       const out = await generate(bundleId)
@@ -4017,7 +4152,7 @@ describe.skipIf(url === '')('marketing.generate_assets against Postgres', () => 
 `human_tasks` carries the refusal in `title` and `body`, both written by `createHumanTask` (`src/db/pending-writes.ts:860-882`), which inserts `tenant_id, run_id, thread_id, kind, title, body, tool_name, risk_score, requested_by` and returns the new id. `title` is NOT NULL and `body` is nullable, so the `?? ''` above is what keeps the second assertion honest rather than type-annoying.
 
 Run: `npx vitest run --project integration tests/integration/marketing-generate-assets.test.ts`
-Expected: PASS with the throwaway cluster up, or three skipped cases reported as skipped when `CRUM_INTEGRATION_DATABASE_URL` is unset. A skip is not a pass; say which happened.
+Expected: PASS with the throwaway cluster up, or three skipped cases reported as skipped when `CRUM_INTEGRATION_DATABASE_URL` is unset. A skip is not a pass; say which happened. This task proved more than the minimum, and the extra two runs are what the `migrate` line is worth: the file ran twice against the shared cluster, then once against a freshly created empty database inside that same cluster (created and dropped by the run, nothing left behind), and the counterfactual was observed — with the `migrate(pool)` call removed, the first `DELETE` fails with `relation "marketing_image_spend" does not exist`. Self-sufficiency is only a claim once the failure has been seen.
 
 - [ ] **Step 9: Commit**
 
@@ -4028,7 +4163,8 @@ git add src/marketing/image-provider.ts src/marketing/payload.ts src/mastra/tool
   tests/integration/marketing-generate-assets.test.ts \
   tests/governance/conformance.test.ts \
   tests/governance/policy.test.ts tests/governance/marketing-payload.test.ts \
-  tests/mastra/active-tools.test.ts tests/mastra/agent.test.ts docs/TECHNICAL_PLAN.md
+  tests/mastra/active-tools.test.ts tests/mastra/agent.test.ts \
+  tests/mastra/processors/write-claim-guard.test.ts docs/TECHNICAL_PLAN.md
 git commit -m "feat(marketing): generate_assets spends the daily image budget on stored designer prompts"
 ```
 
@@ -6820,7 +6956,7 @@ Create `docs/superpowers/plans/2026-11-01-marketing-team-slice-4-verification.md
 3. **The ceiling is per tenant per day, not per bundle.** `committedSpendMinor(tenantId)` sums `WHERE spent_on = CURRENT_DATE`, so one tenant's four campaigns compete for one number and a second bundle gets `image_spend_ceiling_reached` because the first bundle spent the day. The ledger row carries `document_id` and the tool records the bundle in the human task, so the data to make it per-bundle exists; the env var does not encode it.
 4. **One provider, no fallback, and a refusal is not a refund.** A Replicate outage produces `image_generation_failed`, books the charge if the provider charged, and stops the run. There is no second adapter, and the seam (`setImageAdapter`) is a module-global singleton — safe today because `createCrumMastra` runs per request and one adapter serves every tenant, but it would not survive two adapters.
 5. **`marketing_asset` rows are invisible in the document manager.** Task 1 excludes kind `marketing_asset` from `listDocuments` unless a caller asks for it, which is right for an invoice list and wrong for an owner who wants to browse what the designer made. The bundle screen is currently the only path to an asset.
-6. **Found while writing this plan, not caused by it: `marketing.set_campaign_status` is declared and has no tool.** `policy/tools.yaml` names it, `src/mastra/processors/write-claim-guard.ts:23` lists it, `tests/governance/policy.test.ts` counts it in the 43, and `tests/mastra/active-tools.test.ts` hands it to an admin, yet `src/mastra/agent.ts`'s `crumToolRegistry` has no `'marketing.set_campaign_status'` key and `src/mastra/tools/marketing-writes.ts:776` exports only the `stageCampaignStatusChange` function that the analyst cron calls directly. Confirmed by a set difference between the policy names and the registry keys: the registry holds 40, the policy declares 43, and the three absent are `crm.bulk_import` (refuse class, deliberately unreachable), `run.side-effect` (a workflow, not a tool), and this one. So the analyst's recommended pause can reach `pending_writes` from the cron but no conversation can, and the governance counts describe a capability the agent does not have. Slice 4 must not fix it inside a task: it would move the registry count by two, mix a slice 3 repair into a slice 4 commit, and need its own tests. Report it as a one-tool task for slice 5, with the registry key, the `createTool` wrapper around the existing function, and the two count assertions that then move together.
+6. **Found while writing this plan, not caused by it: `marketing.set_campaign_status` is declared and has no tool.** `policy/tools.yaml` names it, `src/mastra/processors/write-claim-guard.ts:24` lists it, `tests/governance/policy.test.ts` counts it in the 43, and `tests/mastra/active-tools.test.ts` hands it to an admin, yet `src/mastra/agent.ts`'s `crumToolRegistry` has no `'marketing.set_campaign_status'` key and `src/mastra/tools/marketing-writes.ts:776` exports only the `stageCampaignStatusChange` function that the analyst cron calls directly. Confirmed by a set difference between the policy names and the registry keys: the registry holds 40, the policy declares 43, and the three absent are `crm.bulk_import` (refuse class, deliberately unreachable), `run.side-effect` (a workflow, not a tool), and this one. So the analyst's recommended pause can reach `pending_writes` from the cron but no conversation can, and the governance counts describe a capability the agent does not have. Slice 4 must not fix it inside a task: it would move the registry count by two, mix a slice 3 repair into a slice 4 commit, and need its own tests. Report it as a one-tool task for slice 5, with the registry key, the `createTool` wrapper around the existing function, and the two count assertions that then move together.
 
 Record also, plainly: which steps ran and which were blocked for want of a token; the real cent figure from 6.2; the golden-gate item count; and the exact commands for anything that cannot be re-run later, since a spend ledger is a fact about a day and tomorrow it reads differently.
 
@@ -6845,4 +6981,4 @@ Three checks, run against the repository rather than against this document.
 
 **Placeholders.** No step says "add appropriate validation", "similar to Task N", or "check the real column name before running". Where a step needs a fact about the repository, the fact is stated and is the one this review verified on disk: the NOT NULL column list of `pending_writes`, the `title`/`body` pair that carries a refusal's prose in `human_tasks`, the registry-count assertion at `tests/mastra/agent.test.ts:51-53`, the six-file set that declares the tool surface, and the two spaces `crumToolRegistry` is keyed at.
 
-**Type consistency.** `PredictionGate` is the union Task 10 declares in every place Tasks 11 and 12 use it, including the ten mocks in Task 11's Step 1; `ImageAdapter`, `ReplicateAdapterParams`, `ReplicateConfig`, `ImageOutcome`, `SpendRawExtract`, `GenerateAssetsRiskView`, `ReviewerPrediction`, `AssetPrompt` and `AssetProvenance` are declared once and consumed with the same field names everywhere; `recordImageSpend`'s fifth parameter reaches Task 1's column list, Task 4's unit assertions, and both of Task 6's `toHaveBeenCalledWith` cases. The counts that tests assert are the counts after this slice: `policy.test.ts:57` 44 declared tools, `:68` 22 read-only, `:69` 7 auto, `:70` 14 approval unchanged, `:71` one refuse unchanged; `agent.test.ts:51-53` 41 registry keys titled `7 auto`; `active-tools.test.ts` 29 for a user and 42 for an admin; `dataset-seed.test.ts` and `golden-gate.test.ts` both 43 items with 11 `write`.
+**Type consistency.** `PredictionGate` is the union Task 10 declares in every place Tasks 11 and 12 use it, including the ten mocks in Task 11's Step 1; `ImageAdapter`, `ReplicateAdapterParams`, `ReplicateConfig`, `ImageOutcome`, `SpendRawExtract`, `GenerateAssetsRiskView`, `ReviewerPrediction`, `AssetPrompt` and `AssetProvenance` are declared once and consumed with the same field names everywhere; `recordImageSpend`'s fifth parameter reaches Task 1's column list, Task 4's unit assertions, and all three of Task 6's `toHaveBeenCalledWith` cases, each of which also carries `provider` now that the tool passes the adapter's own. The counts that tests assert are the counts after this slice: `policy.test.ts:57` 44 declared tools, `:68` 22 read-only, `:69` 7 auto, `:70` 14 approval unchanged, `:71` one refuse unchanged; `agent.test.ts:51-53` 41 registry keys titled `7 auto`; `active-tools.test.ts` 29 for a user and 42 for an admin; `write-claim-guard.test.ts:52` 16 mutating ids; `dataset-seed.test.ts` and `golden-gate.test.ts` both 43 items with 11 `write`.
