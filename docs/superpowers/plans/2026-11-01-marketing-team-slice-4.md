@@ -4286,15 +4286,25 @@ Modify `src/mastra/instructions.ts`, inserting between the `</section>` that clo
 
 The `<article>` wrapper is not decoration, and this is the one place in the task where the shape of the markup decides whether the suite is green. `tests/mastra/instructions.test.ts:16-23` counts `<article>\s*<h3>` and `<p class="why">` and asserts the two counts are **equal** — the file's rule is that every rule carries its why, expressed as an equality rather than a proportion. A marketing section that adds a bare `<p class="why">` with no `<article><h3>` above it therefore turns a passing test red: five articles against six whys. Wrapping the contract paragraph and its rationale in one article keeps them at six and six, and the same article is what makes the paragraph read like a rule rather than a note. `articles.length >= 5` still holds at six, and the examples case is untouched because this section carries no `<article class="example">`.
 
+**The last sentence of this section promises a check that does not exist yet, and that is deliberate.** "staging refuses a bundle that still carries an unreviewed image" is Task 8's arm, one commit down the branch from this one; between the two heads the paragraph overstates the product. Task 7's review ruled against weakening it: the sentence is spec section 7.2's own text, the branch is never deployed between two of its own commits, and a paragraph that hedges ("staging will refuse, once that lands") is prose the model has to interpret. The gap is closed inside the same slice, and Task 8 Step 5 adds the assertion that stops it reopening — do not "fix" this task by deleting the sentence, and do not let Task 8 ship without that seal.
+
 - [ ] **Step 5: Add the golden item**
 
 Modify `src/evals/golden-items.ts`. Add a helper beside `bundleReceipt` (line 188):
 
 ```ts
 /**
- * `marketing.generate_assets` reports what it stored and what it refused, and
- * the refusal half matters for the gate: a fixture that always succeeds teaches
- * the model to promise pictures.
+ * The ten keys `marketing.generate_assets` returns, copied from
+ * `GenerateAssetsOutputSchema` (`src/mastra/tools/marketing-writes.ts:1065`)
+ * rather than from the tool's prose. Two things the fixture has to get right.
+ * The stored half always arrives as `needs_review`, because that is the status
+ * the write sets (`src/db/marketing-assets.ts:95`) and an item that showed a
+ * ready image would teach the model to promise approved creative; and this run
+ * buys one picture, so its `costMinor` and the run's `spentMinor` are written
+ * once and reused rather than typed twice — a receipt that disagrees with
+ * itself teaches a model to report a sum it never added. A refusal fixture is
+ * deliberately not here: this item's sentence asks for the buy, and the
+ * `refused` array being empty is the honest answer to it.
  */
 function assetReceipt(
   bundleId: string,
@@ -4303,7 +4313,7 @@ function assetReceipt(
 ) {
   return {
     bundleId,
-    assets: [{ name: 'hero-image', documentId: ASSET_DOCUMENT, status: 'needs_review', deduplicated: false, costMinor: 4 }],
+    assets: [{ name: 'hero-image', documentId: ASSET_DOCUMENT, status: 'needs_review', deduplicated: false, costMinor: spentMinor }],
     refused: [],
     spentMinor,
     provider: 'replicate',
@@ -4315,6 +4325,8 @@ function assetReceipt(
   }
 }
 ```
+
+(Shipped form. The first draft of this helper carried a comment claiming the refusal half of the receipt was what the gate needed, then shipped `refused: []` — a comment describing a fixture the file does not contain, corrected in Task 7's review round. `costMinor: 4` next to a `spentMinor` argument was the same species of drift in miniature, so the one asset now costs what the run spent.)
 
 `assetReceipt` is the tool's own ten output keys, checked against `GenerateAssetsOutputSchema` at `src/mastra/tools/marketing-writes.ts:1065-1090` rather than against the Interfaces list above: `bundleId`, `assets` (five fields each, `status` a plain string so `'needs_review'` is legal), `refused`, `spentMinor`, the two nullable `provider`/`model`, the nullable `humanTaskId`, `riskScore` in 0..100, `gate` from the three-value enum, and `message`. A fixture that drifts from the schema is a golden item that trains the model on an answer the tool cannot give.
 
@@ -4375,6 +4387,7 @@ git commit -m "docs(mastra): tell the designer and the primary agent what the im
 - Test: `tests/db/marketing-assets.test.ts` (Task 5's `listImageAssetStatuses` case grows, plus one new case in `describe('the reads')`)
 - Test: `tests/mastra/marketing-write-tools.test.ts` (three new cases in `describe('marketing.stage_bundle')`)
 - Test: `tests/marketing/generate-assets-tool.test.ts` (two mock rows gain the new field)
+- Test: `tests/mastra/instructions.test.ts` (one seal case, added green — Step 5)
 
 **Interfaces:**
 - Consumes: `listMarketingArtifacts`'s rows, which the stage tool already reads at `src/mastra/tools/marketing-writes.ts:426`, and `listImageAssetStatuses`, already imported in that same file at line 46 for Task 6's carry check.
@@ -4611,20 +4624,46 @@ Last, the chain's comment above `const refusal` currently reads "The arms stay i
 
 Nothing about the other four arms changes.
 
-- [ ] **Step 5: Run it green**
+- [ ] **Step 5: Seal the promise Task 7's instruction already makes**
 
-Run: `npx vitest run tests/db/marketing-assets.test.ts tests/mastra/marketing-write-tools.test.ts tests/marketing/generate-assets-tool.test.ts`
+`src/mastra/instructions.ts:99` says "staging refuses a bundle that still carries an unreviewed image". Task 7 shipped that sentence one commit before the arm that makes it true, and the interval is the thing spec section 6.1 is angry about: an instruction describing a protection the code does not perform. Step 4 closes the behaviour. This step closes the sentence, so the next person to touch either half is stopped by a test rather than by memory.
+
+Add to `tests/mastra/instructions.test.ts`, after the marketing case Task 7 left at line 45:
+
+```ts
+  it('promises the staging refusal that now exists', () => {
+    // Green on arrival, and deliberately so: the sentence has been in the
+    // instruction since Task 7, so this is a seal rather than a RED. What it
+    // buys is the forward direction — a later edit that drops the sentence while
+    // the arm stays, or rewrites the paragraph to promise something the arm does
+    // not do, has to pass this case on purpose. The behaviour half lives in
+    // `tests/mastra/marketing-write-tools.test.ts`, where Step 1's first case
+    // reads the refusal reason a human actually sees; a pin on prose cannot
+    // detect a deleted arm, and pretending otherwise here would be the same
+    // species of claim this task exists to stop.
+    expect(CRUM_INSTRUCTIONS).toContain(
+      'staging refuses a bundle that still carries an unreviewed image',
+    )
+  })
+```
+
+Run: `npx vitest run tests/mastra/instructions.test.ts`
+Expected: PASS, 14 tests (13 before this case).
+
+- [ ] **Step 6: Run it green**
+
+Run: `npx vitest run tests/db/marketing-assets.test.ts tests/mastra/marketing-write-tools.test.ts tests/marketing/generate-assets-tool.test.ts tests/mastra/instructions.test.ts`
 Expected: PASS. The two `generate-assets-tool.test.ts` fixtures at lines 346 and 365 need `kind: 'marketing_asset'` added to their mock rows so the mocks stay shaped like the real return value; the carry behaviour they assert does not read the field.
 
 Run: `npm run typecheck && npm run lint`
 Expected: clean.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add src/db/marketing-assets.ts src/mastra/tools/marketing-writes.ts \
   tests/db/marketing-assets.test.ts tests/mastra/marketing-write-tools.test.ts \
-  tests/marketing/generate-assets-tool.test.ts
+  tests/marketing/generate-assets-tool.test.ts tests/mastra/instructions.test.ts
 git commit -m "feat(marketing): staging refuses a bundle whose images nobody has reviewed"
 ```
 
