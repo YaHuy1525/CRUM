@@ -1120,6 +1120,7 @@ Two more `ToolAction` fields that are governance features rather than convenienc
 | `mail.draft` | auto | `draftHash` | Draft only |
 | `mail.send` | approval | `draftHash` | Behind receipt |
 | `marketing.save_bundle` | auto | `draftHash` | Stores a bundle draft; scores a redacted view |
+| `marketing.generate_assets` | auto | `draftHash` | Scope `marketing:assets`. Buys images from the bundle's stored designer prompts within the daily image budget; scores a redacted view |
 | `marketing.stage_bundle` | approval | `draftHash` | Identifier payload only; refuses unexecutable actions at staging |
 | `marketing.promote_bundle` | approval | `siteHash` | Puts a published preview page on the live domain; identifier payload only |
 | `marketing.retry_publish` | approval | `actionId` | Re-queues one failed publish; identifier payload only |

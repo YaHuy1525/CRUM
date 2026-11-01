@@ -138,7 +138,7 @@ tools:
     scope: crm-read
     class: read-only
 
-  # ── auto (6) ───────────────────────────────────────────────
+  # ── auto (7) ───────────────────────────────────────────────
   - name: crm.log_followup
     description: Record a completed contact attempt.
     scope: crm-write
@@ -177,6 +177,13 @@ tools:
   - name: marketing.save_bundle
     description: Store one campaign bundle and its assets. Saves a draft; stages nothing and publishes nothing.
     scope: marketing:bundle
+    class: auto
+    idempotent: true
+    idempotency_key: draftHash
+
+  - name: marketing.generate_assets
+    description: Turn the designer's stored asset prompts into images within the daily image budget.
+    scope: marketing:assets
     class: auto
     idempotent: true
     idempotency_key: draftHash

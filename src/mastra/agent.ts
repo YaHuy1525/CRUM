@@ -33,7 +33,7 @@ import { listProspectsTool, getProspectTool } from './tools/prospects'
 import { draftOutreachTool, sendOutreachTool, saveProspectSnapshotTool } from './tools/prospect-writes'
 import { listMergeCandidatesTool, resolveMergeCandidateTool } from './tools/prospect-merge'
 import { createContactTool, createScheduleTool, transferOwnerTool, sendMailTool } from './tools/approval-writes'
-import { saveBundleTool, stageBundleTool, promoteBundleTool, retryPublishTool } from './tools/marketing-writes'
+import { saveBundleTool, stageBundleTool, promoteBundleTool, retryPublishTool, generateAssetsTool } from './tools/marketing-writes'
 import { approvalFlow } from './workflows/approval-flow'
 import { resolveActiveTools, providerToolName } from './active-tools'
 import { CRUM_MAIN_MODEL, CRUM_LIGHT_MODEL } from './models'
@@ -86,6 +86,7 @@ const crumToolRegistry = {
   'marketing.stage_bundle': stageBundleTool,
   'marketing.promote_bundle': promoteBundleTool,
   'marketing.retry_publish': retryPublishTool,
+  'marketing.generate_assets': generateAssetsTool,
 }
 
 export const crmAssistant = new Agent({

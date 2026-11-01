@@ -42,6 +42,7 @@ const AUTO_TOOLS = [
   'crm.draft_outreach',
   'crm.save_prospect_snapshot',
   'marketing.save_bundle',
+  'marketing.generate_assets',
 ]
 
 // Approval-class writes: admin-only, tenant-wide.
@@ -67,19 +68,19 @@ const APPROVAL_TOOLS = [
 //  - crm.bulk_import: refuse class → routed to a human task (§4.6.1).
 const NEVER_CALLABLE = ['run.side-effect', 'crm.bulk_import']
 
-const USER_EXPECTED = [...READ_ONLY_TOOLS, ...AUTO_TOOLS] // 28
-const ADMIN_EXPECTED = [...READ_ONLY_TOOLS, ...AUTO_TOOLS, ...APPROVAL_TOOLS] // 41
+const USER_EXPECTED = [...READ_ONLY_TOOLS, ...AUTO_TOOLS] // 29
+const ADMIN_EXPECTED = [...READ_ONLY_TOOLS, ...AUTO_TOOLS, ...APPROVAL_TOOLS] // 42
 
 describe('resolveActiveTools', () => {
-  it('gives a non-admin the read-only + auto tools (28)', () => {
+  it('gives a non-admin the read-only + auto tools (29)', () => {
     const active = resolveActiveTools(baseContext)
-    expect(active).toHaveLength(28)
+    expect(active).toHaveLength(29)
     expect(active.slice().sort()).toEqual(USER_EXPECTED.slice().sort())
   })
 
-  it('gives an admin the approval-class writes too (41)', () => {
+  it('gives an admin the approval-class writes too (42)', () => {
     const active = resolveActiveTools({ ...baseContext, userRole: 'admin' })
-    expect(active).toHaveLength(41)
+    expect(active).toHaveLength(42)
     expect(active.slice().sort()).toEqual(ADMIN_EXPECTED.slice().sort())
   })
 
@@ -139,7 +140,7 @@ describe('providerToolName', () => {
 
   it('leaves no dotted id in the list the agent hands the model', () => {
     const providerNames = resolveActiveTools({ ...baseContext, userRole: 'admin' }).map(providerToolName)
-    expect(providerNames).toHaveLength(41)
+    expect(providerNames).toHaveLength(42)
     for (const name of providerNames) {
       expect(name).not.toContain('.')
       expect(name).toMatch(/^[a-zA-Z][a-zA-Z0-9_-]{0,62}$/)

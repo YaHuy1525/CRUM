@@ -17,6 +17,7 @@ export const MUTATING_TOOL_IDS = [
   'crm.transfer_owner',
   'mail.send',
   'marketing.save_bundle',
+  'marketing.generate_assets',
   'marketing.stage_bundle',
   'marketing.promote_bundle',
   'marketing.retry_publish',

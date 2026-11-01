@@ -22,6 +22,33 @@ export function saveRiskView(input: SaveRiskView): Record<string, unknown> {
   }
 }
 
+export interface GenerateAssetsRiskView {
+  bundleId: string
+  objective: string
+  assetCount: number
+  estimatedCostMinor: number
+}
+
+/**
+ * The scored view of an image run: one id, one literal, two numbers.
+ *
+ * This tool is `auto`, and `gateFor` can only raise a declared class
+ * (src/governance/policy.ts:118-125), so a single prose field here would move
+ * every paid run into `approval` and then be refused by the drift guard below
+ * the call in `marketing-writes.ts` — the run would stop, quietly, the first
+ * time a designer wrote "portrait of the founder". The cost is a number, and
+ * `estimatedCostMinor` is the estimate the ceiling check used, so the number a
+ * reviewer would react to is the number that admitted the run.
+ */
+export function generateAssetsRiskView(input: GenerateAssetsRiskView): Record<string, unknown> {
+  return {
+    bundleId: input.bundleId,
+    objective: input.objective,
+    assetCount: input.assetCount,
+    estimatedCostMinor: input.estimatedCostMinor,
+  }
+}
+
 export interface StagePayload {
   bundleId: string
   draftHash: string

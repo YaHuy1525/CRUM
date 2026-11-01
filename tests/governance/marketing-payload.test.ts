@@ -2,13 +2,32 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { loadPolicy } from '@/governance/policy'
 import { domainOf, scoreRisk } from '@/governance/risk'
-import { promotePayload, retryPayload, stagePayload, saveRiskView } from '@/marketing/payload'
+import {
+  generateAssetsRiskView,
+  promotePayload,
+  retryPayload,
+  stagePayload,
+  saveRiskView,
+} from '@/marketing/payload'
 import { MARKETING_OBJECTIVES } from '@/db/marketing'
 
 const policy = loadPolicy(join(process.cwd(), 'policy'))
 const risk = policy.risk
 const BUNDLE = '33333333-3333-4333-8333-333333333333'
 const HASH = 'a'.repeat(64)
+
+/**
+ * The scored view of one paid image run, shared by both `generate_assets` cases
+ * below so they sweep and score the same object: one id, one literal, two
+ * numbers. `estimatedCostMinor` is the estimate the ceiling check admitted the
+ * run with, so this is the payload a real run carries.
+ */
+const GENERATE_ASSETS_VIEW = generateAssetsRiskView({
+  bundleId: BUNDLE,
+  objective: 'outreach_support',
+  assetCount: 3,
+  estimatedCostMinor: 12,
+})
 
 // The same tokeniser risk.ts uses (src/governance/risk.ts:10). Underscores and
 // dots are separators, so publish_page contributes the token `publish`.
@@ -84,6 +103,22 @@ describe('the marketing payload rule', () => {
     for (const [index, payload] of payloads.entries()) {
       expect(forbiddenTermsIn(payload), `payload ${index}`).toEqual([])
     }
+  })
+
+  it('names no forbidden term in a generate-assets view, key or value', () => {
+    // The refusal codes and the result message are prose this tool produces, and
+    // neither reaches the scorer: the view is four keys. If a later edit widened
+    // it, the failure this case guards against is an irreversible term from
+    // `risk.preflight` arriving inside an asset prompt or a message string —
+    // `send` and `publish` are two of them (policy/risk.yaml:11) — and quietly
+    // moving a paid run out of `auto`.
+    expect(forbiddenTermsIn(GENERATE_ASSETS_VIEW)).toEqual([])
+  })
+
+  it('scores a generate-assets view at benign, so the paid run stays auto', () => {
+    expect(scoreRisk(GENERATE_ASSETS_VIEW, risk, 'marketing.generate_assets').score).toBe(
+      risk.preflight.scores.benign,
+    )
   })
 
   it('sweeps a non-empty term list, so an emptied yaml cannot make the rule vacuous', () => {
