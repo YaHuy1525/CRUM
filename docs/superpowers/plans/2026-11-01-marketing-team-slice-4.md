@@ -1336,6 +1336,12 @@ git commit -m "feat(marketing): add the Replicate image adapter with an injected
 **Files:**
 - Create: `src/marketing/image-spend.ts`
 - Test: `tests/marketing/image-spend.test.ts`
+- Test: `tests/integration/marketing-image-spend.test.ts`
+
+The unit file owns the arithmetic; the integration file owns the two SQL lanes,
+because a mocked `pg` cannot prove `SUM(cost_minor)` really arrives as a string,
+that the untyped `$5` reaches a jsonb column, or that `DEFAULT CURRENT_DATE`
+stamps the day the read then compares against.
 
 **Interfaces:**
 - Consumes: `marketing_image_spend` from Task 1.
@@ -1559,6 +1565,17 @@ export async function committedSpendMinor(tenantId: string): Promise<number> {
 }
 
 /**
+ * The section 9 audit handle, declared here rather than only in the Interfaces
+ * block above: `recordImageSpend` takes it in its signature, so the module does
+ * not compile without the type.
+ */
+export interface SpendRawExtract {
+  predictionId: string
+  model: string
+  costUsd: string
+}
+
+/**
  * Append-only, and deliberately not in one transaction with the document insert
  * beside it: an invoice for an image we failed to save is a real cost and must
  * show up (spec section 9).
@@ -1596,15 +1613,192 @@ export async function recordImageSpend(params: {
 
 No `spent_on` parameter: the DDL defaults it to `CURRENT_DATE`, which is the day the ceiling is per-day over, and a caller that could set it backwards would be a caller that could rewrite history in an append-only ledger.
 
-- [ ] **Step 4: Run the tests**
+**The day is the database server's day, not a JS-computed UTC day.** Spec section 4.2
+pins the predicate as `spent_on = CURRENT_DATE` and 0021 stamps the column with
+`DEFAULT CURRENT_DATE`, so write and read agree by construction. Computing the day in
+JavaScript would put the read's notion of "today" out of step with the column default on
+any non-UTC server, which is the worse bug. The operational consequence is worth one line
+in the walkthrough: the ceiling resets at server-local midnight, so a rolling 24-hour
+window can span two ceiling days — true of any calendar-day ceiling, including a UTC one.
 
-Run: `npx vitest run tests/marketing/image-spend.test.ts`
-Expected: PASS on all nine cases. Then `npm run typecheck` — clean.
+- [ ] **Step 4: Prove the two SQL lanes against real Postgres**
 
-- [ ] **Step 5: Commit**
+Create `tests/integration/marketing-image-spend.test.ts`. Two rulings govern this file,
+and both are about the fact that it shares a database with every other integration file:
+
+1. **Every case mints its own tenant uuid.** `tests/integration/marketing-assets-migration.test.ts`
+   (Task 1) inserts a spend row for tenant `11111111-1111-4111-8111-111111111111` on the same
+   day, Vitest runs those files in parallel, and Task 1's cleanup is not in a `finally`. An
+   absolute sum against the fixed tenant is therefore a race — and on this cluster it is
+   already wrong, because that leftover row is still there. `marketing_image_spend.tenant_id`
+   carries no foreign key (0021), so a minted uuid is legal, and a tenant nobody else touches
+   makes every absolute sum an exact fact about this file's own rows.
+2. **Compare `spent_on` to the server's own date, as text.** node-pg returns a `date` column
+   as a `Date`, and the throwaway cluster runs UTC+11, so a JS ISO string is the wrong thing
+   to compare `CURRENT_DATE` against.
+
+```ts
+// tests/integration/marketing-image-spend.test.ts
+// The unit file proves the ceiling arithmetic with no database at all; this
+// file proves the two SQL lanes of src/marketing/image-spend.ts work against
+// the table migration 0021 actually built: the per-tenant, per-day committed
+// read, the append-only write with its raw_extract handle, and the day the
+// database stamps into spent_on itself.
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { Pool } from 'pg'
+import { migrate } from '../../scripts/db-migrate'
+import { closeDbClient } from '../../src/db/client'
+import { committedSpendMinor, recordImageSpend } from '../../src/marketing/image-spend'
+
+const url = process.env.CRUM_INTEGRATION_DATABASE_URL ?? ''
+// committedSpendMinor and recordImageSpend speak through getDbClient(), which
+// reads DATABASE_URL lazily at first call, so pointing it at the throwaway
+// cluster here is the standing pattern (tests/integration/marketing-bundle.test.ts).
+if (url) process.env.DATABASE_URL = url
+
+let pool: Pool
+
+// This file shares the database with every other integration file and Vitest
+// runs them in parallel, so every case mints its own tenant uuid instead of
+// reusing the fixed one: marketing-assets-migration.test.ts writes a spend row
+// for tenant 11111111-... on the same day and its cleanup is not in a finally.
+// tenant_id carries no foreign key to tenants (0021), so a minted uuid is legal,
+// and with a tenant nobody else touches, an absolute sum stays an exact fact
+// about this file's own rows.
+async function unique(): Promise<string> {
+  const { rows } = await pool.query<{ n: string }>(`SELECT gen_random_uuid() AS n`)
+  return rows[0]!.n
+}
+
+async function uniqueTenant(): Promise<string> {
+  return await unique()
+}
+
+describe.skipIf(!url)('the image spend ledger against real Postgres', () => {
+  beforeAll(async () => {
+    pool = new Pool({ connectionString: url, max: 2 })
+    await migrate(pool)
+  })
+
+  afterAll(async () => {
+    await closeDbClient()
+    await pool.end()
+  })
+
+  it('records a spend and counts it as the committed total for today', async () => {
+    const tenant = await uniqueTenant()
+    const doc = await unique()
+    try {
+      const spendId = await recordImageSpend({
+        tenantId: tenant,
+        documentId: doc,
+        costMinor: 4,
+        rawExtract: { predictionId: 'p-int-1', model: 'flux-1.1-pro', costUsd: '0.04' },
+      })
+      // A single spend row for this tenant makes the arithmetic exact.
+      expect(await committedSpendMinor(tenant)).toBe(4)
+      const { rows } = await pool.query<{
+        provider: string
+        cost_minor: number
+        document_id: string
+        raw_extract: { predictionId: string; model: string; costUsd: string }
+        spent_on: string
+      }>(
+        `SELECT provider, cost_minor, document_id, raw_extract, spent_on::text AS spent_on
+           FROM marketing_image_spend WHERE id = $1`,
+        [spendId],
+      )
+      expect(rows[0]!.provider).toBe('replicate')
+      expect(rows[0]!.cost_minor).toBe(4)
+      expect(rows[0]!.document_id).toBe(doc)
+      expect(rows[0]!.raw_extract).toEqual({ predictionId: 'p-int-1', model: 'flux-1.1-pro', costUsd: '0.04' })
+      // The server's own today, read as text: node-pg hands a date column back
+      // as a Date object and this cluster runs at UTC+11, so a UTC ISO string
+      // is the wrong thing to compare CURRENT_DATE to (house pattern, 0021 file).
+      const { rows: today } = await pool.query<{ d: string }>(`SELECT current_date::text AS d`)
+      expect(rows[0]!.spent_on).toBe(today[0]!.d)
+    } finally {
+      await pool.query(`DELETE FROM marketing_image_spend WHERE tenant_id = $1`, [tenant])
+    }
+  })
+
+  it('counts a zero-minor spend row rather than skipping it', async () => {
+    const tenant = await uniqueTenant()
+    try {
+      // costUsdToMinor('0.004') is 0 (Task 3): a sub-half-cent charge is honest
+      // arithmetic, and a row of it must still land in the append-only ledger
+      // even though it moves the day's sum by nothing.
+      const spendId = await recordImageSpend({ tenantId: tenant, documentId: null, costMinor: 0 })
+      expect(await committedSpendMinor(tenant)).toBe(0)
+      const { rows } = await pool.query<{ id: string }>(
+        `SELECT id FROM marketing_image_spend WHERE id = $1`,
+        [spendId],
+      )
+      expect(rows).toHaveLength(1)
+    } finally {
+      await pool.query(`DELETE FROM marketing_image_spend WHERE tenant_id = $1`, [tenant])
+    }
+  })
+
+  it('keeps the spend of one tenant out of the ceiling read of another', async () => {
+    const mine = await uniqueTenant()
+    const other = await uniqueTenant()
+    try {
+      await recordImageSpend({ tenantId: mine, documentId: null, costMinor: 600 })
+      await recordImageSpend({ tenantId: mine, documentId: null, costMinor: 1380 })
+      await recordImageSpend({ tenantId: other, documentId: null, costMinor: 500 })
+      expect(await committedSpendMinor(mine)).toBe(1980)
+      expect(await committedSpendMinor(other)).toBe(500)
+    } finally {
+      await pool.query(`DELETE FROM marketing_image_spend WHERE tenant_id = ANY($1::uuid[])`, [[mine, other]])
+    }
+  })
+
+  it('reads a tenant that has never spent as zero', async () => {
+    // No row to clean up: the tenant exists only in this read.
+    expect(await committedSpendMinor(await uniqueTenant())).toBe(0)
+  })
+
+  it('sums only today, so a backdated spend does not eat the new day', async () => {
+    const tenant = await uniqueTenant()
+    try {
+      await recordImageSpend({ tenantId: tenant, documentId: null, costMinor: 40 })
+      // The module deliberately exposes no spent_on parameter — an append-only
+      // ledger whose caller can rewrite history is not append-only — so the
+      // backdated row goes in through raw SQL to prove the read's day scoping.
+      await pool.query(
+        `INSERT INTO marketing_image_spend (tenant_id, document_id, provider, cost_minor, spent_on)
+         VALUES ($1, NULL, 'replicate', 500, CURRENT_DATE - 1)`,
+        [tenant],
+      )
+      expect(await committedSpendMinor(tenant)).toBe(40)
+    } finally {
+      await pool.query(`DELETE FROM marketing_image_spend WHERE tenant_id = $1`, [tenant])
+    }
+  })
+})
+```
+
+Five cases: the round trip with its `raw_extract` handle re-read as jsonb, the zero-minor
+row Task 3 makes legitimate, tenant isolation, an empty ledger reading as `0`, and day
+scoping through a backdated row. Each case deletes its own rows in a `finally`, which is
+what makes the file rerunnable: every assertion is an absolute sum.
+
+- [ ] **Step 5: Run both files**
 
 ```bash
-git add src/marketing/image-spend.ts tests/marketing/image-spend.test.ts
+export CRUM_INTEGRATION_DATABASE_URL="postgres://crum_test@localhost:5455/crum_slice4"
+npx vitest run tests/marketing/image-spend.test.ts tests/integration/marketing-image-spend.test.ts
+```
+
+Expected: PASS on nine unit cases and five integration cases. A skipped integration file is
+not a pass — the run must show the five cases executing. Then `npm run typecheck` and
+`npm run lint`, both clean.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/marketing/image-spend.ts tests/marketing/image-spend.test.ts tests/integration/marketing-image-spend.test.ts
 git commit -m "feat(marketing): add the daily image spend ledger and its ceiling arithmetic"
 ```
 
