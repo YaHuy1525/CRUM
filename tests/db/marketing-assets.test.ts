@@ -257,6 +257,11 @@ describe('the reads', () => {
     // the caller can tell a generated image from an invoice an image artifact
     // happens to point at (Ruling 8b).
     expect(call!.sql).toContain('d.kind')
+    // Ruling 8a's guard rail, stated as a prohibition: `d.kind` and `d.status`
+    // may appear as projected columns and nowhere else, because a SQL-side
+    // filter hides the `ready` rows Task 6's carry check reads and the bundle
+    // re-buys an image the tenant already owns.
+    expect(call!.sql).not.toMatch(/d\.(status|kind)\s*(=|<>|!=)/)
     expect(call!.sql).toContain("a.kind = 'image'")
     expect(call!.sql).toContain('JOIN documents d')
     // The predicate and the pair, not only the projection. Task 8 reads an EMPTY

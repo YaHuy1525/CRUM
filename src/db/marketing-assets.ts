@@ -166,11 +166,13 @@ export async function getDesignerArtifactText(tenantId: string, bundleId: string
  * caller has to keep seeing a reviewed image it has already paid for, and because
  * a refusal a unit test cannot reach is a refusal nobody can prove (Ruling 8a).
  *
- * Both the artifact's own `status` column and the `kind = 'image'` filter live
- * where Task 5 put them: the artifact says whether the attachment row is active,
- * which is not the same fact as whether the picture is approved. The title travels
- * rather than a bare uuid because an owner told "needs_review" has to work out
- * which picture is meant.
+ * The artifact's own `status` is deliberately not read here. It is a review state
+ * on the attachment row (`pending_review`, `approved`, `rejected` in
+ * migrations/0018_crum_marketing.sql:67), which is a different question from
+ * whether the picture has been approved, and a `rejected` attachment row still has
+ * to name its picture to whoever is staging the bundle. The title travels rather
+ * than a bare uuid because an owner told "needs_review" has to work out which
+ * picture is meant.
  */
 export async function listImageAssetStatuses(
   tenantId: string,

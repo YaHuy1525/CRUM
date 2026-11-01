@@ -448,8 +448,12 @@ export const stageBundleTool = createTool({
       // The arms stay in this order because each is a cheaper question than the
       // next: an unread plan cannot be counted, an unnameable page cannot be
       // placed, an ambiguous slot cannot be hashed, and a name with no adapter is
-      // a build question, not a bundle question. The fifth is the only one that
-      // costs a second read, so it goes after the four that do not.
+      // a build question, not a bundle question. The fifth is the only question
+      // that needs the database at all, and the read above pays for it whether or
+      // not this arm is reached — an earlier refusal throws the answer away. That
+      // is one indexed SELECT against marketing_artifacts_bundle_idx on a path
+      // that already writes a human task, so the read stays where a test can see
+      // it rather than becoming a closure the chain cannot be read through.
       const refusal =
         unread.length > 0
           ? `unreadable ${unread.join(' and ')}`
@@ -460,7 +464,11 @@ export const stageBundleTool = createTool({
               : blocked.length > 0
                 ? `no adapter for ${blocked.join(', ')}`
                 : unreviewedTitles.length > 0
-                  ? `unreviewed images: ${unreviewedTitles.join(', ')}`
+                  ? // `documents.title` is NOT NULL with no unique constraint
+                    // (migrations/0009_crum_documents.sql:30), so two pictures can
+                    // share a name. Listing it twice tells the reviewer nothing they
+                    // can act on twice, so the refusal names each title once.
+                    `unreviewed images: ${[...new Set(unreviewedTitles)].join(', ')}`
                   : null
       if (refusal !== null) {
         // Refusing here rather than at commit time is the difference between one

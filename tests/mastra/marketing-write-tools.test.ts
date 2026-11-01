@@ -809,6 +809,11 @@ describe('marketing.stage_bundle', () => {
     expect(String(result.reason)).toContain('unreviewed images: founder-portrait')
     expect(String(result.reason)).not.toContain('hero-image')
     expect(String(call('INSERT INTO human_tasks')?.params[4])).toContain('founder-portrait')
+    // params[4] is the title and params[5] is the body, and the body is the half
+    // the reviewer actually opens. Both interpolate the same `refusal` string in
+    // the createHumanTask call, so this is one line of insurance against a body
+    // that stops quoting it.
+    expect(String(call('INSERT INTO human_tasks')?.params[5])).toContain('founder-portrait')
     expect(call('INSERT INTO pending_writes')).toBeUndefined()
     expect(call('UPDATE marketing_bundles')).toBeUndefined()
   })
@@ -864,6 +869,86 @@ describe('marketing.stage_bundle', () => {
     // review queue full of invoices. Ruling 8b is the filter this case exists for.
     expect(result.proceed).not.toBe(false)
     expect(String(result.reason ?? '')).not.toContain('october-invoice')
+  })
+
+  it('names a shared title once when two unreviewed pictures carry it', async () => {
+    // `documents.title` is NOT NULL with no unique constraint
+    // (migrations/0009_crum_documents.sql:30), so two generated pictures can reach
+    // staging with the same name and no bug is involved. The exact string is the
+    // assertion: dropping the dedup prints the name twice, which reads as two
+    // things to open when a reviewer can only act on one picture at a time.
+    stubQueries({
+      'JOIN documents d': [
+        { document_id: DOCUMENT_ID, title: 'hero-image', status: 'needs_review', kind: 'marketing_asset' },
+        {
+          document_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+          title: 'hero-image',
+          status: 'needs_review',
+          kind: 'marketing_asset',
+        },
+      ],
+      'FROM marketing_bundles': [bundleRow()],
+      'FROM marketing_artifacts': [
+        artifactRow({ id: 'a1', role: 'creative-designer', kind: 'image', document_id: DOCUMENT_ID, text_content: null }),
+        artifactRow({
+          id: 'a2',
+          role: 'creative-designer',
+          kind: 'image',
+          document_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+          text_content: null,
+        }),
+      ],
+      'INSERT INTO human_tasks': [{ id: '66666666-6666-4666-8666-666666666666' }],
+    })
+    const result = await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
+    expect(String(result.reason)).toBe('unreviewed images: hero-image')
+    expect(call('INSERT INTO pending_writes')).toBeUndefined()
+  })
+
+  it('stages the bundle it refused as soon as the picture in it is reviewed', async () => {
+    // Spec section 10's third section 6.1 case, and the one that closes the loop:
+    // the review is the existing `reviewDocument`, which sets
+    // `documents.status = 'ready'` (src/db/documents.ts:543), and this arm accepts
+    // exactly that literal (marketing-writes.ts:445). Nothing else in the suite
+    // pins the two against each other — tests/api/documents.test.ts:205 stubs its
+    // own UPDATE with its own 'ready' — so a refusal that no review could clear,
+    // or an arm that refused a reviewed picture, would leave every other test here
+    // green. Same bundle, same artifact row, one column changed.
+    const imageArtifact = artifactRow({
+      role: 'creative-designer',
+      kind: 'image',
+      document_id: DOCUMENT_ID,
+      text_content: null,
+    })
+    stubQueries({
+      'JOIN documents d': [
+        { document_id: DOCUMENT_ID, title: 'founder-portrait', status: 'needs_review', kind: 'marketing_asset' },
+      ],
+      'FROM marketing_bundles': [bundleRow()],
+      'FROM marketing_artifacts': [imageArtifact],
+      'INSERT INTO human_tasks': [{ id: '66666666-6666-4666-8666-666666666666' }],
+    })
+    const refused = await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
+    expect(String(refused.reason)).toContain('unreviewed images: founder-portrait')
+    expect(call('INSERT INTO pending_writes')).toBeUndefined()
+
+    // The review: the same read, answering with the row reviewDocument leaves
+    // behind it. No handler is added for human_tasks, because reaching this arm's
+    // opposite means no second refusal task.
+    stubQueries({
+      'JOIN documents d': [
+        { document_id: DOCUMENT_ID, title: 'founder-portrait', status: 'ready', kind: 'marketing_asset' },
+      ],
+      'FROM marketing_bundles': [bundleRow()],
+      'FROM marketing_artifacts': [imageArtifact],
+      'INSERT INTO pending_writes': [
+        pendingWriteRow({ object_type: 'marketing_stage', gate: 'approval' }),
+      ],
+      'UPDATE marketing_bundles': [{ id: BUNDLE_ID }],
+    })
+    const result = await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
+    expect(result.proceed).not.toBe(false)
+    expect(stagedInsert().artifactCount).toBe(1)
   })
 
   it('refuses a bundle that is already approved, rather than double-approving it', async () => {

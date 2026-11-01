@@ -55,13 +55,19 @@ describe('CRUM instruction block', () => {
   it('promises the staging refusal that now exists', () => {
     // Green on arrival, and deliberately so: the sentence has been in the
     // instruction since Task 7, so this is a seal rather than a RED. What it
-    // buys is the forward direction — a later edit that drops the sentence while
-    // the arm stays, or rewrites the paragraph to promise something the arm does
-    // not do, has to pass this case on purpose. The behaviour half lives in
-    // `tests/mastra/marketing-write-tools.test.ts`, where Step 1's first case
-    // reads the refusal reason a human actually sees; a pin on prose cannot
+    // buys is the direction that matters — a later edit that drops this sentence
+    // while the arm stays has to pass this case on purpose. The behaviour half
+    // lives in `tests/mastra/marketing-write-tools.test.ts`, where Step 1's first
+    // case reads the refusal reason a human actually sees; a pin on prose cannot
     // detect a deleted arm, and pretending otherwise here would be the same
-    // species of claim this task exists to stop.
+    // species of claim this task exists to stop. It cannot police the rest of the
+    // paragraph either: a rewrite that keeps these words passes, which is why the
+    // arm's own cases, not this one, are the contract.
+    //
+    // One line of the pinned sentence sits on one source line
+    // (src/mastra/instructions.ts:99), so re-wrapping that prose breaks this case
+    // with no change of meaning. Treat that failure as "the prose moved, restate
+    // the pin", not as a lost refusal.
     expect(CRUM_INSTRUCTIONS).toContain(
       'staging refuses a bundle that still carries an unreviewed image',
     )
