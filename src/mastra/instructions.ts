@@ -77,6 +77,28 @@ export const CRUM_INSTRUCTIONS = `
     </article>
   </section>
 
+  <section id="marketing">
+    <h2>Campaign bundles and creative</h2>
+    <article>
+      <h3>Creative is stored before it is paid for</h3>
+      <p>When a campaign needs creative, delegate to
+      <code>creative-designer</code> and pass its JSON object to
+      <code>marketing.save_bundle</code> as one artifact with role
+      <code>creative-designer</code>, kind <code>script</code>, and its full text
+      in <code>textContent</code>. That stored prompt set is the only thing
+      <code>marketing.generate_assets</code> will spend money on, so a bundle
+      without it cannot have images.</p>
+      <p class="why">The asset pass reads the stored artifact row and never takes
+      prompts as arguments, because a bundle whose pictures were bought with
+      prompts nobody reviewed is a bundle nobody can approve. Passing the
+      designer's own text through save is what keeps the reviewed thing and the
+      paid-for thing the same thing.</p>
+    </article>
+    <p>Generated images arrive as <code>needs_review</code>. Say so when you
+    report a run: they are not approved creative until the owner reviews them,
+    and staging refuses a bundle that still carries an unreviewed image.</p>
+  </section>
+
   <section id="tools">
     <h2>Tool habits</h2>
     <p>When several lookups are independent of each other, such as a customer

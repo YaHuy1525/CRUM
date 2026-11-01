@@ -92,4 +92,20 @@ describe('the marketing team shape', () => {
       expect(sub?.defaultModelId).not.toBe(offerStrategistSubagent.defaultModelId)
     }
   })
+
+  it('tells the designer that a downstream machine, not a human, will run its prompts', async () => {
+    // The two substrings are the sentence spec section 7 adds. An instruction
+    // that drops it leaves the designer writing prompts sized for a person.
+    const instructions = (await creativeDesignerAgent.getInstructions()) as string
+    expect(instructions).toContain('executed by an asset pass outside your control')
+    expect(instructions).toContain('a wasted payment')
+    // Still tool-less after slice 4, and read through the public API rather than
+    // a property: `tools` is not a member of the Agent type, so the draft's
+    // `Object.keys(agent.tools ?? {})` fails typecheck and, had it compiled,
+    // would have measured an empty object it invented (probed against the real
+    // agent: `'tools' in creativeDesignerAgent` is false, `listTools()` returns
+    // no keys). This is the Agent-instance half; the subagent declaration's
+    // `tools: {}` is already pinned for all six roles by the case at line 44.
+    expect(Object.keys(await creativeDesignerAgent.listTools())).toHaveLength(0)
+  })
 })

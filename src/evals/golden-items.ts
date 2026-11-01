@@ -49,6 +49,7 @@ const WRITE_DELETE = '7f80912a-3b4c-4fd1-8a5b-6a912a3b4c5d'
 const WRITE_BUNDLE_DRAFT = '8a5b6a91-2b4c-4d5e-9f0a-1b2c3d4e5f60'
 const WRITE_BUNDLE_STAGE = '9b6c7ba2-3c5d-4e6f-8a1b-2c3d4e5f6071'
 const BUNDLE_PHYSIO = '0a5b6a91-2b4c-4d5e-9f0a-1b2c3d4e5f60'
+const ASSET_DOCUMENT = 'bbbbbbbb-1111-4111-8111-111111111111'
 
 const SLOT_COUNT = 3
 
@@ -194,6 +195,30 @@ function bundleReceipt(
   message: string,
 ) {
   return { pendingWriteId, bundleId, riskScore, gate, artifactCount, message }
+}
+
+/**
+ * `marketing.generate_assets` reports what it stored and what it refused, and
+ * the refusal half matters for the gate: a fixture that always succeeds teaches
+ * the model to promise pictures.
+ */
+function assetReceipt(
+  bundleId: string,
+  spentMinor: number,
+  message: string,
+) {
+  return {
+    bundleId,
+    assets: [{ name: 'hero-image', documentId: ASSET_DOCUMENT, status: 'needs_review', deduplicated: false, costMinor: 4 }],
+    refused: [],
+    spentMinor,
+    provider: 'replicate',
+    model: 'black-forest-labs/flux-1.1-pro',
+    humanTaskId: null,
+    riskScore: 10,
+    gate: 'auto',
+    message,
+  }
 }
 
 
@@ -524,6 +549,22 @@ export function getGoldenItems(): GoldenItem[] {
             'approval',
             10,
             'Staged the bundle for approval. Nothing is live.',
+          ),
+        ),
+      ],
+      category: 'write',
+    },
+    {
+      input: 'Buy the images for the physio campaign bundle ' + BUNDLE_PHYSIO + ' and tell me what still needs review',
+      groundTruth: { answerable: true, expectedToolCalls: ['marketing.generate_assets'] },
+      toolMocks: [
+        ...readMocks(WORLD_FULL),
+        ...slots(
+          'marketing.generate_assets',
+          assetReceipt(
+            BUNDLE_PHYSIO,
+            4,
+            'Stored 1 new image for the bundle, recorded 4 minor of image spend. It is needs_review until you review it.',
           ),
         ),
       ],

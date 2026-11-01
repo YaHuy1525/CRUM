@@ -41,6 +41,16 @@ describe('CRUM instruction block', () => {
   it('distinguishes tasks from schedules', () => {
     expect(CRUM_INSTRUCTIONS).toContain('concrete start and end time is a schedule')
   })
+
+  it('names the marketing artifact contract the asset pass depends on', () => {
+    // Without this paragraph the primary agent has no idea that the designer's
+    // JSON has to reach save_bundle as a creative-designer / script artifact,
+    // and generate_assets refuses with no_asset_prompts on a feature the owner
+    // can see in the menu (spec section 7.2).
+    expect(CRUM_INSTRUCTIONS).toContain('<section id="marketing">')
+    expect(CRUM_INSTRUCTIONS).toContain('marketing.generate_assets')
+    expect(CRUM_INSTRUCTIONS).toContain('creative-designer')
+  })
 })
 
 describe('CRUM working memory template', () => {

@@ -3,9 +3,9 @@ import { describe, it, expect } from 'vitest'
 import { getGoldenItems } from '../../src/evals/golden-items'
 
 describe('golden dataset', () => {
-  it('has exactly 42 items', () => {
+  it('has exactly 43 items', () => {
     const items = getGoldenItems()
-    expect(items).toHaveLength(42)
+    expect(items).toHaveLength(43)
   })
 
   it('has 6 categories with correct counts', () => {
@@ -19,7 +19,7 @@ describe('golden dataset', () => {
     )
     expect(counts['lookup']).toBe(8)
     expect(counts['filter']).toBe(8)
-    expect(counts['write']).toBe(10)
+    expect(counts['write']).toBe(11)
     expect(counts['knowledge-answerable']).toBe(6)
     expect(counts['knowledge-unanswerable']).toBe(5)
     expect(counts['cross-tenant']).toBe(5)
