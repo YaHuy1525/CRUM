@@ -15,6 +15,7 @@ const money = z.string().nullable()
 
 const DocumentSummarySchema = z.object({
   id: z.string(),
+  // Deliberate asymmetry with the input filter enum below: the CRM document tool never accepts an asset kind as a filter and listDocuments excludes that kind in SQL, so this arm exists only because DocumentRow admits it.
   kind: z.enum(['invoice', 'contract', 'other', 'marketing_asset']),
   title: z.string(),
   status: z.enum(['pending', 'processing', 'ready', 'needs_review', 'failed']),

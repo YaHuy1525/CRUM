@@ -16,6 +16,7 @@ vi.mock('../../src/config/env', () => ({
 const TENANT = '11111111-1111-4111-8111-111111111111'
 const OWNER = '77777777-7777-4777-8777-777777777777'
 const DOC = '99999999-9999-4999-8999-999999999999'
+const PARSE = '33333333-3333-4333-8333-333333333333'
 
 function calls(fragment: string): Array<{ sql: string; params: unknown[] }> {
   return (mockQuery.mock.calls as unknown[][])
@@ -30,7 +31,9 @@ async function load() {
 /**
  * insertDocument's RETURNING row decides everything downstream: is_new gates the
  * file write, so a test that wants the byte lane exercised has to answer with a
- * fresh row.
+ * fresh row. The parse insert is answered with an id too, because the block loop
+ * only runs when parseId is defined — leaving it { rows: [] } would make the
+ * largest physically-moved chunk unreachable from any test.
  */
 function answerDocumentInsert(over: { id?: string; is_new?: boolean } = {}) {
   mockQuery.mockImplementation((sql: string) => {
@@ -45,6 +48,9 @@ function answerDocumentInsert(over: { id?: string; is_new?: boolean } = {}) {
           },
         ],
       }
+    }
+    if (sql.includes('INSERT INTO document_parses')) {
+      return { rows: [{ id: PARSE }] }
     }
     return { rows: [] }
   })
@@ -81,6 +87,14 @@ describe('a generated image as a document', () => {
     const fileWrites = calls('INSERT INTO document_files')
     expect(fileWrites).toHaveLength(1)
     expect(fileWrites[0]!.params).toEqual([DOC, TENANT, 'image/png', 4, expect.any(Uint8Array)])
+    // The hoist exists so the byte lane commits inside the same transaction as
+    // the metadata row: a file write recorded after COMMIT could survive a
+    // rollback of the document row, or land outside the transaction entirely.
+    const sqls = (mockQuery.mock.calls as unknown[][]).map((call) => call[0] as string)
+    const fileIdx = sqls.findIndex((sql) => sql.includes('INSERT INTO document_files'))
+    const commitIdx = sqls.findIndex((sql) => sql === 'COMMIT')
+    expect(fileIdx).toBeGreaterThanOrEqual(0)
+    expect(commitIdx).toBeGreaterThan(fileIdx)
   })
 
   it('still writes parse artifacts for an upload that has both', async () => {
@@ -102,10 +116,39 @@ describe('a generated image as a document', () => {
       rawExtract: {},
       file: { mime: 'application/pdf', sizeBytes: 2, data: new Uint8Array([1, 2]) },
       parse: { parser: 'unpdf', parserVersion: '1', status: 'ok', durationMs: 5, meta: {} },
-      blocks: [],
+      blocks: [
+        {
+          page_number: 1,
+          block_index: 0,
+          block_type: 'text',
+          content_md: 'total due',
+          bbox: [10, 20, 300, 40],
+          confidence: 0.9,
+          char_start: 0,
+          char_end: 9,
+        },
+      ],
     })
     expect(calls('INSERT INTO document_files')).toHaveLength(1)
     expect(calls('INSERT INTO document_parses')).toHaveLength(1)
+    // One real block makes the hoisted block-insert loop (the 11-param tuple
+    // builder) reachable: it only runs when the parse insert RETURNing an id
+    // arrives and blocks is non-empty.
+    const blockWrites = calls('INSERT INTO document_blocks')
+    expect(blockWrites).toHaveLength(1)
+    expect(blockWrites[0]!.params).toEqual([
+      PARSE,
+      DOC,
+      TENANT,
+      1,
+      0,
+      'text',
+      'total due',
+      JSON.stringify([10, 20, 300, 40]),
+      0.9,
+      0,
+      9,
+    ])
   })
 
   it('does not write the byte lane a second time for a duplicate hash', async () => {
