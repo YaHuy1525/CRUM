@@ -399,6 +399,7 @@ git commit -m "feat(marketing): add migration 0021 for asset documents, image sp
 
 **Files:**
 - Modify: `src/db/documents.ts` (`DocumentRow` at 5-20, `PersistDocumentInput` at 159-181, the guard at 278-289, `listDocuments` at 364-402)
+- Modify: `src/mastra/tools/documents.ts` (`DocumentSummarySchema.kind`, one enum arm) — `listDocuments` types its result as `DocumentRow`, so widening that union makes the tool's output schema refuse to compile until the arm is added. No task owns this file; the commit that breaks the build owns the fix.
 - Test: `tests/db/documents-asset-lane.test.ts`
 
 **Interfaces:**
@@ -569,7 +570,7 @@ describe('listDocuments', () => {
 - [ ] **Step 2: Run them to make sure they fail**
 
 Run: `npx vitest run tests/db/documents-asset-lane.test.ts`
-Expected: FAIL, and name which cases fail rather than forcing the others to. Vitest strips types without checking them, so the widened unions are not a red assertion — `npm run typecheck` at Step 5 is what proves them. The behavioural RED is: the first case fails `expected 0 to be 1` from `calls('INSERT INTO document_files')`, which is spec section 4.1's silent byte loss reproduced as a test, and both `listDocuments` cases fail because no `d.kind <> 'marketing_asset'` exists yet. The second and third cases pass in RED and must pass in GREEN: today's code already writes both lanes for an upload that has a parse run, and already writes nothing for a duplicate hash.
+Expected: FAIL, and name which cases fail rather than forcing the others to. Vitest strips types without checking them, so the widened unions are not a red assertion — `npm run typecheck` at Step 5 is what proves them. The behavioural RED is: the first case fails `expected 0 to be 1` from `calls('INSERT INTO document_files')`, which is spec section 4.1's silent byte loss reproduced as a test, and the exclusion case fails because no `d.kind <> 'marketing_asset'` exists yet. Three cases pass in RED and must pass in GREEN: today's code already writes both lanes for an upload that has a parse run, already writes nothing for a duplicate hash, and already filters by an exact `kind` — the `kind` case exercises the pre-existing `=` branch, not this task's change.
 
 - [ ] **Step 3: Widen the two unions and hoist the guard**
 
@@ -646,7 +647,7 @@ Expected: PASS on all three files. `tests/api/documents.test.ts`'s router suite 
 
 ```bash
 npm run typecheck
-git add src/db/documents.ts tests/db/documents-asset-lane.test.ts
+git add src/db/documents.ts src/mastra/tools/documents.ts tests/db/documents-asset-lane.test.ts
 git commit -m "fix(db): store generated image bytes and keep marketing assets out of the CRM document list"
 ```
 
