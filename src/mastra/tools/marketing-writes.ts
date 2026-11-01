@@ -1034,12 +1034,20 @@ export const retryPublishTool = createTool({
 /**
  * The codes this tool can put in `refused[].code`, in the order the refusal chain
  * reaches them: run-level `not_found`, `bundle_not_generable`,
- * `no_asset_prompts`, `asset_prompts_unparsable`, `image_provider_not_configured`,
+ * `image_provider_not_configured`, `no_asset_prompts`, `asset_prompts_unparsable`,
  * `image_spend_ceiling_reached`, `policy_gate_raised`; per-asset
  * `image_generation_failed`, `image_generation_timeout`, `asset_too_large`,
  * `prompt_too_long`, `unsupported_aspect_ratio` (the five `ImageFailureCode` values
  * `src/marketing/replicate.ts:26-31` can answer with, carried through verbatim) and
  * `asset_storing_failed`.
+ *
+ * The adapter check (`getImageAdapter()` at :1175) comes before the artifact read
+ * (`getDesignerArtifactText` at :1186) on purpose, so a run with no adapter
+ * registered and an unparsable artifact answers `image_provider_not_configured`,
+ * not `asset_prompts_unparsable`: the adapter is the cheaper of the two questions
+ * and it is the one that decides whether any request could leave at all. Both
+ * refusals bail before a cent is spent, so the order costs nothing but the code,
+ * which is why it is not reordered.
  *
  * This is a comment and not a `const`, for two reasons an implementer would
  * otherwise hit in Step 7: a module-scope `const` nothing reads is a
@@ -1317,6 +1325,12 @@ export const generateAssetsTool = createTool({
                 tenantId: rc.tenantId,
                 documentId: null,
                 costMinor: outcome.charge.costMinor,
+                // Named, not left to image-spend.ts's default. That default is
+                // REPLICATE_PROVIDER, so omitting it would book a row saying
+                // 'replicate' while this run's output reports `adapter.provider`
+                // in its own return — the ledger and the answer disagreeing for
+                // any adapter that is not Replicate.
+                provider: adapter.provider,
                 rawExtract: {
                   predictionId: outcome.charge.predictionId,
                   model: adapter.model,
@@ -1382,6 +1396,7 @@ export const generateAssetsTool = createTool({
               tenantId: rc.tenantId,
               documentId: null,
               costMinor: outcome.image.costMinor,
+              provider: adapter.provider,
               rawExtract: {
                 predictionId: outcome.image.predictionId,
                 model: outcome.image.model,
@@ -1412,6 +1427,7 @@ export const generateAssetsTool = createTool({
             tenantId: rc.tenantId,
             documentId: document.id,
             costMinor: outcome.image.costMinor,
+            provider: adapter.provider,
             rawExtract: {
               predictionId: outcome.image.predictionId,
               model: outcome.image.model,
@@ -1472,10 +1488,19 @@ export const generateAssetsTool = createTool({
       // prose and the field cannot drift apart.
       const bundleLabel = bundle?.id ?? input.bundleId
 
+      // The human-task block above is guarded by `bundle !== null`, so the
+      // `not_found` run files no task at all. Prose that promised one would be
+      // this tool telling an owner it parked something it never parked, so the
+      // sentence follows `humanTaskId` rather than the refusal.
+      const taskSentence =
+        humanTaskId === null
+          ? ' No human task was created because there is no bundle row to file one against.'
+          : ' A human task was created.'
+
       const message =
         refused.length === 0
           ? `Stored ${attached.length} new image(s) for bundle ${bundleLabel}, reused ${assets.length - attached.length}, recorded ${spentMinor} minor of image spend. Each new image is needs_review until you review it.`
-          : `Refused ${refused.length} asset(s) for bundle ${bundleLabel} (${Array.from(new Set(refused.map((entry) => entry.code))).join(', ')}). Stored ${attached.length}, recorded ${spentMinor} minor. A human task was created.`
+          : `Refused ${refused.length} asset(s) for bundle ${bundleLabel} (${Array.from(new Set(refused.map((entry) => entry.code))).join(', ')}). Stored ${attached.length}, recorded ${spentMinor} minor.${taskSentence}`
 
       return {
         bundleId: bundleLabel,

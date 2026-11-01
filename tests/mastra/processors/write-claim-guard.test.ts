@@ -49,7 +49,13 @@ describe('WriteClaimGuardProcessor', () => {
     expect(MUTATING_TOOL_IDS).toContain('marketing.stage_bundle')
     expect(MUTATING_TOOL_IDS).toContain('marketing.promote_bundle')
     expect(MUTATING_TOOL_IDS).toContain('marketing.retry_publish')
-    expect(MUTATING_TOOL_IDS).toHaveLength(14)
+    expect(MUTATING_TOOL_IDS).toContain('marketing.set_campaign_status')
+    expect(MUTATING_TOOL_IDS).toContain('marketing.generate_assets')
+    // Every id in src/mastra/processors/write-claim-guard.ts:8-25, and this count
+    // is the set's size, so a new write tool must be named here as well as added
+    // to the array: the title promises "every write tool", and a bare number that
+    // nobody re-derived let two marketing ids pass unlisted.
+    expect(MUTATING_TOOL_IDS).toHaveLength(16)
   })
 })
 

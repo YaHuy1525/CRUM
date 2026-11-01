@@ -167,7 +167,17 @@ describe('marketing.generate_assets refuses before it costs anything', () => {
 
   it('refuses a missing bundle', async () => {
     h.getMarketingBundle.mockResolvedValue(null)
-    expect((await run({ bundleId: BUNDLE })).refused[0]!.code).toBe('not_found')
+    const result = await run({ bundleId: BUNDLE })
+    expect(result.refused[0]!.code).toBe('not_found')
+    // The prose has to match the rows: `bundle` is null here, so the human-task
+    // block is skipped and no task exists. This case is the only cover for that
+    // branch of the refused-branch message, which used to promise a task
+    // unconditionally.
+    expect(result.humanTaskId).toBeNull()
+    expect(h.createHumanTask).not.toHaveBeenCalled()
+    expect(result.message).toContain('not_found')
+    expect(result.message).toContain('No human task was created')
+    expect(result.message).not.toContain('A human task was created.')
   })
 
   it('refuses with no_asset_prompts when the designer artifact row is absent', async () => {
@@ -207,6 +217,27 @@ describe('marketing.generate_assets refuses before it costs anything', () => {
     expect(result.refused.map((refusal) => refusal.name)).toEqual(['a', 'b', 'c'])
     const [task] = h.createHumanTask.mock.calls[0] as [{ title: string }]
     expect(task.title).toContain('refused 3 asset(s)')
+  })
+
+  it('keeps the refusal prose to ten entries but reports every refusal', async () => {
+    // `refusedProse`'s `slice(0, 10)` is the only bound on how much text a run can
+    // write into one `human_tasks.body` row (ruling 6d): an artifact of five
+    // thousand prompts would otherwise put five thousand sentences in it. Nothing
+    // else in this file reaches ten refusals — the largest is three — so the
+    // `…and N more.` tail was never executed and never asserted. Eleven is the
+    // smallest set that runs the tail, and the tool output must still hold all
+    // eleven, because the prose is capped for the queue, not for the owner.
+    const names = Array.from({ length: 11 }, (_unused, index) => `asset-${index + 1}`)
+    h.getDesignerArtifactText.mockResolvedValue(promptJson(...names))
+    h.generate.mockResolvedValue(
+      failImage('image_generation_failed', 'replicate rejected the api token (401)', null, true),
+    )
+    const result = await run({ bundleId: BUNDLE })
+    expect(result.refused).toHaveLength(11)
+    const [task] = h.createHumanTask.mock.calls[0] as [{ body: string }]
+    expect(task.body).toContain('\u2026and 1 more.')
+    expect(task.body).toContain('asset-1: image_generation_failed')
+    expect(task.body).not.toContain('asset-11')
   })
 
   it('keeps a refusal detail to one sentence when the artifact echoes back at it', async () => {
@@ -266,12 +297,21 @@ describe('marketing.generate_assets spends', () => {
       tenantId: TENANT,
       documentId: DOC,
       costMinor: 7,
+      // Named explicitly by the tool, not left to `image-spend.ts`'s
+      // REPLICATE_PROVIDER default: the ledger row and the answer below have to
+      // agree about who was paid even when the registered adapter is not Replicate.
+      provider: 'replicate',
       rawExtract: {
         predictionId: 'pred-hero-image',
         model: 'black-forest-labs/flux-1.1-pro',
         costUsd: '0.04',
       },
     })
+    // The pair the owner reads. `provider` used to be typed in the output schema
+    // and asserted nowhere, so a tool that booked every row under the default while
+    // answering with `adapter?.provider` passed; these two lines are what close it.
+    expect(result.provider).toBe('replicate')
+    expect(result.model).toBe('black-forest-labs/flux-1.1-pro')
     expect(result.spentMinor).toBe(7)
     expect(result.assets[0]).toEqual({
       name: 'hero-image',
@@ -351,6 +391,7 @@ describe('marketing.generate_assets spends', () => {
       tenantId: TENANT,
       documentId: null,
       costMinor: 4,
+      provider: 'replicate',
       // The failed path takes the model name from the adapter, because a charge
       // carries a prediction id and a price but not the model that made it.
       rawExtract: {
@@ -380,6 +421,7 @@ describe('marketing.generate_assets spends', () => {
       tenantId: TENANT,
       documentId: null,
       costMinor: 4,
+      provider: 'replicate',
       rawExtract: {
         predictionId: 'pred-a',
         model: 'black-forest-labs/flux-1.1-pro',

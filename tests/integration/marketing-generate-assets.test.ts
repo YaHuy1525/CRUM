@@ -1,6 +1,8 @@
 // tests/integration/marketing-generate-assets.test.ts
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { QueryResultRow } from 'pg'
+import { Pool } from 'pg'
+import { migrate } from '../../scripts/db-migrate'
 import { closeDbClient, getDbClient } from '../../src/db/client'
 import { generateAssetsTool, saveBundleTool } from '../../src/mastra/tools/marketing-writes'
 import { setImageAdapter, type ImageAdapter } from '../../src/marketing/image-provider'
@@ -17,6 +19,8 @@ import { committedSpendMinor } from '../../src/marketing/image-spend'
 const url = process.env.CRUM_INTEGRATION_DATABASE_URL ?? ''
 if (url) process.env.DATABASE_URL = url
 process.env.APPROVAL_HMAC_SECRET ??= 'crum-integration-receipt-secret-0123456789'
+
+let pool: Pool
 
 const TENANT = 'a1000000-0000-4000-8000-000000000021'
 const USER = 'a2000000-0000-4000-8000-000000000021'
@@ -129,6 +133,15 @@ async function rows<T extends QueryResultRow>(sql: string, params: unknown[]): P
 
 beforeAll(async () => {
   if (url === '') return
+  // The convention of the other integration files (marketing-image-spend.ts:38-41,
+  // marketing-assets-migration.ts:27-30, and seven more): a file that needs the
+  // schema applies it itself instead of borrowing the state another file left
+  // behind. `migrate` is idempotent — it tracks applied versions in its own table
+  // — so on an already-migrated cluster this is one extra SELECT, and on a fresh
+  // one it is the reason the DELETE below finds `marketing_image_spend` at all.
+  // Without it this file only passes after some other integration file has run.
+  pool = new Pool({ connectionString: url, max: 2 })
+  await migrate(pool)
   // Same habit as `tests/integration/marketing-bundle.test.ts:87-101`: this tenant
   // is private to this file, and the file must be re-runnable. Without the reset,
   // run two finds run one's hashes, its ledger, and its artifact rows, and the very
@@ -158,10 +171,22 @@ beforeAll(async () => {
 
 afterAll(async () => {
   setImageAdapter(null)
-  if (url !== '') await closeDbClient()
+  if (url !== '') {
+    await closeDbClient()
+    await pool.end()
+  }
 })
 
 describe.skipIf(url === '')('marketing.generate_assets against Postgres', () => {
+  // CASE ORDER IS LOAD-BEARING: this case must stay first. The reset is
+  // `beforeAll`, not `beforeEach`, deliberately — case two reads the tenant's
+  // whole day on purpose ("by now the tenant has paid for case one too"), so the
+  // ledger is shared state across the file by design. The consequence is that the
+  // absolute numbers below (`spentMinor` 8, `committedSpendMinor(TENANT)` 8) are
+  // only exact because nothing had spent before them. Reorder this file, or add a
+  // case above this one, and those two assertions fail for test order rather than
+  // for the tool. `tests/integration/marketing-image-spend.test.ts:28-35` is the
+  // alternative shape (a minted tenant per case) if this file ever needs it.
   it('writes the document, the bytes, the artifact and the ledger for two prompts', async () => {
     const bundleId = await saveDesignerBundle('two prompts')
     const out = await generate(bundleId)
