@@ -4750,7 +4750,7 @@ git commit -m "feat(marketing): staging refuses a bundle whose images nobody has
 
 ---
 
-### Task 9: Four settings, one secret, and the adapter that only registers when it is paid for
+[SHIPPED @ 2aab883] ### Task 9: Four settings, one secret, and the adapter that only registers when it is paid for
 
 **Files:**
 - Modify: `src/config/env.ts:183` (four vars after `CRUM_META_AD_ACCOUNTS`) and `:226` (`PRODUCTION_REQUIRED_SECRETS`, whose `'CRUM_CLOUDFLARE_API_TOKEN'` entry is the last)
@@ -5001,7 +5001,7 @@ git commit -m "feat(marketing): register the Replicate adapter only when the tok
 
 Nothing here needs a provider token, so 4b ships first when the key is still undecided. Tasks 10 through 13 add the prediction record, the two routes that read and write it, the bytes route the spec assigns to this half, and the console that shows a textarea instead of a proposal. Task 12 is the seam between the halves: it stores nothing and spends nothing, it only decides who is allowed to look.
 
-### Task 10: The draft the gate attaches to, and the record that cannot be revised
+[SHIPPED @ 2755976] ### Task 10: The draft the gate attaches to, and the record that cannot be revised
 
 **Files:**
 - Create: `src/db/reviewer-predictions.ts`
@@ -5619,7 +5619,7 @@ git commit -m "feat(governance): one prediction per open stage draft, before the
 
 ---
 
-### Task 11: The prediction door, and the GET that withholds the copy
+[SHIPPED @ 4460247] ### Task 11: The prediction door, and the GET that withholds the copy
 
 **Files:**
 - Modify: `src/api/marketing.ts:76-89` (the bundle GET handler) and a new POST beside it
@@ -6019,7 +6019,7 @@ git commit -m "feat(api): the prediction door, and a bundle GET that withholds t
 
 ---
 
-### Task 12: Serving the bytes, and closing the intake lane behind them
+[SHIPPED @ 80cf7b1] ### Task 12: Serving the bytes, and closing the intake lane behind them
 
 **Files:**
 - Modify: `src/api/marketing.ts` (new `GET /assets/:documentId/bytes`)
@@ -6494,7 +6494,7 @@ git commit -m "feat(marketing): serve asset bytes behind the gate, and keep them
 
 ---
 
-### Task 13: The console — gate the reviewer, then show them the picture
+### [SHIPPED @ ecd2b2f] Task 13: The console — gate the reviewer, then show them the picture
 
 **Files:**
 - Modify: `console/lib/types.ts` (`ReviewerPrediction`, the withheld read's shape, and `MarketingBundleResponse` becoming a union)

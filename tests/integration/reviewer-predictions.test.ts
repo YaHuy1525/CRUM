@@ -4,6 +4,7 @@ import { Pool } from 'pg'
 import { migrate } from '../../scripts/db-migrate'
 
 const url = process.env.CRUM_INTEGRATION_DATABASE_URL ?? ''
+if (url) process.env.DATABASE_URL = url
 const TENANT = '11111111-1111-4111-8111-111111111111'
 const BUNDLE = '33333333-3333-4333-8333-333333333333'
 
