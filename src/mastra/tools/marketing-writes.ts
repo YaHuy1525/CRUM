@@ -412,12 +412,14 @@ export const stageBundleTool = createTool({
         throw new Error(`bundle_not_stageable: ${bundle.id} is ${bundle.status}`)
       }
 
-      // All four refusals answer the same question — can this build say at all
-      // what approving this bundle would cause — so they are one branch, not four
-      // copies of the human-task call. An unread plan is checked first because a
-      // plan you cannot read is also a plan whose actions you cannot count (Task 5,
-      // Ruling T5-D3); the arms after it name the page, the slot and the adapter
-      // that would each stop a derivation somewhere further down.
+      // The first four refusals answer the same question — can this build say at all
+      // what approving this bundle would cause — and the fifth asks whether a
+      // reviewer would be signing off a picture nobody has looked at. They are one
+      // branch, not five copies of the human-task call. An unread plan is checked
+      // first because a plan you cannot read is also a plan whose actions you cannot
+      // count (Task 5, Ruling T5-D3); the arms after it name the page, the slot, the
+      // adapter and the unreviewed picture that each stop a bundle short of an
+      // honest approval.
       const unread = unreadPlanColumns(bundle)
       // One read, three uses: the slot check, the hash, and the artifact count the
       // payload and the message report. `countMarketingArtifacts` is gone from this
@@ -432,10 +434,22 @@ export const stageBundleTool = createTool({
       const actions = slugIssue === null ? deriveActions(bundle, artifacts) : []
       const blocked = blockedActions(actions)
       const slotIssue = slotProblemCheck(artifacts)
+      // Behind the in-memory check, so a bundle with no picture never issues the
+      // second read and no existing stage fixture has to learn about it. The read
+      // is Task 5's, not a fresh one filtered to not-ready rows, because the
+      // filtering has to be somewhere a test can reach (Ruling 8a) — and because
+      // a document that is not a marketing asset is not a picture under review
+      // (Ruling 8b).
+      const unreviewedTitles = artifacts.some((artifact) => artifact.kind === 'image')
+        ? (await listImageAssetStatuses(rc.tenantId, bundle.id))
+            .filter((row) => row.kind === 'marketing_asset' && row.status !== 'ready')
+            .map((row) => row.title)
+        : []
       // The arms stay in this order because each is a cheaper question than the
       // next: an unread plan cannot be counted, an unnameable page cannot be
       // placed, an ambiguous slot cannot be hashed, and a name with no adapter is
-      // a build question, not a bundle question.
+      // a build question, not a bundle question. The fifth is the only one that
+      // costs a second read, so it goes after the four that do not.
       const refusal =
         unread.length > 0
           ? `unreadable ${unread.join(' and ')}`
@@ -445,7 +459,9 @@ export const stageBundleTool = createTool({
               ? `ambiguous page slot: ${slotIssue}`
               : blocked.length > 0
                 ? `no adapter for ${blocked.join(', ')}`
-                : null
+                : unreviewedTitles.length > 0
+                  ? `unreviewed images: ${unreviewedTitles.join(', ')}`
+                  : null
       if (refusal !== null) {
         // Refusing here rather than at commit time is the difference between one
         // wasted review and a queue full of decisions that cannot be made.

@@ -51,6 +51,21 @@ describe('CRUM instruction block', () => {
     expect(CRUM_INSTRUCTIONS).toContain('marketing.generate_assets')
     expect(CRUM_INSTRUCTIONS).toContain('creative-designer')
   })
+
+  it('promises the staging refusal that now exists', () => {
+    // Green on arrival, and deliberately so: the sentence has been in the
+    // instruction since Task 7, so this is a seal rather than a RED. What it
+    // buys is the forward direction — a later edit that drops the sentence while
+    // the arm stays, or rewrites the paragraph to promise something the arm does
+    // not do, has to pass this case on purpose. The behaviour half lives in
+    // `tests/mastra/marketing-write-tools.test.ts`, where Step 1's first case
+    // reads the refusal reason a human actually sees; a pin on prose cannot
+    // detect a deleted arm, and pretending otherwise here would be the same
+    // species of claim this task exists to stop.
+    expect(CRUM_INSTRUCTIONS).toContain(
+      'staging refuses a bundle that still carries an unreviewed image',
+    )
+  })
 })
 
 describe('CRUM working memory template', () => {

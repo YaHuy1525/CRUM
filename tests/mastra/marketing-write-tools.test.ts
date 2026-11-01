@@ -767,6 +767,105 @@ describe('marketing.stage_bundle', () => {
     expect(call('INSERT INTO pending_writes')).toBeUndefined()
   })
 
+  it('refuses the unreviewed image by title while a reviewed one in the same bundle passes', async () => {
+    stubQueries({
+      // First, because listImageAssetStatuses's SQL also contains the artifacts
+      // fragment below and stubQueries answers from the first match. `JOIN
+      // documents d` is in that read and in nothing else this tool issues.
+      'JOIN documents d': [
+        { document_id: DOCUMENT_ID, title: 'hero-image', status: 'ready', kind: 'marketing_asset' },
+        {
+          document_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+          title: 'founder-portrait',
+          status: 'needs_review',
+          kind: 'marketing_asset',
+        },
+      ],
+      'FROM marketing_bundles': [bundleRow()],
+      'FROM marketing_artifacts': [
+        artifactRow({ id: 'a1', kind: 'script', text_content: 'Brand rules' }),
+        artifactRow({
+          id: 'a2',
+          role: 'creative-designer',
+          kind: 'image',
+          document_id: DOCUMENT_ID,
+          text_content: null,
+        }),
+        artifactRow({
+          id: 'a3',
+          role: 'creative-designer',
+          kind: 'image',
+          document_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+          text_content: null,
+        }),
+      ],
+      'INSERT INTO human_tasks': [{ id: '66666666-6666-4666-8666-666666666666' }],
+    })
+    const result = await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
+    expect(result).toMatchObject({ proceed: false })
+    // The title, not the uuid, and only the unreviewed one. The second line is
+    // spec section 6.1's load-bearing case, and it is the reason the status filter
+    // sits in this file rather than in a WHERE clause the mock above cannot exercise.
+    expect(String(result.reason)).toContain('unreviewed images: founder-portrait')
+    expect(String(result.reason)).not.toContain('hero-image')
+    expect(String(call('INSERT INTO human_tasks')?.params[4])).toContain('founder-portrait')
+    expect(call('INSERT INTO pending_writes')).toBeUndefined()
+    expect(call('UPDATE marketing_bundles')).toBeUndefined()
+  })
+
+  it('stages a bundle whose only image is reviewed', async () => {
+    stubQueries({
+      'JOIN documents d': [
+        { document_id: DOCUMENT_ID, title: 'hero-image', status: 'ready', kind: 'marketing_asset' },
+      ],
+      'FROM marketing_bundles': [bundleRow()],
+      'FROM marketing_artifacts': [
+        artifactRow({
+          role: 'creative-designer',
+          kind: 'image',
+          document_id: DOCUMENT_ID,
+          text_content: null,
+        }),
+      ],
+      'INSERT INTO pending_writes': [
+        pendingWriteRow({ object_type: 'marketing_stage', gate: 'approval' }),
+      ],
+      'UPDATE marketing_bundles': [{ id: BUNDLE_ID }],
+    })
+    const result = await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
+    expect(result.proceed).not.toBe(false)
+    // The read happens and the bundle still stages: an empty refusal is the
+    // difference between "reviewed" and "there were no pictures to ask about", and
+    // only this assertion tells them apart.
+    expect(call('JOIN documents d')).toBeDefined()
+  })
+
+  it('does not refuse a bundle over a document that is not a marketing asset', async () => {
+    stubQueries({
+      'JOIN documents d': [
+        { document_id: DOCUMENT_ID, title: 'october-invoice', status: 'needs_review', kind: 'invoice' },
+      ],
+      'FROM marketing_bundles': [bundleRow()],
+      'FROM marketing_artifacts': [
+        artifactRow({
+          role: 'creative-designer',
+          kind: 'image',
+          document_id: DOCUMENT_ID,
+          text_content: null,
+        }),
+      ],
+      'INSERT INTO pending_writes': [
+        pendingWriteRow({ object_type: 'marketing_stage', gate: 'approval' }),
+      ],
+      'UPDATE marketing_bundles': [{ id: BUNDLE_ID }],
+    })
+    const result = await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
+    // An image artifact pointing at somebody's invoice is a data problem, not a
+    // review queue full of invoices. Ruling 8b is the filter this case exists for.
+    expect(result.proceed).not.toBe(false)
+    expect(String(result.reason ?? '')).not.toContain('october-invoice')
+  })
+
   it('refuses a bundle that is already approved, rather than double-approving it', async () => {
     stubQueries(stageHandlers(bundleRow({ status: 'approved' })))
     await expect(stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })).rejects.toThrow(

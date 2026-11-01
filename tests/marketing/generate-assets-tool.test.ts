@@ -344,7 +344,7 @@ describe('marketing.generate_assets spends', () => {
     // title the attach path wrote: a re-run finds the hero image already on the
     // bundle and never reaches the provider. Spec section 6 idempotency.
     h.listImageAssetStatuses.mockResolvedValue([
-      { documentId: DOC, title: 'hero-image', status: 'ready' },
+      { documentId: DOC, title: 'hero-image', status: 'ready', kind: 'marketing_asset' },
     ])
     const result = await run({ bundleId: BUNDLE })
     expect(h.generate).not.toHaveBeenCalled()
@@ -363,7 +363,7 @@ describe('marketing.generate_assets spends', () => {
     // reports both, so a partial first run is finishable without re-buying.
     h.getDesignerArtifactText.mockResolvedValue(promptJson('a', 'b'))
     h.listImageAssetStatuses.mockResolvedValue([
-      { documentId: DOC, title: 'a', status: 'needs_review' },
+      { documentId: DOC, title: 'a', status: 'needs_review', kind: 'marketing_asset' },
     ])
     const result = await run({ bundleId: BUNDLE })
     expect(h.generate).toHaveBeenCalledTimes(1)

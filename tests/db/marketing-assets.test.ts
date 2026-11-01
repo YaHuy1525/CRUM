@@ -245,14 +245,18 @@ describe('the reads', () => {
     route([
       {
         match: 'FROM marketing_artifacts a',
-        rows: [{ document_id: DOC, title: 'hero-image', status: 'needs_review' }],
+        rows: [{ document_id: DOC, title: 'hero-image', status: 'needs_review', kind: 'marketing_asset' }],
       },
     ])
     const { listImageAssetStatuses } = await load()
     expect(await listImageAssetStatuses(TENANT, BUNDLE)).toEqual([
-      { documentId: DOC, title: 'hero-image', status: 'needs_review' },
+      { documentId: DOC, title: 'hero-image', status: 'needs_review', kind: 'marketing_asset' },
     ])
     const [call] = calls('FROM marketing_artifacts a')
+    // The kind travels as a projected column rather than as a WHERE predicate, so
+    // the caller can tell a generated image from an invoice an image artifact
+    // happens to point at (Ruling 8b).
+    expect(call!.sql).toContain('d.kind')
     expect(call!.sql).toContain("a.kind = 'image'")
     expect(call!.sql).toContain('JOIN documents d')
     // The predicate and the pair, not only the projection. Task 8 reads an EMPTY
@@ -265,6 +269,27 @@ describe('the reads', () => {
     expect(call!.sql).toContain('a.tenant_id = $1')
     expect(call!.sql).toContain('a.bundle_id = $2')
     expect(call!.params).toEqual([TENANT, BUNDLE])
+  })
+
+  it('carries the document kind and still returns a reviewed image, because the caller decides', async () => {
+    route([
+      {
+        match: 'FROM marketing_artifacts a',
+        rows: [
+          { document_id: DOC, title: 'hero-image', status: 'ready', kind: 'marketing_asset' },
+          { document_id: DOC, title: 'founder-portrait', status: 'needs_review', kind: 'marketing_asset' },
+        ],
+      },
+    ])
+    const { listImageAssetStatuses } = await load()
+    const rows = await listImageAssetStatuses(TENANT, BUNDLE)
+    // Both rows survive the read. Task 6's carry check is the reason: it pays for
+    // an asset only when this list does not already name it, so a `ready` row
+    // filtered out here would re-buy an image the tenant owns. The stage refusal
+    // is the other caller, and it does its own filtering (Ruling 8a).
+    expect(rows).toHaveLength(2)
+    expect(rows.map((row) => row.title).sort()).toEqual(['founder-portrait', 'hero-image'])
+    expect(rows.every((row) => row.kind === 'marketing_asset')).toBe(true)
   })
 
   it('lists the bundles that carry a document, for the bytes-route gate', async () => {

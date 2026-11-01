@@ -157,24 +157,44 @@ export async function getDesignerArtifactText(tenantId: string, bundleId: string
 }
 
 /**
- * Every image artifact in a bundle with the status of the document behind it.
- * marketing.stage_bundle refuses on a non-ready row found here and names the
- * title (spec section 6.1), so the title travels rather than a bare uuid: an
- * owner who is told "needs_review" has to work out which picture they mean.
+ * Every image artifact in a bundle with the kind and status of the document behind
+ * it. One read, two questions: `marketing.generate_assets` uses it as "what does
+ * this bundle already carry", keyed on the title, and `marketing.stage_bundle`
+ * uses it as "what must a reviewer look at before this bundle can be decided",
+ * which is the rows whose kind is `marketing_asset` and whose status is not
+ * `ready`. The status filter is deliberately not in the SQL, because the first
+ * caller has to keep seeing a reviewed image it has already paid for, and because
+ * a refusal a unit test cannot reach is a refusal nobody can prove (Ruling 8a).
+ *
+ * Both the artifact's own `status` column and the `kind = 'image'` filter live
+ * where Task 5 put them: the artifact says whether the attachment row is active,
+ * which is not the same fact as whether the picture is approved. The title travels
+ * rather than a bare uuid because an owner told "needs_review" has to work out
+ * which picture is meant.
  */
 export async function listImageAssetStatuses(
   tenantId: string,
   bundleId: string,
-): Promise<Array<{ documentId: string; title: string; status: string }>> {
-  const result = await getDbClient().query<{ document_id: string; title: string; status: string }>(
-    `SELECT a.document_id, d.title, d.status
+): Promise<Array<{ documentId: string; title: string; status: string; kind: string }>> {
+  const result = await getDbClient().query<{
+    document_id: string
+    title: string
+    status: string
+    kind: string
+  }>(
+    `SELECT a.document_id, d.title, d.status, d.kind
        FROM marketing_artifacts a
        JOIN documents d ON d.id = a.document_id
       WHERE a.tenant_id = $1 AND a.bundle_id = $2 AND a.kind = 'image' AND a.document_id IS NOT NULL
       ORDER BY d.title ASC, a.id ASC`,
     [tenantId, bundleId],
   )
-  return result.rows.map((row) => ({ documentId: row.document_id, title: row.title, status: row.status }))
+  return result.rows.map((row) => ({
+    documentId: row.document_id,
+    title: row.title,
+    status: row.status,
+    kind: row.kind,
+  }))
 }
 
 /**
