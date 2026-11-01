@@ -4852,7 +4852,7 @@ These three run in order and depend on each other, exactly as the Meta block abo
 Run: `npx vitest run tests/config/env.test.ts tests/mastra/marketing-boot.test.ts`
 Expected: FAIL, six cases, and none of them with the message the drafted text predicted. In `tests/config/env.test.ts` all three new cases are red: the defaults read `undefined` against `2000`, the blank-ceiling assertion reads `undefined` against `2000`, and the three rejection assertions find nothing to throw because no constraint exists yet. (`expect(DEFAULT_REPLICATE_MODEL).toBe('black-forest-labs/flux-1.1-pro')` is green on arrival and stays green; it is a drift pin, not a feature test.) In `tests/mastra/marketing-boot.test.ts` the second and third cases are red as **assertion mismatches, not a `Cannot read properties of undefined`**: every drafted property read in them is optional-chained (`adapter?.ceilingMinor`), so an unregistered slot answers `undefined` against `5000` rather than throwing, and the log case answers `[]` against one line. The first case is green before the change and after it, because nothing registers an adapter today and the else-branch keeps that true — say so in the report rather than counting it as a red step.
 
-The existing 29 env cases and the Meta block stay green, which is what makes Ruling 9b's one fixture line easy to miss: it only goes red at Step 3, in the same commit as the list entry that causes it.
+The existing 30 env cases (`grep -c "^  it(" tests/config/env.test.ts`, counted on this branch at `8cdad3d`) and the Meta block stay green, which is what makes Ruling 9b's one fixture line easy to miss: it only goes red at Step 3, in the same commit as the list entry that causes it.
 
 - [ ] **Step 3: Declare the settings**
 
