@@ -110,6 +110,7 @@ interface PredictionResponse {
   model?: string
   output?: string | string[] | null
   error?: string | null
+  // `logs` and `urls` are declared because Replicate sends them, but are intentionally unread: the download lane uses `output`, and guessing a url from `urls.get` would be an estimate.
   logs?: string
   cost?: string | number | null
   urls?: { get?: string }
@@ -122,6 +123,24 @@ function failure(
   deadToken = false,
 ): ImageOutcome {
   return { ok: false, code, detail, charge, deadToken }
+}
+
+/**
+ * The charge for a cost Replicate reported, or null when it reported none or
+ * reported something that is not a dollar amount. Section 5.4 forbids estimating
+ * a ledger entry, so an unreadable cost is simply no charge rather than a guess.
+ */
+function chargeFromCost(
+  predictionId: string,
+  cost: string | number | null | undefined,
+): ImageCharge | null {
+  if (cost === null || cost === undefined || cost === '') return null
+  const costUsd = String(cost)
+  try {
+    return { predictionId, costUsd, costMinor: costUsdToMinor(costUsd) }
+  } catch {
+    return null
+  }
 }
 
 function firstUrl(prediction: PredictionResponse): string | null {
@@ -146,6 +165,21 @@ export async function generateImage(request: ImageRequest, config: ReplicateConf
     'Content-Type': 'application/json',
     Accept: 'application/json',
   }
+  // Built once, sent twice: the rate-limit retry must be the identical request,
+  // because a re-typed body makes the retry a different prediction.
+  const createInit = {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      model,
+      input: {
+        prompt: request.prompt,
+        aspect_ratio: request.aspectRatio,
+        output_format: 'png',
+        seed: request.seed,
+      },
+    }),
+  }
 
   if (request.prompt.length > MAX_PROMPT_CHARS) {
     return failure(
@@ -159,21 +193,11 @@ export async function generateImage(request: ImageRequest, config: ReplicateConf
 
   // 1. Create. A 429 is retried once here and nowhere else, because the create
   // call is the only one that spends money; a retry on a poll is a free question.
+  // Every transport throw on every lane resolves to a refusal: an adapter does
+  // not hand its caller a rejection to catch.
   let created: Response
   try {
-    created = await fetchImpl(`${REPLICATE_API_BASE}/predictions`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        model,
-        input: {
-          prompt: request.prompt,
-          aspect_ratio: request.aspectRatio,
-          output_format: 'png',
-          seed: request.seed,
-        },
-      }),
-    })
+    created = await fetchImpl(`${REPLICATE_API_BASE}/predictions`, createInit)
   } catch (err) {
     return failure('image_generation_failed', `could not reach Replicate: ${err instanceof Error ? err.message : String(err)}`)
   }
@@ -181,14 +205,14 @@ export async function generateImage(request: ImageRequest, config: ReplicateConf
   if (created.status === 401) return failure('image_generation_failed', 'replicate rejected the api token (401)', null, true)
   if (created.status === 429) {
     await sleep(retryMs)
-    created = await fetchImpl(`${REPLICATE_API_BASE}/predictions`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        model,
-        input: { prompt: request.prompt, aspect_ratio: request.aspectRatio, output_format: 'png', seed: request.seed },
-      }),
-    })
+    try {
+      created = await fetchImpl(`${REPLICATE_API_BASE}/predictions`, createInit)
+    } catch (err) {
+      return failure('image_generation_failed', `could not reach Replicate on the rate-limit retry: ${err instanceof Error ? err.message : String(err)}`)
+    }
+    // A 401 after a 429 is still a dead token, and the loop-stop signal must not
+    // depend on which status Replicate happened to answer with first.
+    if (created.status === 401) return failure('image_generation_failed', 'replicate revoked the token on the retry (401)', null, true)
     if (created.status === 429) {
       return failure('image_generation_failed', 'replicate rate limited this asset after one retry (429)')
     }
@@ -205,10 +229,20 @@ export async function generateImage(request: ImageRequest, config: ReplicateConf
   // 2. Poll until succeeded, failed, or the budget runs out.
   let prediction: PredictionResponse | null = null
   for (let attempt = 0; attempt < attempts; attempt++) {
-    const polled = await fetchImpl(`${REPLICATE_API_BASE}/predictions/${encodeURIComponent(predictionId)}`, {
-      method: 'GET',
-      headers,
-    })
+    let polled: Response
+    try {
+      polled = await fetchImpl(`${REPLICATE_API_BASE}/predictions/${encodeURIComponent(predictionId)}`, {
+        method: 'GET',
+        headers,
+      })
+    } catch (err) {
+      // A poll that cannot reach Replicate is still a refusal, not a rejection.
+      // No cost was ever learned, so there is nothing honest to put in `charge`.
+      return failure(
+        'image_generation_failed',
+        `could not reach Replicate while polling ${predictionId}: ${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
     if (polled.status === 401) {
       return failure('image_generation_failed', 'replicate revoked the token mid-run (401)', null, true)
     }
@@ -218,7 +252,14 @@ export async function generateImage(request: ImageRequest, config: ReplicateConf
   }
 
   if (prediction?.status === 'failed') {
-    return failure('image_generation_failed', prediction.error ? String(prediction.error) : 'replicate reported a failure with no error text')
+    // A failed prediction can still carry the cost of the GPU minutes it ran, and
+    // spec section 9 says the ledger keeps what was actually paid. Read it when it
+    // is there; a failure that reported no cost is not a licence to invent one.
+    return failure(
+      'image_generation_failed',
+      prediction.error ? String(prediction.error) : 'replicate reported a failure with no error text',
+      chargeFromCost(predictionId, prediction.cost),
+    )
   }
   if (prediction?.status !== 'succeeded') {
     return failure('image_generation_timeout', `prediction ${predictionId} was still ${prediction?.status ?? 'unreadable'} after ${attempts} polls`)
@@ -254,7 +295,18 @@ export async function generateImage(request: ImageRequest, config: ReplicateConf
     return failure('image_generation_failed', `download of prediction ${predictionId} output failed (http ${downloaded.status})`, charge)
   }
 
-  const buffer = await downloaded.arrayBuffer()
+  // The bytes are read under the same rule as the call: a delivery that throws
+  // mid-body is a refusal that still carries the charge.
+  let buffer: ArrayBuffer
+  try {
+    buffer = await downloaded.arrayBuffer()
+  } catch (err) {
+    return failure(
+      'image_generation_failed',
+      `download of prediction ${predictionId} output failed: ${err instanceof Error ? err.message : String(err)}`,
+      charge,
+    )
+  }
   const bytes = new Uint8Array(buffer)
   if (bytes.byteLength > config.maxBytes) {
     return failure('asset_too_large', `${bytes.byteLength} bytes exceeds the ${config.maxBytes} byte document ceiling`, charge)

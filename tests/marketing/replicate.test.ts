@@ -74,6 +74,8 @@ describe('generateImage', () => {
     expect(outcome.image.costMinor).toBe(4)
     expect(outcome.image.bytes).toEqual(BYTES)
     expect(fetchImpl).toHaveBeenCalledTimes(3)
+    // The second call is the poll of that exact prediction, not a re-post.
+    expect((fetchImpl.mock.calls[1] as unknown[])[0]).toBe('https://api.replicate.com/v1/predictions/pred-9')
     // `!` because noUncheckedIndexedAccess makes a destructure off mock.calls
     // possibly undefined; the call count above is what proves it is there.
     const [create] = fetchImpl.mock.calls as unknown[][]
@@ -200,6 +202,7 @@ describe('generateImage', () => {
     expect(outcome.ok).toBe(false)
     if (outcome.ok) return
     expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(sleep).toHaveBeenCalledWith(5000)
     expect(outcome.detail).toContain('rate')
   })
 
@@ -253,6 +256,85 @@ describe('generateImage', () => {
     if (outcome.ok) return
     expect(outcome.charge).toEqual({ predictionId: 'p', costUsd: '0.04', costMinor: 4 })
     expect(outcome.detail).toContain('download')
+  })
+
+  it('resolves when Replicate cannot be reached at all', async () => {
+    const fetchImpl = vi.fn(() => Promise.reject(new Error('ECONNREFUSED')))
+    const outcome = await generateImage(REQUEST, {
+      apiToken: TOKEN, maxBytes: 1024, fetchImpl, sleep: () => Promise.resolve(),
+    })
+    expect(outcome.ok).toBe(false)
+    if (outcome.ok) return
+    expect(outcome.code).toBe('image_generation_failed')
+    expect(outcome.detail).toContain('ECONNREFUSED')
+    expect(outcome.charge).toBeNull()
+  })
+
+  it('resolves when the rate-limit retry cannot reach Replicate', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(json(429, { detail: 'Too many requests' }))
+      .mockImplementation(() => Promise.reject(new Error('ECONNRESET on retry')))
+    const outcome = await generateImage(REQUEST, {
+      apiToken: TOKEN, maxBytes: 1024, fetchImpl, sleep: () => Promise.resolve(),
+    })
+    expect(outcome.ok).toBe(false)
+    if (outcome.ok) return
+    expect(outcome.detail).toContain('rate-limit retry')
+  })
+
+  it('resolves when a poll cannot reach Replicate', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(json(201, { id: 'pred-p', status: 'starting' }))
+      .mockImplementation(() => Promise.reject(new Error('socket hang up')))
+    const outcome = await generateImage(REQUEST, {
+      apiToken: TOKEN, maxBytes: 1024, fetchImpl, sleep: () => Promise.resolve(),
+    })
+    expect(outcome.ok).toBe(false)
+    if (outcome.ok) return
+    expect(outcome.detail).toContain('while polling pred-p')
+    // Nothing was ever read, so there is no honest cost to hand back.
+    expect(outcome.charge).toBeNull()
+  })
+
+  it('carries the charge when the delivery dies mid-body', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(json(201, { id: 'p', status: 'starting' }))
+      .mockResolvedValueOnce(succeeded('p'))
+      .mockResolvedValueOnce({
+        ok: true, status: 200,
+        arrayBuffer: () => Promise.reject(new Error('terminated')),
+        headers: { get: () => null },
+      })
+    const outcome = await generateImage(REQUEST, {
+      apiToken: TOKEN, maxBytes: 1024, fetchImpl, sleep: () => Promise.resolve(),
+    })
+    expect(outcome.ok).toBe(false)
+    if (outcome.ok) return
+    expect(outcome.detail).toContain('download')
+    expect(outcome.charge).toEqual({ predictionId: 'p', costUsd: '0.04', costMinor: 4 })
+  })
+
+  it('keeps the money a failed prediction actually cost', async () => {
+    const failed = json(200, { id: 'pred-f', status: 'failed', output: null, error: 'CUDA out of memory', cost: '0.02' })
+    const outcome = await generateImage(REQUEST, config([json(201, { id: 'pred-f', status: 'starting' }), failed]))
+    expect(outcome.ok).toBe(false)
+    if (outcome.ok) return
+    expect(outcome.code).toBe('image_generation_failed')
+    expect(outcome.detail).toContain('CUDA out of memory')
+    // Section 9: the ledger keeps what was actually paid, even when the image died.
+    expect(outcome.charge).toEqual({ predictionId: 'pred-f', costUsd: '0.02', costMinor: 2 })
+  })
+
+  it('still calls a dead token dead when the 401 arrives after a 429', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(json(429, { detail: 'Too many requests' }))
+      .mockResolvedValueOnce(json(401, { detail: 'Invalid token' }))
+    const outcome = await generateImage(REQUEST, {
+      apiToken: TOKEN, maxBytes: 1024, fetchImpl, sleep: () => Promise.resolve(),
+    })
+    expect(outcome.ok).toBe(false)
+    if (outcome.ok) return
+    expect(outcome.deadToken).toBe(true)
   })
 })
 
