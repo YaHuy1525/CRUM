@@ -25,6 +25,8 @@
 - **Line numbers in this plan are read off `main` at writing time; the named anchor is the instruction.** Every task after Task 6 appends to files that other tasks also touch, so a number cited in a later task is already stale by the time it is reachable. `grep -n` for the quoted code, insert beside what you find, and say so in the report if the number and the file disagree. A number is a hint; the quoted line is the requirement.
 - **Run Vitest with explicit file paths, never a bare `--project unit`.** `tests/evals/golden-gate.test.ts` sits in the unit project and calls the live model, so an unfiltered project run costs about twelve model-minutes per go. `npx vitest run tests/marketing/replicate.test.ts`, not `npx vitest run --project unit`.
 - `npm run verify` is red in this repository for reasons unrelated to this slice (backlog M1: six integration failures). This plan's gate is `npm run typecheck`, `npm run lint`, the named test files, and one filtered integration run. Task 14 compares the final full-suite shape against the slice 3 baseline and reports it without hiding it.
+- **A `pending_writes` fixture with `operation = 'update'` must supply `target_id`.** `pending_writes_update_needs_target` (`migrations/0002_crum_spine.sql:163`) is live and rejects the insert otherwise, and `target_id` carries no foreign key, so a placeholder uuid is honest for a `marketing_stage` draft. Task 1's file names the constant `TARGET`.
+- **Two integration failures are baseline, not this slice's.** `tests/integration/migrations.test.ts > refuses a second receipt for the same staged draft` inserts without `draft_hash` (NOT NULL since `migrations/0003_crum_add_draft_hash.sql:21`), and `tests/integration/marketing-metrics-migration.test.ts` asserts `/^pk_marketing_metrics_snapshots/` while 0020's inline `PRIMARY KEY` makes Postgres name it `marketing_metrics_snapshots_pkey`. Both predate 0021; neither may be "fixed" by a task in this plan.
 - The working tree carries another effort's uncommitted edits to `.env.example`, `src/mastra/memory.ts`, `src/mastra/recall.ts`, `tests/mastra/memory.test.ts` and `tests/mastra/recall.test.ts`. **Never stage one of those paths.** `git add` takes an explicit file list every time; `git add -A` and `git add .` are forbidden in this plan. `.env.example` is not modified by any task: spec section 14 records the four variables in the spec instead of staging that file.
 - Each task ends with its own named test command green and one commit.
 
@@ -97,7 +99,7 @@ Tasks 1 through 9 are half 4a. Tasks 10 through 13 are half 4b. 4b has no extern
 
 **Interfaces:**
 - Consumes: nothing. This is the first task of the slice.
-- Produces: `documents.kind` admitting `'marketing_asset'`, `documents.source` admitting `'generated'`, partial index `idx_documents_assets`, table `marketing_image_spend (id, tenant_id, document_id NULL, provider, cost_minor, spent_on, created_at)`, table `reviewer_predictions (id, tenant_id, pending_write_id, predicted_outcome, created_at)` with `UNIQUE (pending_write_id)` and `ON DELETE CASCADE` to `pending_writes`. Tasks 2, 4, 5, 10 and 12 all read these shapes.
+- Produces: `documents.kind` admitting `'marketing_asset'`, `documents.source` admitting `'generated'`, partial index `idx_documents_assets`, table `marketing_image_spend (id, tenant_id, document_id NULL, provider, cost_minor, raw_extract, spent_on, created_at)`, table `reviewer_predictions (id, tenant_id, pending_write_id, predicted_outcome, created_at)` with `UNIQUE (pending_write_id)` and `ON DELETE CASCADE` to `pending_writes`. Tasks 2, 4, 5, 10 and 12 all read these shapes.
 
 - [ ] **Step 1: Write the failing migration test**
 
@@ -112,6 +114,10 @@ import { migrate } from '../../scripts/db-migrate'
 const url = process.env.CRUM_INTEGRATION_DATABASE_URL ?? ''
 const TENANT = '11111111-1111-4111-8111-111111111111'
 const OTHER = '55555555-5555-4555-8555-555555555555'
+// pending_writes_update_needs_target (0002:163) requires a target_id whenever the
+// operation is 'update', and target_id carries no foreign key, so the staged
+// drafts below point at this placeholder rather than a real bundle.
+const TARGET = '22222222-2222-4222-8222-222222222222'
 
 let pool: Pool
 
@@ -183,7 +189,9 @@ describe.skipIf(!url)('migration 0021: marketing assets, spend and predictions',
         WHERE tablename = 'documents' AND indexname = 'idx_documents_assets'`,
     )
     expect(rows).toHaveLength(1)
-    expect(rows[0]!.indexdef).toContain('WHERE (kind = '"'"'marketing_asset'"'"'::text)')
+    // Backticks, not single quotes: the assertion text itself carries single
+    // quotes, and the repo's style forbids escaping them into soup.
+    expect(rows[0]!.indexdef).toContain(`WHERE (kind = 'marketing_asset'::text)`)
   })
 
   it('records a spend with no document, because a failed prediction still cost money', async () => {
@@ -197,9 +205,13 @@ describe.skipIf(!url)('migration 0021: marketing assets, spend and predictions',
       document_id: string | null
       spent_on: string
       raw_extract: { predictionId: string } | null
-    }>(`SELECT document_id, spent_on, raw_extract FROM marketing_image_spend WHERE id = $1`, [id])
+    }>(`SELECT document_id, spent_on::text AS spent_on, raw_extract FROM marketing_image_spend WHERE id = $1`, [id])
     expect(rows[0]!.document_id).toBeNull()
-    expect(rows[0]!.spent_on).toBe(new Date().toISOString().slice(0, 10))
+    // Read the date as text and compare it to the database's own today. node-pg
+    // hands a date column back as a Date object, and CURRENT_DATE is the server's
+    // local day — neither of which is the UTC ISO date a JS clock string gives.
+    const { rows: todayRows } = await pool.query<{ d: string }>(`SELECT current_date::text AS d`)
+    expect(rows[0]!.spent_on).toBe(todayRows[0]!.d)
     // Spec section 9's re-fetch handle: the row that points at no document still
     // names the prediction that cost the money.
     expect(rows[0]!.raw_extract?.predictionId).toBe('p1')
@@ -229,11 +241,11 @@ describe.skipIf(!url)('migration 0021: marketing assets, spend and predictions',
     const runId = `pred-test-${Date.now()}`
     for (const id of [draftA, draftB]) {
       await pool.query(
-        `INSERT INTO pending_writes (id, tenant_id, run_id, object_type, operation, payload,
+        `INSERT INTO pending_writes (id, tenant_id, run_id, object_type, operation, target_id, payload,
                                      risk_score, gate, draft_hash, requested_by, expires_at)
-         VALUES ($1, $2, $3, 'marketing_stage', 'update', '{}'::jsonb, 10, 'approval', $4,
+         VALUES ($1, $2, $3, 'marketing_stage', 'update', $6, '{}'::jsonb, 10, 'approval', $4,
                  $5, now() + interval '1 hour')`,
-        [id, TENANT, runId, `pred-hash-${id}`, OTHER],
+        [id, TENANT, runId, `pred-hash-${id}`, OTHER, TARGET],
       )
     }
     const prediction = await unique('g')
@@ -262,11 +274,11 @@ describe.skipIf(!url)('migration 0021: marketing assets, spend and predictions',
     const draft = await unique('i')
     const prediction = await unique('j')
     await pool.query(
-      `INSERT INTO pending_writes (id, tenant_id, run_id, object_type, operation, payload,
+      `INSERT INTO pending_writes (id, tenant_id, run_id, object_type, operation, target_id, payload,
                                    risk_score, gate, draft_hash, requested_by, expires_at)
-       VALUES ($1, $2, 'cascade-test', 'marketing_stage', 'update', '{}'::jsonb, 10, 'approval', $3,
+       VALUES ($1, $2, 'cascade-test', 'marketing_stage', 'update', $5, '{}'::jsonb, 10, 'approval', $3,
                $4, now() + interval '1 hour')`,
-      [draft, TENANT, `cascade-hash-${draft}`, OTHER],
+      [draft, TENANT, `cascade-hash-${draft}`, OTHER, TARGET],
     )
     await pool.query(
       `INSERT INTO reviewer_predictions (id, tenant_id, pending_write_id, predicted_outcome)
@@ -6103,7 +6115,14 @@ npx vitest run --project integration \
   tests/integration/reviewer-predictions.test.ts
 ```
 
-Expected: PASS on four files. `marketing-assets-migration.test.ts` is the one that proves `0021` both applies and leaves the widened `documents` CHECK working for invoice and contract rows. `migrations.test.ts` runs the whole chain from an empty database, so a file that edits an existing table in place shows up here. `marketing-generate-assets.test.ts` and `reviewer-predictions.test.ts` are the two new constraint proofs. If a file reports **skipped** rather than passed, the `CRUM_INTEGRATION_DATABASE_URL` export did not reach the shell. Report which of the two happened; a skip is not a pass.
+Expected: PASS on three files, and two named failures in `migrations.test.ts` that are baseline rather than news. `marketing-assets-migration.test.ts` is the one that proves `0021` both applies and leaves the widened `documents` CHECK working for invoice and contract rows. `marketing-generate-assets.test.ts` and `reviewer-predictions.test.ts` are the two new constraint proofs. If a file reports **skipped** rather than passed, the `CRUM_INTEGRATION_DATABASE_URL` export did not reach the shell. Report which of the two happened; a skip is not a pass.
+
+`migrations.test.ts` carries two failures that predate this slice, and Task 1 confirmed both against the repository while it was proving 0021 applies cleanly:
+
+- `refuses a second receipt for the same staged draft` — its `pending_writes` INSERT at `tests/integration/migrations.test.ts:100-101` omits `draft_hash`, which `migrations/0003_crum_add_draft_hash.sql:21` made NOT NULL with no default. It fails on every database created after 0003, which is every database in existence.
+- `boots through main()` — it asserts that `result.applied` contains `0002`, so it passes only on a genuinely empty database and loses that race on the shared `crum_slice4`, because the other three files in this very command call `migrate()` in their own `beforeAll`. `scripts/db-migrate.ts:96-149` has no advisory lock, so on a fresh cluster two workers can apply the same version and one dies on the `version` PRIMARY KEY.
+
+So run this command and report the two above by name as baseline, exactly as the slice 3 report did for the six. Do not "fix" `migrations.test.ts` here — the assertion it is missing belongs to whoever takes backlog M1, and a slice 4 commit that edits an unrelated integration fixture would be invisible in the report and unforgettable in review. If you want the whole-chain proof for yourself, make a scratch database (`createdb -h localhost -p 5455 crum_s4_probe`), point `DATABASE_URL` at it, run `npm run db:migrate` and then this one file, and report what you saw. Then drop it. That is also the honest answer to "does 0021 apply from empty", which the shared database can no longer tell you once it has been migrated.
 
 Then run the older integration files whose tables this slice's migration touches, so a moved rule cannot hide behind a new one:
 
