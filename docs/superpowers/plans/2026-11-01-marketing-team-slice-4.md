@@ -1415,6 +1415,9 @@ describe('the ceiling arithmetic', () => {
     expect(admitsRun({ ceilingMinor: 2000, committedMinor: 1996, costMinorPerImage: 4, assetCount: 1 })).toBe(true)
     expect(admitsRun({ ceilingMinor: 2000, committedMinor: 0, costMinorPerImage: 4, assetCount: 500 })).toBe(true)
     expect(headroomMinor({ ceilingMinor: 2000, committedMinor: 1990 })).toBe(10)
+    // Past the ceiling the headroom is nothing, not a negative number a caller
+    // could mistake for room: an overrun must read as "stop", never as a budget.
+    expect(headroomMinor({ ceilingMinor: 2000, committedMinor: 2400 })).toBe(0)
   })
 
   it('refuses one minor unit over the ceiling', async () => {
@@ -1454,12 +1457,19 @@ describe('the ledger', () => {
     expect(call!.params).toEqual([TENANT])
   })
 
-  it('reads an empty ledger as zero, not as NaN', async () => {
+  it('reads an empty ledger as zero and an unreadable ledger as an error', async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ total: '0' }] })
     const { committedSpendMinor } = await load()
     expect(await committedSpendMinor(TENANT)).toBe(0)
+    // An aggregate without GROUP BY always returns exactly one row, and the
+    // COALESCE makes that row's total a number, so zero rows is not an empty
+    // ledger — it is a read that did not answer. Answering 0 there would be
+    // answering "this tenant has spent nothing today", the one reading that
+    // admits unlimited spend. Fail closed, and let the caller refuse.
     mockQuery.mockResolvedValueOnce({ rows: [] })
-    expect(await committedSpendMinor(TENANT)).toBe(0)
+    await expect(committedSpendMinor(TENANT)).rejects.toThrow(/marketing_image_spend/)
+    mockQuery.mockResolvedValueOnce({ rows: [{ total: 'not-a-number' }] })
+    await expect(committedSpendMinor(TENANT)).rejects.toThrow(/marketing_image_spend/)
   })
 
   it('appends a spend with a document', async () => {
@@ -1493,6 +1503,29 @@ describe('the ledger', () => {
     // by a caller that never saw a prediction must not look like a row whose
     // extract was parsed into nothing.
     expect(call!.params).toEqual([TENANT, null, 'replicate', 4, null])
+  })
+
+  it('names the prediction on a spend with no document, which is the failed path', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: SPEND_ID }] })
+    const { recordImageSpend } = await load()
+    await recordImageSpend({
+      tenantId: TENANT,
+      documentId: null,
+      costMinor: 2,
+      rawExtract: { predictionId: 'p-f', model: 'flux-1.1-pro', costUsd: '0.02' },
+    })
+    const [call] = calls('INSERT INTO marketing_image_spend')
+    // Task 3's fact, stated as an assertion: a prediction that produced no
+    // bytes can still carry a charge, and its handle is the only thing that
+    // names the money later. A null document must never be read as
+    // "no prediction to record".
+    expect(call!.params).toEqual([
+      TENANT,
+      null,
+      'replicate',
+      2,
+      JSON.stringify({ predictionId: 'p-f', model: 'flux-1.1-pro', costUsd: '0.02' }),
+    ])
   })
 
   it('refuses to under-report a negative or fractional cost before the database sees it', async () => {
@@ -1552,6 +1585,11 @@ export function admitsRun(params: {
  * `SUM(integer)` comes back from node-pg as a string, because Postgres widens an
  * integer sum to bigint, so Number() is the whole conversion. The COALESCE in the
  * query means an empty ledger answers '0' rather than null.
+ *
+ * Anything else the database could answer throws. This number is the only thing
+ * standing between an agent loop and a real bill, and 0 is the answer that
+ * admits unlimited spend, so an unreadable ledger must fail closed and let the
+ * caller refuse rather than spend.
  */
 export async function committedSpendMinor(tenantId: string): Promise<number> {
   const result = await getDbClient().query<{ total: string | null }>(
@@ -1560,8 +1598,13 @@ export async function committedSpendMinor(tenantId: string): Promise<number> {
       WHERE tenant_id = $1 AND spent_on = CURRENT_DATE`,
     [tenantId],
   )
-  const total = Number(result.rows[0]?.total ?? '0')
-  return Number.isFinite(total) ? total : 0
+  const total = result.rows[0]?.total ?? null
+  if (total === null || !/^\d+$/.test(String(total))) {
+    throw new Error(
+      `marketing_image_spend: the ceiling read answered ${JSON.stringify(result.rows)} instead of one non-negative integer total`,
+    )
+  }
+  return Number(total)
 }
 
 /**
@@ -1591,8 +1634,12 @@ export async function recordImageSpend(params: {
     throw new Error(`cost_minor: ${params.costMinor} is not a non-negative integer of cents`)
   }
   const result = await getDbClient().query<{ id: string }>(
+    // $5::jsonb, not a bare $5: every other jsonb write in src/ names the type
+    // (src/db/pending-writes.ts:626, src/db/documents.ts:299, src/db/alerts.ts:113).
+    // Postgres infers it correctly at a VALUES position today, and an explicit
+    // cast is what keeps it correct the day this INSERT grows a SELECT.
     `INSERT INTO marketing_image_spend (tenant_id, document_id, provider, cost_minor, raw_extract)
-     VALUES ($1, $2, $3, $4, $5)
+     VALUES ($1, $2, $3, $4, $5::jsonb)
      RETURNING id`,
     [
       params.tenantId,
@@ -1791,7 +1838,7 @@ export CRUM_INTEGRATION_DATABASE_URL="postgres://crum_test@localhost:5455/crum_s
 npx vitest run tests/marketing/image-spend.test.ts tests/integration/marketing-image-spend.test.ts
 ```
 
-Expected: PASS on nine unit cases and five integration cases. A skipped integration file is
+Expected: PASS on ten unit cases and five integration cases. A skipped integration file is
 not a pass — the run must show the five cases executing. Then `npm run typecheck` and
 `npm run lint`, both clean.
 
