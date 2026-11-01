@@ -1871,7 +1871,7 @@ export interface AssetProvenance {
   replicateId: string; model: string; aspectRatio: string
   negativePrompt: string | null; costMinor: number; seed: number; prompt: string
 }
-export async function hashImageBytes(bytes: Uint8Array): Promise<string>
+export function hashImageBytes(bytes: Uint8Array): string
 export async function findAssetByHash(tenantId: string, contentHash: string): Promise<{ id: string; status: string } | null>
 export async function insertAssetDocument(params: {
   tenantId: string; ownerId: string; title: string; bytes: Uint8Array; mime: string; provenance: AssetProvenance
@@ -2204,7 +2204,7 @@ describe('insertAssetDocument', () => {
       { match: 'INSERT INTO documents', rows: [{ id: DOC, status: 'needs_review', confidence: null, is_new: true }] },
     ])
     const { insertAssetDocument, hashImageBytes } = await load()
-    expect(await hashImageBytes(BYTES)).toBe(HASHED)
+    expect(hashImageBytes(BYTES)).toBe(HASHED)
     expect(HASHED).not.toBe(sha(new TextEncoder().encode(PROVENANCE.prompt)))
   })
 })
@@ -2288,7 +2288,6 @@ Create `src/db/marketing-assets.ts`:
 import { createHash } from 'node:crypto'
 import { getDbClient } from './client'
 import { insertDocument } from './documents'
-import type { AssetPrompt } from '../marketing/asset-prompts'
 
 export interface AssetProvenance {
   replicateId: string
@@ -2300,7 +2299,15 @@ export interface AssetProvenance {
   prompt: string
 }
 
-export async function hashImageBytes(bytes: Uint8Array): Promise<string> {
+/**
+ * Synchronous on purpose. `createHash` is CPU work on bytes already in memory, and
+ * this repo lints with BOTH `require-await` (an `async` function must await
+ * something) and `await-thenable` (a caller must not await a non-thenable), so a
+ * Promise-returning pure function is illegal on one side and an `await`-ing caller
+ * illegal on the other. Same shape as the sync sha256 helper in
+ * `src/marketing/meta-conversions.ts:58`.
+ */
+export function hashImageBytes(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex')
 }
 
@@ -2338,7 +2345,7 @@ export async function insertAssetDocument(params: {
   mime: string
   provenance: AssetProvenance
 }): Promise<{ id: string; status: string; contentHash: string; deduplicated: boolean }> {
-  const contentHash = await hashImageBytes(params.bytes)
+  const contentHash = hashImageBytes(params.bytes)
   const existing = await findAssetByHash(params.tenantId, contentHash)
   if (existing) {
     // No second insert, so no overwrite of a status a human already set, and no
@@ -2456,7 +2463,13 @@ export async function listBundleIdsForDocument(tenantId: string, documentId: str
 }
 ```
 
-`AssetPrompt` is imported at the top of that file for a signature Task 6 needs nearby; if the linter flags it as unused in this commit, drop the import and let Task 6 add it where it is used. `insertDocument`'s return is `{ id, status, confidence }` with `status: string`, which is why `insertAssetDocument` types `status` as `string` rather than the literal.
+No `AssetPrompt` import here, and no `type` re-export: this file's signatures do not
+take an `AssetPrompt` (`AssetProvenance` is the shape that travels with bytes), and
+`@typescript-eslint/no-unused-vars` is an error in this repo's config, so an
+import-ahead-of-its-use would fail the gate rather than anticipate Task 6. Task 6
+imports `AssetPrompt` from the module that defines it. `insertDocument`'s return is
+`{ id, status, confidence }` with `status: string`, which is why
+`insertAssetDocument` types `status` as `string` rather than the literal.
 
 - [ ] **Step 7: Run every test in the task**
 
@@ -2674,7 +2687,7 @@ beforeEach(() => {
   })
   h.getMarketingBundle.mockResolvedValue(bundle('draft'))
   h.getDesignerArtifactText.mockResolvedValue(promptJson('hero-image'))
-  h.hashImageBytes.mockResolvedValue('c'.repeat(64))
+  h.hashImageBytes.mockReturnValue('c'.repeat(64))
   h.insertAssetDocument.mockResolvedValue({
     id: DOC,
     status: 'needs_review',
