@@ -4633,13 +4633,14 @@ git commit -m "feat(marketing): staging refuses a bundle whose images nobody has
 ### Task 9: Four settings, one secret, and the adapter that only registers when it is paid for
 
 **Files:**
-- Modify: `src/config/env.ts:183` (four vars after `CRUM_META_AD_ACCOUNTS`) and `:213-227` (`PRODUCTION_REQUIRED_SECRETS`)
-- Modify: `src/mastra/index.ts:39` (the `document-intake` import gains `MAX_DOCUMENT_BYTES`), `:43` (new import), `:103,115-124` (a third lane logger), `:170` (the registration block)
-- Test: `tests/config/env.test.ts` (three cases)
+- Modify: `src/config/env.ts:183` (four vars after `CRUM_META_AD_ACCOUNTS`) and `:226` (`PRODUCTION_REQUIRED_SECRETS`, whose `'CRUM_CLOUDFLARE_API_TOKEN'` entry is the last)
+- Modify: `.env.example` (the four placeholder lines, in the marketing area the baseline commit `309d9d6` just built)
+- Modify: `src/mastra/index.ts` — the `document-intake` import at `:17` gains `MAX_DOCUMENT_BYTES`, a new import goes after the Meta one at `:41`, the third lane logger joins `lastLane`/`lastMetaLane` at `:102-103` and `logLaneOnce`/`logMetaLaneOnce` at `:105-123`, and the registration block goes after the Meta block's closing brace at `:170`
+- Test: `tests/config/env.test.ts` (three new cases, plus one line added to an existing case — Ruling 9b)
 - Test: `tests/mastra/marketing-boot.test.ts` (one new `describe`)
 
 **Interfaces:**
-- Consumes: `makeReplicateAdapter` and `setImageAdapter` (Task 6), `MAX_DOCUMENT_BYTES` from `src/mastra/workflows/document-intake.ts:22`.
+- Consumes: `makeReplicateAdapter` and `setImageAdapter` (`src/marketing/image-provider.ts:41` and `:72`, Task 6 — not `src/marketing/replicate.ts`, which holds `DEFAULT_REPLICATE_MODEL` at line 11 and the fetch code), `MAX_DOCUMENT_BYTES` from `src/mastra/workflows/document-intake.ts:22`, where it is `15 * 1024 * 1024`.
 - Produces: `CrumEnv.CRUM_REPLICATE_API_TOKEN`, `.CRUM_REPLICATE_MODEL`, `.CRUM_IMAGE_SPEND_CEILING_MINOR`, `.CRUM_IMAGE_COST_MINOR_PER_IMAGE`, and the fact that `getImageAdapter()` is non-null exactly when the token is set.
 
 This is the task that turns Task 6's `image_provider_not_configured` refusal from a unit-test fixture into the production behaviour of an install that has not opted in, which is the standing rule: an action may not be approvable, or here runnable, before it is executable.
@@ -4655,24 +4656,38 @@ describe('slice 4 image settings', () => {
     expect(env.CRUM_REPLICATE_API_TOKEN).toBeUndefined()
     expect(env.CRUM_IMAGE_SPEND_CEILING_MINOR).toBe(2000)
     expect(env.CRUM_IMAGE_COST_MINOR_PER_IMAGE).toBe(4)
-    // The default is the string spec section 11 names, not a shorter alias for
-    // it: this value is what reaches Replicate's model field.
-    expect(env.CRUM_REPLICATE_MODEL).toBe('black-forest-labs/flux-1.1-pro')
+    // Two assertions on one value, each catching something the other cannot. The
+    // literal pins the model spec section 11 names, because this string is what
+    // reaches Replicate's model field and a shorter alias would not be refused by
+    // anything. The constant pins the agreement with the adapter's own fallback
+    // (`src/marketing/replicate.ts:11`, used at `image-provider.ts:42`): two
+    // spellings of one vendor default is how `provider: REPLICATE_PROVIDER` was
+    // written down in Task 6, for the same reason.
+    expect(env.CRUM_REPLICATE_MODEL).toBe(DEFAULT_REPLICATE_MODEL)
+    expect(DEFAULT_REPLICATE_MODEL).toBe('black-forest-labs/flux-1.1-pro')
   })
 
   it('treats a blank token as unset rather than as a token of length zero', () => {
-    const env = parseEnv({ NODE_ENV: 'development', CRUM_REPLICATE_API_TOKEN: '   ' })
-    expect(env.CRUM_REPLICATE_API_TOKEN).toBeUndefined()
+    // Blank means unset for the numbers too, and not only because it is the house
+    // style (`:171` does this for the lead cap): the `.env.example` placeholder
+    // lines Step 3 writes are `KEY=`, so a blank ceiling that reached `.min(1)`
+    // would refuse to boot an install that configured nothing.
+    expect(parseEnv({ CRUM_REPLICATE_API_TOKEN: '   ' }).CRUM_REPLICATE_API_TOKEN).toBeUndefined()
+    expect(parseEnv({ CRUM_IMAGE_SPEND_CEILING_MINOR: '' }).CRUM_IMAGE_SPEND_CEILING_MINOR).toBe(2000)
   })
 
   it('refuses a ceiling that is not a positive whole number of minor units', () => {
-    expect(() => parseEnv({ NODE_ENV: 'development', CRUM_IMAGE_SPEND_CEILING_MINOR: '0' })).toThrow()
-    expect(() => parseEnv({ NODE_ENV: 'development', CRUM_IMAGE_SPEND_CEILING_MINOR: 'abc' })).toThrow()
+    // '1.5' is the case that matters: a fractional ceiling would otherwise reach
+    // `admitsRun` as a float and compare against integer minors, which is the
+    // arithmetic the spend ledger is supposed to be free of.
+    expect(() => parseEnv({ CRUM_IMAGE_SPEND_CEILING_MINOR: '0' })).toThrowError(EnvParseError)
+    expect(() => parseEnv({ CRUM_IMAGE_SPEND_CEILING_MINOR: '1.5' })).toThrowError(EnvParseError)
+    expect(() => parseEnv({ CRUM_IMAGE_SPEND_CEILING_MINOR: 'abc' })).toThrowError(EnvParseError)
   })
 })
 ```
 
-`parseEnv` throws or returns a failure depending on how that file's existing cases read a bad value; copy the shape of the nearest existing rejection assertion in `tests/config/env.test.ts` rather than trusting `toThrow` to be the house style. If the file asserts on a returned error instead, use that.
+`EnvParseError` is already imported by this file at line 6, and `toThrowError(EnvParseError)` is the house rejection shape (`:79`, `:83`, `:176`, `:189`) rather than a bare `toThrow()`. Add `import { DEFAULT_REPLICATE_MODEL } from '@/marketing/replicate'` beside the file's existing `@/config/env` import (the multi-line one at lines 5 to 11); that file uses the `@/` alias throughout, so no relative path belongs here.
 
 Add to `tests/mastra/marketing-boot.test.ts`, as its own `describe` after the Meta one:
 
@@ -4727,7 +4742,9 @@ These three run in order and depend on each other, exactly as the Meta block abo
 - [ ] **Step 2: Run them to make sure they fail**
 
 Run: `npx vitest run tests/config/env.test.ts tests/mastra/marketing-boot.test.ts`
-Expected: FAIL — `Cannot read properties of undefined (reading 'ceilingMinor')`, and the env defaults reading `undefined`.
+Expected: FAIL, six cases, and none of them with the message the drafted text predicted. In `tests/config/env.test.ts` all three new cases are red: the defaults read `undefined` against `2000`, the blank-ceiling assertion reads `undefined` against `2000`, and the three rejection assertions find nothing to throw because no constraint exists yet. (`expect(DEFAULT_REPLICATE_MODEL).toBe('black-forest-labs/flux-1.1-pro')` is green on arrival and stays green; it is a drift pin, not a feature test.) In `tests/mastra/marketing-boot.test.ts` the second and third cases are red as **assertion mismatches, not a `Cannot read properties of undefined`**: every drafted property read in them is optional-chained (`adapter?.ceilingMinor`), so an unregistered slot answers `undefined` against `5000` rather than throwing, and the log case answers `[]` against one line. The first case is green before the change and after it, because nothing registers an adapter today and the else-branch keeps that true — say so in the report rather than counting it as a red step.
+
+The existing 29 env cases and the Meta block stay green, which is what makes Ruling 9b's one fixture line easy to miss: it only goes red at Step 3, in the same commit as the list entry that causes it.
 
 - [ ] **Step 3: Declare the settings**
 
@@ -4772,7 +4789,15 @@ Then add the token to `PRODUCTION_REQUIRED_SECRETS` after `'CRUM_CLOUDFLARE_API_
   'CRUM_REPLICATE_API_TOKEN',
 ```
 
-Do not touch `.env.example`. That file carries another effort's uncommitted edit, and staging it would sweep their lines into a marketing commit. Spec section 14 records this choice: the four defaults are usable, so a reader who wants them greps `src/config/env.ts` once.
+Ruling 9b, and the one existing case this change breaks: `tests/config/env.test.ts:125` ("reports nothing when every secret is present") builds an env literal naming all seven current entries and asserts `missingProductionSecrets(env)).toEqual([])`. `missingProductionSecrets` (`src/config/env.ts:254`) filters the exported list, so an eighth name with no matching line in that fixture turns a green case red, and the list has no other consumer in `src/` — nothing at boot reads it, which is why the drafted comment's "whoever wires this list into boot" is still written in the future tense. Add one line to the fixture beside the Pages token at `:133`:
+
+```ts
+      CRUM_REPLICATE_API_TOKEN: 'r8-' + 'z'.repeat(40),
+```
+
+Then document the four names in `.env.example`, as placeholder lines with nothing after the `=`, inside the marketing area (`CRUM_META_PIXEL_ID` and its neighbours). Ruling 9a: this task's drafted text said "do not touch `.env.example`, it carries another effort's uncommitted edit", and both halves of that have since stopped being true. The file was clean when the baseline commit `309d9d6` was made today, so the only lines in that diff were its own; and `tests/config/env.test.ts:204` ("documents every variable the schema parses") compares `Object.keys(EnvSchema.shape)` against the file, so four new schema keys and four absent lines would have made that case red on purpose. It had been red since slices 2 and 3 widened the schema without documenting nine names, which is the same drift in the same file, and `309d9d6` closed it. Two consequences worth knowing before writing the lines: `CRUM_REPLICATE_API_TOKEN` matches the secret-noun pattern at `tests/config/env.test.ts:245`, so its value is examined and an empty one passes, and every name added here is in the schema, which keeps `:210` green.
+
+Spec section 14's reasoning that "the four defaults are usable, so a reader who wants them greps `src/config/env.ts` once" is about defaults, not about the token, and it cannot outvote a conformance test that reads the file. The token line stays blank because a committed credential is a committed credential.
 
 - [ ] **Step 4: Register the adapter at boot**
 
@@ -4843,9 +4868,12 @@ Expected: clean.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/config/env.ts src/mastra/index.ts tests/config/env.test.ts tests/mastra/marketing-boot.test.ts
+git add src/config/env.ts src/mastra/index.ts .env.example \
+  tests/config/env.test.ts tests/mastra/marketing-boot.test.ts
 git commit -m "feat(marketing): register the Replicate adapter only when the token is configured"
 ```
+
+`.env.example` is tracked and not ignored, so it stages normally. The path that does not is `src/evals/...`: `.gitignore` matches the directory while the files inside are tracked, so `git add src/evals/golden-items.ts` exits 1 and a chained `git add ... && git commit` never reaches the commit. Task 7 met exactly this and reported it; if a later step in this task needs an `src/evals` path, it needs `git add -f`.
 
 ---
 
