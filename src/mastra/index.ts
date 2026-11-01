@@ -14,7 +14,7 @@ import { crmAssistant, CRUM_SUBAGENTS } from './agent'
 import { buildCrumMemory } from './memory'
 import { buildRecallDeps } from './recall'
 import { ingestWorkflow } from './workflows/ingest'
-import { documentIntakeWorkflow } from './workflows/document-intake'
+import { documentIntakeWorkflow, MAX_DOCUMENT_BYTES } from './workflows/document-intake'
 import { sponsorshipIntakeWorkflow } from './workflows/sponsorship-intake'
 import { intentClassifier } from './classifiers/intent'
 import { injectionClassifier } from './classifiers/injection'
@@ -39,6 +39,7 @@ import { createGmailConnectRoute, createGmailCallbackRoute } from '../api/gmail'
 import { registerActionAdapter } from '../marketing/outbox'
 import { makePromotePageAdapter, makePublishPageAdapter, pageHostConfigFromEnv } from '../marketing/page-host'
 import { makeCreateCampaignAdapter, makeSetCampaignStatusAdapter } from '../marketing/meta-ads'
+import { makeReplicateAdapter, setImageAdapter } from '../marketing/image-provider'
 
 export interface CrumMastraOptions {
   storage?: CrumStorage
@@ -101,6 +102,7 @@ export function buildCrumServerConfig(env: CrumEnv): ServerConfig {
 // can find when asking why staging refuses.
 let lastLane: 'pages' | 'none' | undefined
 let lastMetaLane: 'meta-ads' | 'none' | undefined
+let lastImageLane: 'replicate' | 'none' | undefined
 
 function logLaneOnce(lane: 'pages' | 'none'): void {
   if (lastLane === lane) return
@@ -119,6 +121,16 @@ function logMetaLaneOnce(lane: 'meta-ads' | 'none'): void {
     lane === 'meta-ads'
       ? '[CRUM] Meta Ads API adapters registered'
       : '[CRUM] Meta Ads API not configured; create_campaign and set_campaign_status actions will be refused at staging',
+  )
+}
+
+function logImageLaneOnce(lane: 'replicate' | 'none'): void {
+  if (lastImageLane === lane) return
+  lastImageLane = lane
+  console.log(
+    lane === 'replicate'
+      ? '[CRUM] image adapter registered: replicate'
+      : '[CRUM] image provider not configured; marketing.generate_assets will refuse',
   )
 }
 
@@ -167,6 +179,30 @@ export function createCrumMastra(env: CrumEnv, options: CrumMastraOptions = {}):
     }
   } else {
     logMetaLaneOnce('none')
+  }
+
+  // Slice 4: the image adapter registers only when the token is present. This
+  // assignment runs on every construction, exactly like the Meta registrations
+  // above, because createCrumMastra runs per request and a Map.set is cheap; only
+  // the log is guarded. setImageAdapter(null) below is what makes an install
+  // without a token refuse at call time rather than at boot.
+  const imageToken = env.CRUM_REPLICATE_API_TOKEN
+  if (imageToken) {
+    setImageAdapter(
+      makeReplicateAdapter({
+        apiToken: imageToken,
+        model: env.CRUM_REPLICATE_MODEL,
+        ceilingMinor: env.CRUM_IMAGE_SPEND_CEILING_MINOR,
+        costMinorPerImage: env.CRUM_IMAGE_COST_MINOR_PER_IMAGE,
+        // The document lane's own limit, so a picture this build could not store
+        // is a picture this build will not pay for.
+        maxBytes: MAX_DOCUMENT_BYTES,
+      }),
+    )
+    logImageLaneOnce('replicate')
+  } else {
+    setImageAdapter(null)
+    logImageLaneOnce('none')
   }
 
   const storage = options.storage ?? buildMastraStorage(env)

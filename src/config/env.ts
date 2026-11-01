@@ -181,6 +181,32 @@ export const EnvSchema = z.object({
   // accepts. Parsed as a JSON array of strings at boot; absent means the Meta
   // Ads adapters stay unmapped and staging refuses.
   CRUM_META_AD_ACCOUNTS: optionalString,
+  // Slice 4 spec section 11: Replicate image generation. The token is a secret,
+  // so blank means unset and an `KEY=` placeholder line in an env file cannot
+  // make a boot fail on a length constraint. Absent token means no adapter
+  // registers and marketing.generate_assets refuses at call time.
+  CRUM_REPLICATE_API_TOKEN: z.preprocess(
+    blankAsUnset,
+    z.string().trim().min(32, 'must be at least 32 bytes').optional(),
+  ),
+  CRUM_REPLICATE_MODEL: z.preprocess(
+    blankAsUnset,
+    z.string().trim().min(1).default('black-forest-labs/flux-1.1-pro'),
+  ),
+  // Minor units, i.e. cents: the same unit line `marketing_image_spend` stores,
+  // so the ceiling and the ledger are one number line and a reader never has to
+  // convert between them. 2000 is $20 a day.
+  CRUM_IMAGE_SPEND_CEILING_MINOR: z.preprocess(
+    blankAsUnset,
+    z.coerce.number().int().min(1).max(10_000_000).default(2000),
+  ),
+  // The admission estimate, deliberately not the real price: it decides whether
+  // a run is allowed to start, and the ledger records what Replicate actually
+  // charged. A ceiling that only ever sees estimates would drift.
+  CRUM_IMAGE_COST_MINOR_PER_IMAGE: z.preprocess(
+    blankAsUnset,
+    z.coerce.number().int().min(1).max(100_000).default(4),
+  ),
 })
 
 export type CrumEnv = z.infer<typeof EnvSchema>
@@ -224,6 +250,11 @@ export const PRODUCTION_REQUIRED_SECRETS: readonly string[] = [
   // token quietly, and the injection guard fails open when an expected key is
   // absent.
   'CRUM_CLOUDFLARE_API_TOKEN',
+  // Slice 4: the same reasoning as the Pages token above, one step further
+  // (spec section 14). The parent spec's tiger T2 note is that the injection
+  // guard fails open when an expected key is absent, and a designer reading
+  // prospect copy is precisely where a stray instruction could end up on a bill.
+  'CRUM_REPLICATE_API_TOKEN',
 ]
 
 export function parseEnv(raw: NodeJS.ProcessEnv = process.env): CrumEnv {

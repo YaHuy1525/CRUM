@@ -10,6 +10,7 @@ import {
   missingProductionSecrets,
   parseEnv,
 } from '@/config/env'
+import { DEFAULT_REPLICATE_MODEL } from '@/marketing/replicate'
 
 /** Names declared in .env.example, ignoring comments and blanks. */
 function documentedNames(): string[] {
@@ -131,6 +132,7 @@ describe('production readiness', () => {
       SUPABASE_URL: 'https://x.supabase.co',
       SUPABASE_SERVICE_ROLE_KEY: 'sr-' + 'y'.repeat(40),
       CRUM_CLOUDFLARE_API_TOKEN: 't'.repeat(40),
+      CRUM_REPLICATE_API_TOKEN: 'r8-' + 'z'.repeat(40),
     })
     expect(missingProductionSecrets(env)).toEqual([])
   })
@@ -195,6 +197,42 @@ describe('marketing slice 2 settings', () => {
     expect(PRODUCTION_REQUIRED_SECRETS).toContain('CRUM_CLOUDFLARE_API_TOKEN')
     const missing = missingProductionSecrets(parseEnv({ CRUM_CLOUDFLARE_ACCOUNT_ID: 'acc' }))
     expect(missing).toContain('CRUM_CLOUDFLARE_API_TOKEN')
+  })
+})
+
+describe('slice 4 image settings', () => {
+  it('defaults the ceiling, the estimate and the model when nothing is set', () => {
+    const env = parseEnv({ NODE_ENV: 'development' })
+    expect(env.CRUM_REPLICATE_API_TOKEN).toBeUndefined()
+    expect(env.CRUM_IMAGE_SPEND_CEILING_MINOR).toBe(2000)
+    expect(env.CRUM_IMAGE_COST_MINOR_PER_IMAGE).toBe(4)
+    // Two assertions on one value, each catching something the other cannot. The
+    // literal pins the model spec section 11 names, because this string is what
+    // reaches Replicate's model field and a shorter alias would not be refused by
+    // anything. The constant pins the agreement with the adapter's own fallback
+    // (`src/marketing/replicate.ts:11`, used at `image-provider.ts:42`): two
+    // spellings of one vendor default is how `provider: REPLICATE_PROVIDER` was
+    // written down in Task 6, for the same reason.
+    expect(env.CRUM_REPLICATE_MODEL).toBe(DEFAULT_REPLICATE_MODEL)
+    expect(DEFAULT_REPLICATE_MODEL).toBe('black-forest-labs/flux-1.1-pro')
+  })
+
+  it('treats a blank token as unset rather than as a token of length zero', () => {
+    // Blank means unset for the numbers too, and not only because it is the house
+    // style (`:171` does this for the lead cap): the `.env.example` placeholder
+    // lines Step 3 writes are `KEY=`, so a blank ceiling that reached `.min(1)`
+    // would refuse to boot an install that configured nothing.
+    expect(parseEnv({ CRUM_REPLICATE_API_TOKEN: '   ' }).CRUM_REPLICATE_API_TOKEN).toBeUndefined()
+    expect(parseEnv({ CRUM_IMAGE_SPEND_CEILING_MINOR: '' }).CRUM_IMAGE_SPEND_CEILING_MINOR).toBe(2000)
+  })
+
+  it('refuses a ceiling that is not a positive whole number of minor units', () => {
+    // '1.5' is the case that matters: a fractional ceiling would otherwise reach
+    // `admitsRun` as a float and compare against integer minors, which is the
+    // arithmetic the spend ledger is supposed to be free of.
+    expect(() => parseEnv({ CRUM_IMAGE_SPEND_CEILING_MINOR: '0' })).toThrowError(EnvParseError)
+    expect(() => parseEnv({ CRUM_IMAGE_SPEND_CEILING_MINOR: '1.5' })).toThrowError(EnvParseError)
+    expect(() => parseEnv({ CRUM_IMAGE_SPEND_CEILING_MINOR: 'abc' })).toThrowError(EnvParseError)
   })
 })
 

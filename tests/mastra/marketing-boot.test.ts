@@ -112,3 +112,47 @@ describe('slice 3 Meta Ads adapter registration', () => {
     }
   })
 })
+
+describe('slice 4 image adapter registration', () => {
+  const IMAGE_ENV: Record<string, string> = {
+    CRUM_REPLICATE_API_TOKEN: 'r8_test_token_at_least_thirty_two_bytes_long',
+  }
+
+  it('leaves no adapter registered when the token is absent', async () => {
+    const { getImageAdapter } = await import('../../src/marketing/image-provider')
+    createCrumMastra(envWith(), { storage: testStore() })
+    expect(getImageAdapter()).toBeNull()
+  })
+
+  it('registers an adapter carrying the ceiling and estimate the env supplied', async () => {
+    const { getImageAdapter } = await import('../../src/marketing/image-provider')
+    createCrumMastra(
+      envWith({ ...IMAGE_ENV, CRUM_IMAGE_SPEND_CEILING_MINOR: '5000', CRUM_IMAGE_COST_MINOR_PER_IMAGE: '9' }),
+      { storage: testStore() },
+    )
+    const adapter = getImageAdapter()
+    expect(adapter).not.toBeNull()
+    expect(adapter?.provider).toBe('replicate')
+    expect(adapter?.model).toBe('black-forest-labs/flux-1.1-pro')
+    expect(adapter?.ceilingMinor).toBe(5000)
+    expect(adapter?.costMinorPerImage).toBe(9)
+    // The byte ceiling comes from the document lane, not from a new number: an
+    // asset that could not be stored must not be generatable.
+    expect(adapter?.maxBytes).toBe(15 * 1024 * 1024)
+  })
+
+  it('logs the image lane once per change, not once per construction', () => {
+    createCrumMastra(envWith(), { storage: testStore() })
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      createCrumMastra(envWith(IMAGE_ENV), { storage: testStore() })
+      createCrumMastra(envWith(IMAGE_ENV), { storage: testStore() })
+      const lines = log.mock.calls
+        .map((args) => String(args[0]))
+        .filter((line) => line.includes('image adapter'))
+      expect(lines).toEqual(['[CRUM] image adapter registered: replicate'])
+    } finally {
+      log.mockRestore()
+    }
+  })
+})
