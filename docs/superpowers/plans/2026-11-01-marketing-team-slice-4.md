@@ -4719,6 +4719,18 @@ saving. Task 8 review finding 7's always-plural wording (`1 picture` prints as `
 carried to Task 14, and finding 9 (the Task 8 report said the refusal string was pinned in two
 test files; it is one, plus the source) is a report inaccuracy, not shipped text.
 
+**And one more, from the re-review, because it is the money path.** Reading the arm as
+`row.status === 'needs_review'` rather than `!== 'ready'` left all 37 stage tests green, since
+every fixture row carried one of exactly two statuses. Under that misread a `failed` or
+`processing` picture stages as though somebody had reviewed it, which is the refusal silently
+becoming a pass. So the first stage case also carries a third row —
+`{ title: 'scan-fail', status: 'failed' }` with its own image artifact — and asserts the whole
+list, `toContain('unreviewed images: founder-portrait, scan-fail')`. `documents.status` is
+`('pending','processing','ready','needs_review','failed')`
+(`migrations/0009_crum_documents.sql:38`), so the extra value is a real one rather than an
+invented sixth state. Commit `261d1b2`, which also moves the read comment's CHECK citation from
+`0018_crum_marketing.sql:67` to `:68`, where the enumeration actually is.
+
 - [ ] **Step 6: Run it green**
 
 Run: `npx vitest run tests/db/marketing-assets.test.ts tests/mastra/marketing-write-tools.test.ts tests/marketing/generate-assets-tool.test.ts tests/mastra/instructions.test.ts`
