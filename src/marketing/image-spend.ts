@@ -36,6 +36,11 @@ export function admitsRun(params: {
  * `SUM(integer)` comes back from node-pg as a string, because Postgres widens an
  * integer sum to bigint, so Number() is the whole conversion. The COALESCE in the
  * query means an empty ledger answers '0' rather than null.
+ *
+ * Anything else the database could answer throws. This number is the only thing
+ * standing between an agent loop and a real bill, and 0 is the answer that
+ * admits unlimited spend, so an unreadable ledger must fail closed and let the
+ * caller refuse rather than spend.
  */
 export async function committedSpendMinor(tenantId: string): Promise<number> {
   const result = await getDbClient().query<{ total: string | null }>(
@@ -44,8 +49,13 @@ export async function committedSpendMinor(tenantId: string): Promise<number> {
       WHERE tenant_id = $1 AND spent_on = CURRENT_DATE`,
     [tenantId],
   )
-  const total = Number(result.rows[0]?.total ?? '0')
-  return Number.isFinite(total) ? total : 0
+  const total = result.rows[0]?.total ?? null
+  if (total === null || !/^\d+$/.test(String(total))) {
+    throw new Error(
+      `marketing_image_spend: the ceiling read answered ${JSON.stringify(result.rows)} instead of one non-negative integer total`,
+    )
+  }
+  return Number(total)
 }
 
 export interface SpendRawExtract {
@@ -70,8 +80,12 @@ export async function recordImageSpend(params: {
     throw new Error(`cost_minor: ${params.costMinor} is not a non-negative integer of cents`)
   }
   const result = await getDbClient().query<{ id: string }>(
+    // $5::jsonb, not a bare $5: every other jsonb write in src/ names the type
+    // (src/db/pending-writes.ts:626, src/db/documents.ts:299, src/db/alerts.ts:113).
+    // Postgres infers it correctly at a VALUES position today, and an explicit
+    // cast is what keeps it correct the day this INSERT grows a SELECT.
     `INSERT INTO marketing_image_spend (tenant_id, document_id, provider, cost_minor, raw_extract)
-     VALUES ($1, $2, $3, $4, $5)
+     VALUES ($1, $2, $3, $4, $5::jsonb)
      RETURNING id`,
     [
       params.tenantId,
