@@ -9,6 +9,7 @@ import { getMarketingBundle, listAllCampaigns, listMarketingActions, listMarketi
 import { listRecentSnapshots, type MetricsSnapshotRow } from '../db/marketing-metrics'
 import { bundleForLeadToken, countLeadsSince, normalizeEmail, recordLead } from '../db/marketing-leads'
 import { bundlePredictionGate, insertPrediction } from '../db/reviewer-predictions'
+import { getAssetBytes, listBundleIdsForDocument } from '../db/marketing-assets'
 import { sendConversionEvent, type ConversionsApiConfig } from '../marketing/meta-conversions'
 import type { CampaignMetrics } from '../../console/lib/types'
 
@@ -174,6 +175,45 @@ export function createMarketingRouter(deps: MarketingRouterDeps): Hono {
       predictedOutcome: outcome,
     })
     return c.json({ prediction: stored.prediction, existed: !stored.created }, 200)
+  })
+
+  // The picture itself (spec section 8.3). This is the only route in CRUM that
+  // hands out stored bytes, and it is gated by the same prediction as the prose
+  // for a reason worth stating: an image is the strongest suggestion in a bundle.
+  // A reviewer who has not written down what they expect is exactly the reviewer
+  // who nods at a nice render, so withholding the copy while serving the JPEG
+  // would undo the device.
+  app.get('/assets/:documentId/bytes', async (c) => {
+    const gate = await auth(c)
+    if ('error' in gate) return gate.error
+
+    const parsed = IdSchema.safeParse(c.req.param('documentId'))
+    if (!parsed.success) return c.json({ error: 'invalid_id' }, 400)
+
+    const asset = await getAssetBytes(gate.identity.tenantId, parsed.data)
+    // 404 for both "no such row" and "that row is somebody's invoice".
+    // getAssetBytes already restricts to `d.kind = 'marketing_asset'` in SQL, so
+    // the second half of this condition is a belt rather than the lock; it stays
+    // because the answer a probe gets must be byte-identical to the answer for a
+    // document that does not exist, and a 403 would advertise a non-asset id.
+    if (!asset || asset.kind !== 'marketing_asset') return c.json({ error: 'not_found' }, 404)
+
+    // An asset can sit in two bundles when a campaign reuses a render. Every
+    // owning bundle gets checked and the strictest one wins: one gated bundle is
+    // enough, because showing the image to a reviewer who has not predicted for
+    // *that* bundle is the leak, regardless of what the other bundle decided.
+    const bundleIds = await listBundleIdsForDocument(gate.identity.tenantId, parsed.data)
+    for (const bundleId of bundleIds) {
+      const predictionGate = await bundlePredictionGate(gate.identity.tenantId, bundleId)
+      if (predictionGate.required && predictionGate.prediction === null) {
+        return c.json({ error: 'prediction_required' }, 409)
+      }
+    }
+
+    return c.body(asset.data as Uint8Array<ArrayBuffer>, 200, {
+      'content-type': asset.mime || 'application/octet-stream',
+      'cache-control': 'private, max-age=3600',
+    })
   })
 
   // Two staging doors, no deciding door. These create the same pending write the

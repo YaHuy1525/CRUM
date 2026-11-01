@@ -430,3 +430,27 @@ describe('paged list reads', () => {
     expect(params).toEqual(['t1', '2026-10-26', 5, 5])
   })
 })
+
+describe('getDocumentKind', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    mockQuery.mockReset()
+    mockEnd.mockReset()
+  })
+
+  it('scopes the read to the tenant as well as the id', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ kind: 'marketing_asset' }] })
+    const { getDocumentKind } = await import('../../src/db/documents')
+    expect(await getDocumentKind('t1', 'd1')).toBe('marketing_asset')
+    const sql = mockQuery.mock.calls[0]![0] as string
+    expect(sql).toContain('id = $1')
+    expect(sql).toContain('tenant_id = $2')
+    expect(mockQuery.mock.calls[0]![1]).toEqual(['d1', 't1'])
+  })
+
+  it('returns null for a row the tenant cannot see', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] })
+    const { getDocumentKind } = await import('../../src/db/documents')
+    expect(await getDocumentKind('t1', 'd1')).toBeNull()
+  })
+})

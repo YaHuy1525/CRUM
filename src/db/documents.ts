@@ -430,6 +430,23 @@ export async function getDocument(
   return rows[0] ?? null
 }
 
+/**
+ * The kind of one row, by tenant and id.
+ *
+ * This is the narrow read the ingest guard needs. `getDocument` is not usable
+ * there: it takes a `TenantRequestContext`, and an ingest step has a tenant id
+ * and a document id, not a user id and a role. Tenant scoping is the entire
+ * security property of this lookup, which is why both columns are in the WHERE
+ * clause rather than the id alone.
+ */
+export async function getDocumentKind(tenantId: string, documentId: string): Promise<string | null> {
+  const rows = await queryRows<{ kind: string }>(
+    `SELECT kind FROM documents WHERE id = $1 AND tenant_id = $2 LIMIT 1`,
+    [documentId, tenantId],
+  )
+  return rows[0]?.kind ?? null
+}
+
 export async function getInvoice(
   context: TenantRequestContext,
   documentId: string,
