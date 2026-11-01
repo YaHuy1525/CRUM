@@ -7,8 +7,12 @@ import { ApiError, describeError, get, post } from '../lib/api'
 import type {
   MarketingActionRecord,
   MarketingArtifactRecord,
+  MarketingBundleFullResponse,
   MarketingBundleRecord,
   MarketingBundleResponse,
+  MarketingBundleWithheldResponse,
+  ReviewerPrediction,
+  WithheldMarketingBundleRecord,
 } from '../lib/types'
 import { PageHeader } from './PageHeader'
 import { Badge } from './ui/badge'
@@ -222,6 +226,83 @@ function Value({ value }: { value: unknown }) {
   )
 }
 
+/**
+ * The one runtime rule that decides which of the two reads arrived.
+ *
+ * `predictionRequired && !prediction` is the withheld case and nothing else:
+ * Task 11's server sends exactly that pair when it has deleted the prose, and a
+ * gated bundle whose reviewer has already predicted arrives as the full read
+ * with `predictionRequired` still true. The union in lib/types cannot tell those
+ * apart by itself, because `predictionRequired: boolean` is compatible with
+ * `true`, so the judgement lives here as a named predicate and the REST tests
+ * for both shapes (Task 11 Step 1) are what keep it honest.
+ */
+function isWithheldRead(data: MarketingBundleResponse): data is MarketingBundleWithheldResponse {
+  return data.predictionRequired === true && data.prediction === null
+}
+
+/**
+ * The cognitive forcing gate, as the reviewer meets it (spec section 8.2).
+ *
+ * The server already withheld the prose; this panel's job is to explain why the
+ * page is empty instead of looking broken, and to keep the one field the
+ * reviewer has to fill in unambiguous. It stages nothing and decides nothing:
+ * approving still goes through the queue, so the only thing a prediction can
+ * change is what the reviewer is able to see next.
+ */
+function PredictionGate({
+  bundle,
+  value,
+  onChange,
+  onSubmit,
+  busy,
+}: {
+  bundle: WithheldMarketingBundleRecord
+  value: string
+  onChange: (next: string) => void
+  onSubmit: () => void
+  busy: boolean
+}) {
+  return (
+    <div className="mt-4">
+      <PageHeader
+        title={bundle.brief}
+        description={OBJECTIVE_LABEL[bundle.objective]}
+        actions={<Badge variant={STATUS_VARIANT[bundle.status]}>{bundle.status}</Badge>}
+      />
+      <p className="mt-3 text-sm text-text-secondary">
+        The proposal is hidden until you write down what you expect from it. Reading it first makes
+        any decision look informed, so this screen asks for your guess while you still have to make
+        one.
+      </p>
+      <label className="mt-4 block text-sm text-text-secondary" htmlFor="crum-prediction">
+        What do you expect this bundle to achieve, and what would tell you it failed?
+      </label>
+      <textarea
+        id="crum-prediction"
+        className="focus-ring mt-2 w-full rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary"
+        rows={5}
+        maxLength={2000}
+        value={value}
+        placeholder="Example: about forty assessments a month, and a cost per lead under thirty dollars."
+        onChange={(event) => onChange(event.target.value)}
+      />
+      <p className="mt-1 text-xs text-text-muted">
+        Up to 2000 characters. Nothing here approves anything.
+      </p>
+      <Button
+        className="mt-3"
+        size="sm"
+        variant="default"
+        disabled={busy || value.trim() === ''}
+        onClick={onSubmit}
+      >
+        Record my prediction
+      </Button>
+    </div>
+  )
+}
+
 function Artifact({ artifact }: { artifact: MarketingArtifactRecord }) {
   return (
     <li className="rounded-lg border border-border bg-bg-card p-3">
@@ -232,6 +313,33 @@ function Artifact({ artifact }: { artifact: MarketingArtifactRecord }) {
         <p className="mt-2 break-words whitespace-pre-wrap text-sm text-text-secondary">
           {artifact.textContent}
         </p>
+      ) : artifact.kind === 'image' && artifact.documentId !== null ? (
+        <>
+          {/* The browser fetches this through the console's own /api rewrite,
+              which stamps the identity headers the REST plane requires
+              (console/middleware.ts:22), so an <img> needs no token, no blob
+              dance and no client-side fetch. The gate holds even with the URL in
+              hand: a gated bundle's read carries no artifacts at all, and
+              src/api/marketing.ts answers 409 for the bytes of one (Task 12). */}
+          <img
+            src={`/api/marketing/assets/${encodeURIComponent(artifact.documentId)}/bytes`}
+            alt={`Generated image ${artifact.id.slice(0, 8)}`}
+            className="mt-2 max-h-72 w-full rounded-md border border-border object-contain"
+            loading="lazy"
+          />
+          <p className="mt-2 text-sm text-text-secondary">
+            Stored as document{' '}
+            <a
+              className="focus-ring underline underline-offset-2"
+              href={`/api/documents/${encodeURIComponent(artifact.documentId)}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {artifact.documentId.slice(0, 8)}
+            </a>
+            .
+          </p>
+        </>
       ) : artifact.documentId !== null ? (
         <p className="mt-2 text-sm text-text-secondary">
           Stored as document{' '}
@@ -243,8 +351,7 @@ function Artifact({ artifact }: { artifact: MarketingArtifactRecord }) {
           >
             {artifact.documentId.slice(0, 8)}
           </a>
-          . Slice 1 renders no image: this link reads the document's JSON record,
-          and nothing in the plane serves the stored bytes yet.
+          . This kind has no renderer: the link reads the document's JSON record.
         </p>
       ) : (
         <p className="mt-2 text-sm text-text-muted">No content recorded.</p>
@@ -267,11 +374,16 @@ export function MarketingBundleView({ bundleId }: MarketingBundleViewProps) {
   const [busy, setBusy] = useState(false)
   const [staged, setStaged] = useState<string | null>(null)
   const [missing, setMissing] = useState(false)
+  const [gated, setGated] = useState<WithheldMarketingBundleRecord | null>(null)
+  const [predictionText, setPredictionText] = useState('')
+  const [predicted, setPredicted] = useState<ReviewerPrediction | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
     setMissing(false)
+    setGated(null)
+    setPredicted(null)
     try {
       const data = await get<MarketingBundleResponse>(
         `/api/marketing/bundles/${encodeURIComponent(bundleId)}`,
@@ -288,8 +400,21 @@ export function MarketingBundleView({ bundleId }: MarketingBundleViewProps) {
         setError('The bundle request came back without a bundle in it.')
         return
       }
+      if (isWithheldRead(data)) {
+        // Render the gate rather than a half-empty bundle. The prose keys are
+        // absent, `artifacts` is absent, and a screen that tried to draw both
+        // would read as a campaign with nothing in it instead of a campaign the
+        // reviewer has not earned yet.
+        setGated(data.bundle)
+        setBundle(null)
+        setArtifacts([])
+        setActions([])
+        setFiles([])
+        return
+      }
       const loadedArtifacts = data.artifacts ?? []
       const loadedActions = data.actions ?? []
+      setPredicted(data.prediction)
       setBundle(data.bundle)
       setArtifacts(loadedArtifacts)
       setActions(loadedActions)
@@ -369,6 +494,27 @@ export function MarketingBundleView({ bundleId }: MarketingBundleViewProps) {
     }
   }
 
+  async function recordPrediction() {
+    if (gated === null) return
+    setBusy(true)
+    setError(null)
+    try {
+      await post<{ prediction: ReviewerPrediction; existed: boolean }>(
+        `/api/marketing/bundles/${encodeURIComponent(gated.id)}/prediction`,
+        { predictedOutcome: predictionText.trim() },
+      )
+      setPredictionText('')
+      // The re-read is the whole refresh: the server now returns the full read,
+      // so the prose, the artifacts and the prediction row arrive through the
+      // same path that already works rather than a second state machine.
+      await load()
+    } catch (err) {
+      setError(describeError(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <div className="mt-4">
       {loading ? (
@@ -399,6 +545,14 @@ export function MarketingBundleView({ bundleId }: MarketingBundleViewProps) {
             Retry
           </Button>
         </div>
+      ) : gated ? (
+        <PredictionGate
+          bundle={gated}
+          value={predictionText}
+          onChange={setPredictionText}
+          onSubmit={() => void recordPrediction()}
+          busy={busy}
+        />
       ) : bundle ? (
         <>
           <PageHeader
@@ -429,6 +583,14 @@ export function MarketingBundleView({ bundleId }: MarketingBundleViewProps) {
             </Row>
             <Row label="Saved">{bundle.createdAt}</Row>
           </dl>
+          {predicted ? (
+            <p className="mt-3 break-words text-sm text-text-secondary">
+              You predicted: <span className="text-text-primary">{predicted.predictedOutcome}</span>{' '}
+              <span className="text-text-muted">
+                (recorded {predicted.createdAt.slice(0, 10)}, before this page was opened)
+              </span>
+            </p>
+          ) : null}
 
           {SECTIONS.map((section) => (
             <section key={section.key} className="mt-8">

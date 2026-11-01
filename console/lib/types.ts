@@ -528,11 +528,51 @@ export interface MarketingArtifactRecord {
   createdAt: string
 }
 
-export interface MarketingBundleResponse {
+// One prediction per staged draft (spec section 8.2). Duplicated from
+// ReviewerPrediction in src/db/reviewer-predictions.ts for the same reason as
+// every record above: the console talks HTTP and never imports src/.
+export interface ReviewerPrediction {
+  id: string
+  tenantId: string
+  pendingWriteId: string
+  predictedOutcome: string
+  createdAt: string
+}
+
+// The prose the server deletes from a gated bundle that has no prediction yet.
+// This is the list src/api/marketing.ts calls PROSE_BUNDLE_KEYS, restated as a
+// type rather than a string arrays so a key added on the server without being
+// added here fails the console build instead of leaking through as `unknown`.
+export type MarketingProseKey =
+  | 'strategy'
+  | 'copy'
+  | 'mediaPlan'
+  | 'funnelPlan'
+  | 'analysis'
+  | 'audienceNote'
+
+export type WithheldMarketingBundleRecord = Omit<MarketingBundleRecord, MarketingProseKey>
+
+export interface MarketingBundleFullResponse {
   bundle: MarketingBundleRecord
   artifacts: MarketingArtifactRecord[]
   actions: MarketingActionRecord[]
+  predictionRequired: boolean
+  prediction: ReviewerPrediction | null
 }
+
+export interface MarketingBundleWithheldResponse {
+  // No `artifacts` key at all: src/api/marketing.ts does not read the artifact
+  // list for a gated bundle, and a withheld read that sent `[]` would tell the
+  // reviewer this bundle has no assets rather than that they have not earned
+  // them yet.
+  bundle: WithheldMarketingBundleRecord
+  actions: MarketingActionRecord[]
+  predictionRequired: true
+  prediction: null
+}
+
+export type MarketingBundleResponse = MarketingBundleFullResponse | MarketingBundleWithheldResponse
 
 // The outbox row behind every publish, promotion and retry. Duplicated from
 // MarketingActionRow in src/db/marketing.ts for the same reason as the records

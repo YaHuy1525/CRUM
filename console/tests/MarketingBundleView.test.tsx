@@ -4,7 +4,13 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MarketingBundleView } from '../components/MarketingBundleView'
 import { route, stubFetch, type FetchStub, type Reply, type Rule } from './fetchStub'
-import type { MarketingActionRecord, MarketingBundleResponse } from '../lib/types'
+import type {
+  MarketingActionRecord,
+  MarketingBundleFullResponse,
+  MarketingBundleResponse,
+  ReviewerPrediction,
+  WithheldMarketingBundleRecord,
+} from '../lib/types'
 
 const BUNDLE_ID = '33333333-3333-4333-8333-333333333333'
 const DOCUMENT_ID = '55555555-5555-4555-8555-555555555555'
@@ -13,7 +19,7 @@ const SITE_HASH = 'a'.repeat(64)
 const PAGE_CONTENT = '<h1>Book your assessment</h1>'
 const THANK_YOU_CONTENT = '<h1>Thanks, we will call you</h1>'
 
-function bundleResponse(over: Partial<MarketingBundleResponse> = {}): MarketingBundleResponse {
+function bundleResponse(over: Partial<MarketingBundleFullResponse> = {}): MarketingBundleFullResponse {
   return {
     bundle: {
       id: BUNDLE_ID,
@@ -45,11 +51,47 @@ function bundleResponse(over: Partial<MarketingBundleResponse> = {}): MarketingB
       },
     ],
     actions: [],
+    predictionRequired: false,
+    prediction: null,
     ...over,
   }
 }
 
 const ok = (body: MarketingBundleResponse): Reply => ({ status: 200, body })
+
+const PREDICTION: ReviewerPrediction = {
+  id: '66666666-6666-4666-8666-666666666666',
+  tenantId: '11111111-1111-4111-8111-111111111111',
+  pendingWriteId: DRAFT_ID,
+  predictedOutcome: 'About forty assessments a month, and a cost per lead under thirty dollars.',
+  createdAt: '2026-10-30T02:10:00.000Z',
+}
+
+/**
+ * The bundle as a gated read delivers it: the prose keys are absent, not null,
+ * because src/api/marketing.ts deletes them (Task 11). Written out field by
+ * field rather than destructured, so this fixture fails loudly when a field is
+ * added on the server and the console's copy of the shape has to grow with it.
+ */
+function withheldBundle(): WithheldMarketingBundleRecord {
+  const full = bundleResponse().bundle
+  return {
+    id: full.id,
+    tenantId: full.tenantId,
+    brief: full.brief,
+    objective: full.objective,
+    status: full.status,
+    promptVersion: full.promptVersion,
+    draftHash: full.draftHash,
+    leadToken: full.leadToken,
+    createdAt: full.createdAt,
+    updatedAt: full.updatedAt,
+  }
+}
+
+function gatedRead(): MarketingBundleResponse {
+  return { bundle: withheldBundle(), actions: [], predictionRequired: true, prediction: null }
+}
 
 let server: FetchStub
 
@@ -95,25 +137,64 @@ describe('MarketingBundleView', () => {
     expect(screen.getByText(/script/)).toBeInTheDocument()
   })
 
-  it('links an image artifact to its document instead of pretending to render it', async () => {
-    const withImage = bundleResponse({
-      artifacts: [
-        {
-          id: 'a2',
-          role: 'creative-designer',
-          kind: 'image',
-          documentId: DOCUMENT_ID,
-          textContent: null,
-          status: 'pending_review',
-          createdAt: '2026-10-30T02:00:00.000Z',
-        },
-      ],
-    })
-    mount([route('/api/marketing/bundles/', ok(withImage))])
+  it('renders a generated image inline and still links the document record', async () => {
+    mount([
+      route(
+        '/api/marketing/bundles/',
+        ok(
+          bundleResponse({
+            artifacts: [
+              {
+                id: 'a2',
+                role: 'creative-designer',
+                kind: 'image',
+                documentId: DOCUMENT_ID,
+                textContent: null,
+                status: 'pending_review',
+                createdAt: '2026-10-30T02:00:00.000Z',
+              },
+            ],
+          }),
+        ),
+      ),
+    ])
 
-    const link = await screen.findByRole('link', { name: DOCUMENT_ID.slice(0, 8) })
-    expect(link).toHaveAttribute('href', `/api/documents/${DOCUMENT_ID}`)
-    expect(screen.getByText(/renders no image/)).toBeInTheDocument()
+    const img = await screen.findByRole('img')
+    expect(img).toHaveAttribute('src', `/api/marketing/assets/${DOCUMENT_ID}/bytes`)
+    expect(img).toHaveAttribute('alt', expect.stringContaining('Generated image'))
+    // The document link stays: the picture is what the reviewer looks at, the
+    // record is what they audit, and only the second carries the hash.
+    expect(screen.getByRole('link', { name: DOCUMENT_ID.slice(0, 8) })).toHaveAttribute(
+      'href',
+      `/api/documents/${DOCUMENT_ID}`,
+    )
+    expect(screen.queryByText(/renders no image/)).toBeNull()
+  })
+
+  it('keeps a bare document link for an artifact that has no prose and is not an image', async () => {
+    mount([
+      route(
+        '/api/marketing/bundles/',
+        ok(
+          bundleResponse({
+            artifacts: [
+              {
+                id: 'a3',
+                role: 'marketer-copywriter',
+                kind: 'page_html',
+                documentId: DOCUMENT_ID,
+                textContent: null,
+                status: 'pending_review',
+                createdAt: '2026-10-30T02:00:00.000Z',
+              },
+            ],
+          }),
+        ),
+      ),
+    ])
+
+    expect(await screen.findByRole('link', { name: DOCUMENT_ID.slice(0, 8) })).toBeInTheDocument()
+    expect(screen.queryByRole('img')).toBeNull()
   })
 
   it('says nothing recorded for the blocks a bundle does not carry', async () => {
@@ -187,6 +268,72 @@ describe('MarketingBundleView', () => {
     // they are still queued updates the component after the test, which React
     // reports as an update not wrapped in act.
     expect(await screen.findByText('Book more physio assessments in Melbourne')).toBeInTheDocument()
+  })
+
+  it('withholds the prose and asks for a prediction first', async () => {
+    mount([route('/api/marketing/bundles/', { status: 200, body: gatedRead() })])
+
+    expect(await screen.findByText(/write down what you expect/i)).toBeInTheDocument()
+    // The brief stays visible: the owner typed it, and it is the only thing on
+    // the screen that says which bundle is being gated.
+    expect(screen.getByText('Book more physio assessments in Melbourne')).toBeInTheDocument()
+    expect(screen.getByText(/staged/)).toBeInTheDocument()
+    // And the proposal does not.
+    expect(screen.queryByText('Strategy')).toBeNull()
+    expect(screen.queryByText('Media plan')).toBeNull()
+    expect(screen.queryByText('Assets')).toBeNull()
+    expect(screen.queryByText('Your next patient is already searching')).toBeNull()
+    expect(screen.getByRole('button', { name: /Record my prediction/i })).toBeDisabled()
+  })
+
+  it('sends the prediction and reads the bundle again', async () => {
+    let reads = 0
+    mount([
+      (call) => {
+        if (call.method !== 'GET' || !call.url.includes('/api/marketing/bundles/')) return null
+        reads += 1
+        return reads === 1 ? { status: 200, body: gatedRead() } : ok(bundleResponse())
+      },
+      route('/prediction', { status: 200, body: { prediction: PREDICTION, existed: false } }, 'POST'),
+    ])
+
+    expect(await screen.findByText(/write down what you expect/i)).toBeInTheDocument()
+    await userEvent.type(
+      screen.getByLabelText(/what do you expect/i),
+      'About forty assessments a month, and a cost per lead under thirty dollars.',
+    )
+    await userEvent.click(screen.getByRole('button', { name: /Record my prediction/i }))
+
+    expect(await screen.findByText('Your next patient is already searching')).toBeInTheDocument()
+    expect(reads).toBe(2)
+    const sent = server.last(`/api/marketing/bundles/${BUNDLE_ID}/prediction`)
+    expect(sent?.method).toBe('POST')
+    expect(sent?.body).toEqual({
+      predictedOutcome: 'About forty assessments a month, and a cost per lead under thirty dollars.',
+    })
+  })
+
+  it('shows what was already predicted instead of asking twice', async () => {
+    mount([
+      route(
+        '/api/marketing/bundles/',
+        ok(bundleResponse({ predictionRequired: true, prediction: PREDICTION })),
+      ),
+    ])
+
+    expect(await screen.findByText('Your next patient is already searching')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Record my prediction/i })).toBeNull()
+    expect(screen.getByText(/forty assessments a month/)).toBeInTheDocument()
+  })
+
+  it('a 409 from an older plane is reported as a failure, not as a missing bundle', async () => {
+    mount([
+      route('/api/marketing/bundles/', { status: 409, body: { error: 'prediction_required' } }),
+    ])
+    // 409 is not 404 and not a readable bundle: the screen must say what the
+    // plane answered rather than claim the bundle is missing.
+    expect(await screen.findByRole('alert')).toBeInTheDocument()
+    expect(screen.queryByText('Bundle not found.')).toBeNull()
   })
 })
 
