@@ -6,9 +6,9 @@ export interface DocumentRow {
   id: string
   tenant_id: string
   owner_id: string
-  kind: 'invoice' | 'contract' | 'other'
+  kind: 'invoice' | 'contract' | 'other' | 'marketing_asset'
   title: string
-  source: 'upload' | 'email'
+  source: 'upload' | 'email' | 'generated'
   source_ref: string | null
   content_hash: string
   mime: string
@@ -159,9 +159,9 @@ async function queryRows<T>(sql: string, params: unknown[]): Promise<T[]> {
 export interface PersistDocumentInput {
   tenantId: string
   ownerId: string
-  kind: 'invoice' | 'contract' | 'other'
+  kind: 'invoice' | 'contract' | 'other' | 'marketing_asset'
   title: string
-  source: 'upload' | 'email'
+  source: 'upload' | 'email' | 'generated'
   sourceRef: string | null
   contentHash: string
   contentText: string
@@ -278,7 +278,12 @@ export async function insertDocument(
     // Scan artifacts (0011) belong to the document that FIRST claimed this
     // content hash. A duplicate upload only bumps updated_at above and must
     // not duplicate or overwrite the existing file/parse/blocks.
-    if (row.is_new && input.parse) {
+    //
+    // The file write is a sibling of the parse write, not a child of it. A
+    // generated image carries bytes and no parse run, because nothing was
+    // extracted from it, so nesting the byte lane under `input.parse` stored the
+    // metadata row and dropped the bytes — spec section 4.1's named failure.
+    if (row.is_new && (input.file || input.parse)) {
       if (input.file) {
         await client.query(
           `INSERT INTO document_files (document_id, tenant_id, mime, size_bytes, data)
@@ -287,55 +292,57 @@ export async function insertDocument(
           [row.id, input.tenantId, input.file.mime, input.file.sizeBytes, input.file.data],
         )
       }
-      const parseResult = await client.query<{ id: string }>(
-        `INSERT INTO document_parses
-           (document_id, tenant_id, parser, parser_version, status, block_count, duration_ms, meta)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
-         RETURNING id`,
-        [
-          row.id,
-          input.tenantId,
-          input.parse.parser,
-          input.parse.parserVersion,
-          input.parse.status,
-          (input.blocks ?? []).length,
-          input.parse.durationMs,
-          JSON.stringify(input.parse.meta ?? {}),
-        ],
-      )
-      const parseId = parseResult.rows[0]?.id
-      const blocks = input.blocks ?? []
-      if (parseId && blocks.length > 0) {
-        // Multi-row VALUES in chunks of 200 (11 params per block) so no
-        // statement approaches the 65535-parameter cap.
-        const CHUNK = 200
-        for (let i = 0; i < blocks.length; i += CHUNK) {
-          const slice = blocks.slice(i, i + CHUNK)
-          const params: unknown[] = []
-          const tuples = slice.map((b, j) => {
-            const base = j * 11
-            params.push(
-              parseId,
-              row.id,
-              input.tenantId,
-              b.page_number,
-              b.block_index,
-              b.block_type,
-              b.content_md,
-              b.bbox === null ? null : JSON.stringify(b.bbox),
-              b.confidence,
-              b.char_start,
-              b.char_end,
+      if (input.parse) {
+        const parseResult = await client.query<{ id: string }>(
+          `INSERT INTO document_parses
+             (document_id, tenant_id, parser, parser_version, status, block_count, duration_ms, meta)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+           RETURNING id`,
+          [
+            row.id,
+            input.tenantId,
+            input.parse.parser,
+            input.parse.parserVersion,
+            input.parse.status,
+            (input.blocks ?? []).length,
+            input.parse.durationMs,
+            JSON.stringify(input.parse.meta ?? {}),
+          ],
+        )
+        const parseId = parseResult.rows[0]?.id
+        const blocks = input.blocks ?? []
+        if (parseId && blocks.length > 0) {
+          // Multi-row VALUES in chunks of 200 (11 params per block) so no
+          // statement approaches the 65535-parameter cap.
+          const CHUNK = 200
+          for (let i = 0; i < blocks.length; i += CHUNK) {
+            const slice = blocks.slice(i, i + CHUNK)
+            const params: unknown[] = []
+            const tuples = slice.map((b, j) => {
+              const base = j * 11
+              params.push(
+                parseId,
+                row.id,
+                input.tenantId,
+                b.page_number,
+                b.block_index,
+                b.block_type,
+                b.content_md,
+                b.bbox === null ? null : JSON.stringify(b.bbox),
+                b.confidence,
+                b.char_start,
+                b.char_end,
+              )
+              return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}::jsonb, $${base + 9}, $${base + 10}, $${base + 11})`
+            })
+            await client.query(
+              `INSERT INTO document_blocks
+                 (parse_id, document_id, tenant_id, page_number, block_index, block_type,
+                  content_md, bbox, confidence, char_start, char_end)
+               VALUES ${tuples.join(', ')}`,
+              params,
             )
-            return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}::jsonb, $${base + 9}, $${base + 10}, $${base + 11})`
-          })
-          await client.query(
-            `INSERT INTO document_blocks
-               (parse_id, document_id, tenant_id, page_number, block_index, block_type,
-                content_md, bbox, confidence, char_start, char_end)
-             VALUES ${tuples.join(', ')}`,
-            params,
-          )
+          }
         }
       }
     }
@@ -375,6 +382,11 @@ export async function listDocuments(
     idx++
     conditions.push(`d.kind = $${idx}`)
     params.push(filters.kind)
+  } else {
+    // A generated hero image is not a business document. Without this line every
+    // asset pass drops its output between the owner's invoices in the CRM
+    // document list, which reads as a bug to whoever is hunting for a bill.
+    conditions.push(`d.kind <> 'marketing_asset'`)
   }
   if (filters.status) {
     idx++

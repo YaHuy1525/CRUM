@@ -15,7 +15,7 @@ const money = z.string().nullable()
 
 const DocumentSummarySchema = z.object({
   id: z.string(),
-  kind: z.enum(['invoice', 'contract', 'other']),
+  kind: z.enum(['invoice', 'contract', 'other', 'marketing_asset']),
   title: z.string(),
   status: z.enum(['pending', 'processing', 'ready', 'needs_review', 'failed']),
   confidence: money,
