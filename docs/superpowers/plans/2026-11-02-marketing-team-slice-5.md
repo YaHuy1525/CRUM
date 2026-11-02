@@ -1910,10 +1910,10 @@ git commit -m "feat(marketing): the image ledger records the bundle each predict
 Ruling B, the two-layer model. The order is the spec's (section 7.2): bundle first, because "this bundle is at its cap" tells the owner to revise the creative and "today is spent" tells them to wait for midnight, and the first is the more actionable answer when both are true.
 
 **Files:**
-- Modify: `src/config/env.ts:206-209` (after the per-image key)
+- Modify: `src/config/env.ts:215-218` (after the per-image key)
 - Modify: `src/marketing/image-provider.ts:23-39` (`ImageAdapter`, `ReplicateAdapterParams`), `:41-60` (`makeReplicateAdapter`)
 - Modify: `src/mastra/index.ts:191-203`
-- Modify: `src/mastra/tools/marketing-writes.ts:1279-1336` (both ceiling blocks), `:1496` (the human-task title)
+- Modify: `src/mastra/tools/marketing-writes.ts:1310-1340` (pre-flight ceiling block), `:1346-1367` (mid-loop ceiling block), `:1530` (the human-task title)
 - Test: `tests/marketing/generate-assets-tool.test.ts`, `tests/marketing/image-provider.test.ts` (create if absent; the file does not exist today), `tests/integration/marketing-generate-assets.test.ts`, `tests/config/env.test.ts`
 
 **Interfaces:**
@@ -1922,7 +1922,7 @@ Ruling B, the two-layer model. The order is the spec's (section 7.2): bundle fir
 
 - [ ] **Step 1: The config, with its comment**
 
-`src/config/env.ts`, after `CRUM_IMAGE_COST_MINOR_PER_IMAGE` (`:206-209`):
+`src/config/env.ts`, after `CRUM_IMAGE_COST_MINOR_PER_IMAGE` (`:215-218`):
 
 ```ts
   // Minor units, so 200 is $2.00. Lifetime per bundle rather than per day: this
@@ -1945,7 +1945,7 @@ Add one case to `tests/config/env.test.ts` in that file's existing style: unset 
 Then update every adapter literal, or `npm run typecheck` fails with a missing-property error in each of them:
 
 - `src/mastra/index.ts:191-203` — `bundleCeilingMinor: env.CRUM_IMAGE_SPEND_CEILING_MINOR_PER_BUNDLE`.
-- `tests/marketing/generate-assets-tool.test.ts:127-133` — the mock adapter gains `bundleCeilingMinor: 200`, and the harness's `ledger(...)` helper grows a second parameter (or a sibling `bundleLedger(...)`) that answers `committedBundleSpendMinor`.
+- `tests/marketing/generate-assets-tool.test.ts:127-133` — the mock adapter gains `bundleCeilingMinor: 200`, and the harness's `ledger(...)` helper (`:97-107`) grows a second parameter `bundleStart = 0` so it tracks both totals; `recordImageSpend` increments both (the test uses one bundle, `BUNDLE`, throughout), and the returned object gains `bundleCommitted` beside `committed`. Every existing `ledger(n)` call becomes `ledger(n, 0)` or just `ledger(n)` since the default is 0.
 - `tests/integration/marketing-generate-assets.test.ts:41-46` — `stubAdapter` gains `bundleCeilingMinor: 200` and a parameter to override it, the same way its `ceilingMinor` default of 40 is overridden at `:250`.
 - `vi.mock('../../src/marketing/image-spend', ...)` in the tool test (`:37-42`) gains `committedBundleSpendMinor: h.committedBundleSpendMinor` in the hoisted object and the factory's override list.
 
@@ -1956,8 +1956,7 @@ In `tests/marketing/generate-assets-tool.test.ts`:
 ```ts
 it('refuses on the bundle ceiling before it mentions the day', async () => {
   h.getDesignerArtifactText.mockResolvedValue(promptJson('a', 'b', 'c'))
-  dayLedger(0)
-  bundleLedger(195)
+  ledger(0, 195)
   const result = await run({ bundleId: BUNDLE })
   expect(result.refused.map((r) => r.code)).toEqual([
     'image_bundle_ceiling_reached',
@@ -1970,8 +1969,7 @@ it('refuses on the bundle ceiling before it mentions the day', async () => {
 
 it('reports both ceilings when both bind, because an owner should not have to discover the second one tomorrow', async () => {
   h.getDesignerArtifactText.mockResolvedValue(promptJson('a', 'b', 'c'))
-  dayLedger(1990)
-  bundleLedger(195)
+  ledger(1990, 195)
   const result = await run({ bundleId: BUNDLE })
   const codes = result.refused.map((r) => r.code)
   expect(codes).toContain('image_bundle_ceiling_reached')
@@ -1986,8 +1984,7 @@ it('reports both ceilings when both bind, because an owner should not have to di
 
 it('stops at the bundle boundary mid-run, after the provider actually charged past the estimate', async () => {
   h.getDesignerArtifactText.mockResolvedValue(promptJson('a', 'b', 'c'))
-  dayLedger(0)
-  bundleLedger(190)
+  ledger(0, 190)
   h.generate.mockResolvedValueOnce(okImage('a', 12)).mockResolvedValue(okImage('b'))
   const result = await run({ bundleId: BUNDLE })
   expect(result.assets.map((asset) => asset.name)).toEqual(['a'])
@@ -1999,13 +1996,13 @@ it('stops at the bundle boundary mid-run, after the provider actually charged pa
 
 it('attributes every spend row to the bundle, including the ones with nothing to show', async () => {
   h.getDesignerArtifactText.mockResolvedValue(promptJson('a'))
-  h.generate.mockResolvedValue(failedPrediction(4))
+  h.generate.mockResolvedValue(failImage('asset_too_large', '16 MB', { predictionId: 'pred-a', costUsd: '0.04', costMinor: 4 }))
   await run({ bundleId: BUNDLE })
   expect(h.recordImageSpend.mock.calls[0]![0]).toMatchObject({ bundleId: BUNDLE, documentId: null })
 })
 ```
 
-`dayLedger(n)` and `bundleLedger(n)` are the two mocks of `committedSpendMinor` and `committedBundleSpendMinor`; the file's existing `ledger(n)` helper (`:190`) becomes `dayLedger` by rename, and every call in the file follows. `failedPrediction(costMinor)` is the existing failure-shaped helper in that file; if it does not exist, build it from the `okImage` helper's counterpart the file already uses for a charged-but-unusable outcome.
+`ledger(dayStart = 0, bundleStart = 0)` is the widened helper: it mocks both `committedSpendMinor` and `committedBundleSpendMinor`, and `recordImageSpend` increments both totals (since the test uses one bundle, `BUNDLE`). Every call in the file follows. `failedPrediction(costMinor)` is built from the existing `failImage` helper at `:89`: `failImage('asset_too_large', '16 MB', { predictionId: 'pred-a', costUsd: '0.04', costMinor })`.
 
 In `tests/integration/marketing-generate-assets.test.ts`, add the case that the unit suite structurally cannot prove, on real rows:
 
@@ -2016,25 +2013,13 @@ it('caps a bundle on its own ledger, while the tenant still has a full day of he
   const bundleId = saved.bundleId as string
   const first = await generateAssetsTool.execute({ bundleId }, context)
   expect(first.refused).toHaveLength(0)
+  expect(await committedBundleSpendMinor(TENANT, bundleId)).toBeGreaterThan(0)
   // Same tenant, same day, second bundle: the day ceiling has room, so the only
   // thing that can stop this run is the bundle it belongs to.
   const other = await saveBundleTool.execute(bundleInput(), context)
   const second = await generateAssetsTool.execute({ bundleId: other.bundleId as string }, context)
   expect(second.refused).toHaveLength(0)
-  // A re-run on the first bundle carries its existing assets, so it costs nothing.
-  // What costs is a third bundle pushed past a 12-minor bundle cap by rows that
-  // exist: attribute them directly, because the point of this file is the ledger.
-  await pool.query(
-    `UPDATE marketing_image_spend SET bundle_id = $2 WHERE tenant_id = $1`,
-    [TENANT, bundleId],
-  )
-  const capRow = await pool.query<{ cost_minor: string }>(
-    `SELECT cost_minor FROM marketing_image_spend WHERE tenant_id = $1 AND bundle_id = $2`,
-    [TENANT, bundleId],
-  )
-  expect(Number(capRow.rows[0]!.cost_minor)).toBeGreaterThan(0)
-  expect(await committedBundleSpendMinor(TENANT, bundleId)).toBeGreaterThan(0)
-  expect(await committedBundleSpendMinor(TENANT, (other.bundleId as string))).toBe(0)
+  expect(await committedBundleSpendMinor(TENANT, other.bundleId as string)).toBeGreaterThan(0)
 })
 ```
 
@@ -2042,7 +2027,7 @@ it('caps a bundle on its own ledger, while the tenant still has a full day of he
 
 - [ ] **Step 4: Ask bundle first, then day, in both places**
 
-Replace the pre-flight block at `marketing-writes.ts:1279-1309` with:
+Replace the pre-flight block at `marketing-writes.ts:1310-1340` with:
 
 ```ts
       let committedMinor = 0
@@ -2094,7 +2079,7 @@ Replace the pre-flight block at `marketing-writes.ts:1279-1309` with:
 
 The day sentence keeps its existing wording exactly, because `tests/marketing/generate-assets-tool.test.ts` and the slice-4 verification report both quote it.
 
-The mid-loop block (`:1313-1336`) grows the same pair, with `assetCount: 1`:
+The mid-loop block (`:1346-1367`) grows the same pair, with `assetCount: 1`:
 
 ```ts
           const nowCommitted = await committedSpendMinor(rc.tenantId)
@@ -2123,7 +2108,7 @@ The mid-loop block (`:1313-1336`) grows the same pair, with `assetCount: 1`:
 
 The day boundary's existing comment (`:1324-1327`, "the boundary moved under the run") stays and covers both ceilings.
 
-Then the title at `:1496` counts assets rather than lines:
+Then the title at `:1530` counts assets rather than lines:
 
 ```ts
           // Distinct names, because a refusal that binds both ceilings writes two
