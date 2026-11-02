@@ -1,19 +1,59 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import {
+  AssetProblemError,
+  MAX_ASSET_BYTES,
   SlugProblemError,
   SlotProblemError,
   assetNamesReferenced,
   resolveSite,
+  sha256OfText,
   siteHashOf,
+  siteProblem,
   siteTextOf,
   slugProblem,
   slotProblem,
   type SiteArtifact,
+  unreferencedAssetNames,
   unterminatedAssetReferences,
 } from '@/marketing/site'
 
 const file = (id: string, kind: string, text: string): SiteArtifact => ({ id, kind, textContent: text })
+
+// Beside `file`, and the same shape of helper: an image artifact carries a
+// document, a title, a mime and bytes, and only Task 4's loader can fill them
+// from a row. `PNG_BYTES` is four bytes so the byte ceilings stay testable
+// without a megabyte in a fixture, and the padded segment keeps the twelve
+// characters a real uuid's last group has, because `documentId` is a uuid.
+const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
+const asset = (
+  id: string,
+  title: string,
+  over: Partial<SiteArtifact> = {},
+): SiteArtifact => ({
+  id,
+  kind: 'image',
+  textContent: null,
+  documentId: `00000000-0000-4000-8000-${id.padEnd(12, '0')}`,
+  title,
+  mime: 'image/png',
+  bytes: PNG_BYTES,
+  ...over,
+})
+const page = (html: string): SiteArtifact => ({ id: 'p1', kind: 'page_html', textContent: html })
+
+// Vitest's `toThrow` reads a function argument as an error class to match with
+// `instanceof`, so a predicate cannot ride it. The caught error is returned
+// here and its token asserted, which is the same claim in the form the matcher
+// actually checks.
+function thrownBy(run: () => unknown): unknown {
+  try {
+    run()
+  } catch (err) {
+    return err
+  }
+  throw new Error('expected the call to refuse, and it returned a file list')
+}
 
 describe('slugProblem', () => {
   it('is null for a bundle with no page and for a publishable slug', () => {
@@ -320,5 +360,101 @@ describe('unterminatedAssetReferences', () => {
     const fragments = unterminatedAssetReferences('{{ASSET:' + 'x'.repeat(200))
     expect(fragments).toHaveLength(1)
     expect(fragments[0]).toHaveLength(120)
+  })
+})
+
+describe('resolveSite with assets', () => {
+  it('publishes a referenced image at a document-id path under the slug', () => {
+    const files = resolveSite('physio', [page('<img src="{{ASSET:hero}}">'), asset('i1', 'hero')])
+    expect(files.map((f) => f.path)).toEqual(['physio/assets/00000000-0000-4000-8000-i10000000000.png', 'physio/index.html'])
+    const image = files.find((f) => f.path.endsWith('.png'))!
+    expect(image.contentType).toBe('image/png')
+    expect(image.content).toEqual(PNG_BYTES)
+    // The image's hash is over the uploaded bytes, and never through
+    // `sha256OfText`, which is the text lane's helper.
+    expect(image.sha256).toBe(createHash('sha256').update(PNG_BYTES).digest('hex'))
+  })
+
+  it('substitutes a root-relative URL into the page before hashing it', () => {
+    // Root-relative, not relative to the page: the thank-you page sits one level
+    // deeper, and `assets/a.png` from there asks for a path that does not exist.
+    const files = resolveSite('physio', [page('<img src="{{ASSET:hero}}">'), asset('i1', 'hero')])
+    const html = files.find((f) => f.path === 'physio/index.html')!
+    expect(siteTextOf(html)).toBe('<img src="/physio/assets/00000000-0000-4000-8000-i10000000000.png">')
+    expect(html.sha256).toBe(sha256OfText(siteTextOf(html)))
+  })
+
+  it('does not publish or hash an image the page never names', () => {
+    const withUnused = resolveSite('physio', [page('<p>text only</p>'), asset('i1', 'hero'), asset('i2', 'unused')])
+    expect(withUnused.map((f) => f.path)).toEqual(['physio/index.html'])
+    expect(unreferencedAssetNames([page('<p>text only</p>'), asset('i1', 'hero')])).toEqual(['hero'])
+  })
+
+  it('hashes a repeated reference once, because it is one file', () => {
+    const twice = resolveSite('physio', [page('{{ASSET:hero}} {{ASSET:hero}}'), asset('i1', 'hero')])
+    expect(twice.filter((f) => f.path.endsWith('.png'))).toHaveLength(1)
+  })
+
+  it('refuses a mime with no extension rather than guessing one', () => {
+    expect(() => resolveSite('physio', [page('{{ASSET:hero}}'), asset('i1', 'hero', { mime: 'image/gif' })]))
+      .toThrow(AssetProblemError)
+    expect(siteProblem([page('{{ASSET:hero}}'), asset('i1', 'hero', { mime: 'image/gif' })])).toContain('image/gif')
+  })
+})
+
+describe('siteProblem names each asset failure', () => {
+  // `token`, then the `needle` the sentence must name, then the artifacts: the
+  // title format prints its two `%s` slots in argument order, so the needle sits
+  // where the title can read it.
+  const cases: Array<[string, string, SiteArtifact[]]> = [
+    ['asset_name_missing', 'hero', [page('{{ASSET:hero}}')]],
+    ['asset_name_ambiguous', 'hero', [page('{{ASSET:hero}}'), asset('i1', 'hero'), asset('i2', 'hero')]],
+    ['asset_mime_unsupported', 'image/tiff', [page('{{ASSET:hero}}'), asset('i1', 'hero', { mime: 'image/tiff' })]],
+    ['asset_bytes_missing', 'hero', [page('{{ASSET:hero}}'), asset('i1', 'hero', { bytes: null })]],
+    ['asset_bytes_missing', 'hero', [page('{{ASSET:hero}}'), asset('i1', 'hero', { bytes: new Uint8Array(0) })]],
+    ['asset_too_large', '8388608', [page('{{ASSET:hero}}'), asset('i1', 'hero', { bytes: new Uint8Array(MAX_ASSET_BYTES + 1) })]],
+    ['asset_unresolved', '{{ASSET:hero', [page('{{ASSET:hero')]],
+  ]
+
+  it.each(cases)('%s is refused in a sentence naming %s', (token, needle, artifacts) => {
+    const problem = siteProblem(artifacts)
+    expect(problem).not.toBeNull()
+    expect(problem).toContain(needle)
+    // One predicate, two spellings: whatever siteProblem can say, resolveSite
+    // refuses with the same token rather than publishing something else.
+    const refusal = thrownBy(() => resolveSite('physio', artifacts))
+    expect(refusal).toBeInstanceOf(AssetProblemError)
+    expect((refusal as AssetProblemError).token).toBe(token)
+  })
+
+  it('counts one asset over the ceiling by itself, and twelve of them too', () => {
+    const twelve = Array.from({ length: 13 }, (_unused, i) => asset(`i${i}`, `a${i}`))
+    const names = twelve.map((a) => `{{ASSET:${a.title}}}`).join(' ')
+    expect(siteProblem([page(names), ...twelve])).toContain('12')
+  })
+
+  it('adds the page and its pictures together when it checks the site ceiling', () => {
+    // Three pictures over one shared buffer, each at exactly the per-image
+    // ceiling, so the pictures alone sit at the 24 MiB site ceiling to the byte and
+    // only the page's own bytes can tip it over. Two pictures never could: the
+    // per-image ceiling caps a pair at 16 MiB, well under a 24 MiB site.
+    const big = new Uint8Array(MAX_ASSET_BYTES)
+    const artifacts = [
+      page('{{ASSET:a}} {{ASSET:b}} {{ASSET:c}}'),
+      asset('i1', 'a', { bytes: big }),
+      asset('i2', 'b', { bytes: big }),
+      asset('i3', 'c', { bytes: big }),
+    ]
+    expect(siteProblem(artifacts)).toContain('asset_too_large')
+  })
+
+  it('is null for a page with no placeholders and for a bundle with no page', () => {
+    expect(siteProblem([page('<h1>hi</h1>')])).toBeNull()
+    expect(siteProblem([asset('i1', 'hero')])).toBeNull()
+  })
+
+  it('still says what slotProblem says about two pages in one slot', () => {
+    const two = [file('a1', 'page_html', '<h1>old</h1>'), file('a2', 'page_html', '<h1>new</h1>')]
+    expect(siteProblem(two)).toBe(slotProblem(two))
   })
 })
