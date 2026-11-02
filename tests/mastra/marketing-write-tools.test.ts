@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { computeBundleHash } from '../../src/marketing/hash'
 import { LEAD_ENDPOINT_PLACEHOLDER } from '../../src/marketing/lead-token'
+import { registerActionAdapter } from '../../src/marketing/outbox'
+import { resolveSite, siteHashOf } from '@/marketing/site'
 
 const mockQuery = vi.fn()
 const mockClient = { query: mockQuery, release: vi.fn() }
@@ -191,6 +193,7 @@ interface StageResult {
   gate: string
   proceed?: boolean
   reason?: string
+  assetsUnreferenced?: string[]
   message: string
 }
 
@@ -765,6 +768,117 @@ describe('marketing.stage_bundle', () => {
     expect(String(result.reason)).toContain('ambiguous page slot')
     expect(String(result.reason)).toContain('page_html')
     expect(call('INSERT INTO pending_writes')).toBeUndefined()
+  })
+
+  it('refuses a page that names a picture the bundle does not have', async () => {
+    stubQueries({
+      'FROM marketing_bundles': [bundleRow({ funnel_plan: { page: { slug: 'free-scan' } }, objective: 'inbound_leads' })],
+      'FROM marketing_artifacts': [artifactRow({ text_content: '<img src="{{ASSET:hero}}">' })],
+      'INSERT INTO human_tasks': [{ id: '66666466-6666-4666-8666-666666666666' }],
+    })
+    const result = await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
+    expect(result).toMatchObject({ proceed: false })
+    expect(String(result.reason)).toContain('asset_name_missing')
+    expect(String(result.reason)).toContain('hero')
+    expect(call('INSERT INTO pending_writes')).toBeUndefined()
+  })
+
+  it('refuses two pictures that answer one placeholder', async () => {
+    stubQueries({
+      // First, because `listImageAssetStatuses`'s SQL contains both fragments below
+      // and `stubQueries` answers from the first match in insertion order and throws
+      // on a query nothing matches. Both pictures are `ready` so the only thing that
+      // can refuse this bundle is the ambiguity: with the statuses left out of the
+      // fixture the unreviewed arm has an answer too, and the case no longer shows
+      // which arm the chain reached first.
+      'JOIN documents d': [
+        { document_id: DOCUMENT_ID, title: 'hero', status: 'ready', kind: 'marketing_asset' },
+        { document_id: '88888888-8888-4888-8888-888888888888', title: 'hero', status: 'ready', kind: 'marketing_asset' },
+      ],
+      'FROM marketing_bundles': [bundleRow({ funnel_plan: { page: { slug: 'free-scan' } }, objective: 'inbound_leads' })],
+      'FROM marketing_artifacts': [
+        artifactRow({ text_content: '<img src="{{ASSET:hero}}">' }),
+        artifactRow({ id: 'a2', kind: 'image', text_content: null, document_id: DOCUMENT_ID, title: 'hero', mime: 'image/png' }),
+        artifactRow({ id: 'a3', kind: 'image', text_content: null, document_id: '88888888-8888-4888-8888-888888888888', title: 'hero', mime: 'image/png' }),
+      ],
+      // The page references `hero`, so the loader asks for the bytes of both
+      // candidates before `resolveAssets` gets to refuse the choice.
+      'FROM document_files': [
+        { document_id: DOCUMENT_ID, data: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x09]) },
+        { document_id: '88888888-8888-4888-8888-888888888888', data: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0a]) },
+      ],
+      'INSERT INTO human_tasks': [{ id: '66666466-6666-4666-8666-666666666666' }],
+    })
+    const result = await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
+    expect(String(result.reason)).toContain('asset_name_ambiguous')
+  })
+
+  it('stages a page whose picture resolves, and records the picture in the hash', async () => {
+    // This fixture names a real page with real bytes, so `deriveActions` yields
+    // a publish_page, and the unit env registers no adapters — the refusal case
+    // near the top of this block depends on that. The door needs the executable
+    // answer boot would give it; the unregister runs in a `finally` so a failed
+    // assertion here cannot leak the adapter into the rest of the file.
+    const unregister = registerActionAdapter({
+      name: 'publish_page',
+      execute: () => Promise.resolve({ externalId: 'x' }),
+    })
+    try {
+      const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x09])
+      const stored = [
+        { id: 'a1', kind: 'page_html', text_content: '<img src="{{ASSET:hero}}">' },
+        { id: 'a2', kind: 'image', text_content: null, document_id: DOCUMENT_ID, title: 'hero', mime: 'image/png' },
+      ]
+      stubQueries({
+        // First, for the same reason as the case above, and `ready` because this bundle
+        // is meant to stage: the unreviewed arm is the one thing standing between a
+        // fixture and the hash assertion below.
+        'JOIN documents d': [{ document_id: DOCUMENT_ID, title: 'hero', status: 'ready', kind: 'marketing_asset' }],
+        'FROM marketing_bundles': [bundleRow({ funnel_plan: { page: { slug: 'free-scan' } }, objective: 'inbound_leads' })],
+        'FROM marketing_artifacts': stored,
+        'FROM document_files': [{ document_id: DOCUMENT_ID, data: png }],
+        'INSERT INTO pending_writes': [pendingWriteRow()],
+        'UPDATE marketing_bundles': [{ id: BUNDLE_ID }],
+      })
+      const result = await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
+      const resolved = [
+        { id: 'a1', kind: 'page_html', textContent: '<img src="{{ASSET:hero}}">' },
+        { id: 'a2', kind: 'image', textContent: null, documentId: DOCUMENT_ID, title: 'hero', mime: 'image/png', bytes: png },
+      ]
+      expect(stagedInsert()['siteHash']).toBe(siteHashOf(resolveSite('free-scan', resolved)))
+      expect(result.message).toContain('free-scan')
+    } finally {
+      unregister()
+    }
+  })
+
+  it('reports a picture no page references without refusing the stage', async () => {
+    // Same reason as the case above: the bundle carries a resolvable page_html,
+    // so `deriveActions` yields a publish_page and staging needs the executable
+    // answer boot would give it.
+    const unregister = registerActionAdapter({
+      name: 'publish_page',
+      execute: () => Promise.resolve({ externalId: 'x' }),
+    })
+    try {
+      stubQueries({
+        // `listImageAssetStatuses` is reached because the bundle has an image, and the
+        // picture has to be reviewed or the unreviewed arm refuses first. It sits first
+        // because its SQL also contains the artifacts fragment below.
+        'JOIN documents d': [{ document_id: DOCUMENT_ID, title: 'hero', status: 'ready', kind: 'marketing_asset' }],
+        'FROM marketing_bundles': [bundleRow({ funnel_plan: { page: { slug: 'free-scan' } }, objective: 'inbound_leads' })],
+        'FROM marketing_artifacts': [
+          artifactRow(),
+          artifactRow({ id: 'a2', kind: 'image', text_content: null, document_id: DOCUMENT_ID, title: 'hero', mime: 'image/png', status: 'active' }),
+        ],
+        'INSERT INTO pending_writes': [pendingWriteRow()],
+        'UPDATE marketing_bundles': [{ id: BUNDLE_ID }],
+      })
+      const result = await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
+      expect(result).toMatchObject({ proceed: undefined, assetsUnreferenced: ['hero'] })
+    } finally {
+      unregister()
+    }
   })
 
   it('refuses the unreviewed image by title while a reviewed one in the same bundle passes', async () => {

@@ -257,7 +257,8 @@ export async function commitBundleApproval(
   // A bundle with an unusable slug should never reach here, because the stage tool
   // refuses it. If one does — an older row, or a plan edited after staging — the
   // approval still fails closed: no receipt over a page whose path nobody can
-  // publish. resolveSite throws SlugProblemError, which is translated below to the
+  // publish. resolveSite throws SlugProblemError, or AssetProblemError for a
+  // placeholder the bundle cannot answer, and both are translated below to the
   // refusal type applyDraft turns into an unapprovable answer; a raw throw would
   // surface as a 500 instead.
   let actions: DerivedAction[]

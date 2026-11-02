@@ -38,7 +38,7 @@ import {
   type MarketingActionName,
 } from '../../marketing/outbox'
 import { promotePayload, retryPayload, saveRiskView, stagePayload } from '../../marketing/payload'
-import { SlugProblemError, slugProblem } from '../../marketing/site'
+import { SlugProblemError, siteProblem, slugProblem, unreferencedAssetNames } from '../../marketing/site'
 import {
   getDesignerArtifactText,
   insertAssetDocument,
@@ -308,6 +308,11 @@ const StageOutputSchema = z.object({
   gate: z.enum(['auto', 'approval']),
   proceed: z.boolean().optional(),
   reason: z.string().optional(),
+  // Optional because this schema answers three tools and only stage produces
+  // it: a required field that `promote_bundle` and `retry_publish` never
+  // return would put an output-validation warning on every one of their
+  // results under their `outputValidation: 'warn'`.
+  assetsUnreferenced: z.array(z.string()).optional(),
   message: z.string(),
 })
 
@@ -412,28 +417,38 @@ export const stageBundleTool = createTool({
         throw new Error(`bundle_not_stageable: ${bundle.id} is ${bundle.status}`)
       }
 
-      // The first four refusals answer the same question — can this build say at all
-      // what approving this bundle would cause — and the fifth asks whether a
+      // The first five refusals answer the same question — can this build say at all
+      // what approving this bundle would cause — and the sixth asks whether a
       // reviewer would be signing off a picture nobody has looked at. They are one
-      // branch, not five copies of the human-task call. An unread plan is checked
+      // branch, not six copies of the human-task call. An unread plan is checked
       // first because a plan you cannot read is also a plan whose actions you cannot
       // count (Task 5, Ruling T5-D3); the arms after it name the page, the slot, the
-      // adapter and the unreviewed picture that each stop a bundle short of an
-      // honest approval.
+      // picture the page cannot place, the adapter and the unreviewed image that
+      // each stop a bundle short of an honest approval.
       const unread = unreadPlanColumns(bundle)
-      // One read, three uses: the slot check, the hash, and the artifact count the
-      // payload and the message report. `countMarketingArtifacts` is gone from this
-      // file because a count you cannot name the rows behind is the number this
-      // slice stops trusting.
+      // One read, five uses: the slot check, the asset question, the hash, the
+      // unreferenced-picture report, and the artifact count the payload and the
+      // message report. `countMarketingArtifacts` is gone from this file because a
+      // count you cannot name the rows behind is the number this slice stops
+      // trusting.
       const artifacts = await loadSiteArtifacts(rc.tenantId, bundle.id)
       const slugIssue = slugProblem(pageSlugOf(bundle))
-      // Nothing is derived for a bundle whose page cannot be placed. deriveActions
-      // calls resolveSite, which throws SlugProblemError on such a slug, and a throw
-      // inside an agent turn is not a refusal a human can act on — the queue entry
-      // below is.
-      const actions = slugIssue === null ? deriveActions(bundle, artifacts) : []
-      const blocked = blockedActions(actions)
       const slotIssue = slotProblemCheck(artifacts)
+      // `siteProblem` asks the slot question first, so with a clean slot anything
+      // it returns is an asset sentence: a name with no picture, two pictures with
+      // one name, bytes that are not there, a mime with no extension, a page over
+      // a ceiling. Stage is the cheapest place any of them can be answered, and a
+      // human task is how the answer reaches the person who can change the page.
+      const assetIssue = slotIssue === null ? siteProblem(artifacts) : null
+      // Nothing is derived for a bundle whose page cannot be placed. `deriveActions`
+      // calls `resolveSite`, which throws `SlugProblemError` on an unusable slug and
+      // `AssetProblemError` on a placeholder that resolves to nothing or to two
+      // pictures, and a throw inside an agent turn is not a refusal a human can act
+      // on — the queue entry below is. Both questions are answered above, before this
+      // call, precisely so that neither throw has to be caught.
+      const actions =
+        slugIssue === null && assetIssue === null ? deriveActions(bundle, artifacts) : []
+      const blocked = blockedActions(actions)
       // Behind the in-memory check, so a bundle with no picture never issues the
       // second read and no existing stage fixture has to learn about it. The read
       // is Task 5's, not a fresh one filtered to not-ready rows, because the
@@ -447,8 +462,9 @@ export const stageBundleTool = createTool({
         : []
       // The arms stay in this order because each is a cheaper question than the
       // next: an unread plan cannot be counted, an unnameable page cannot be
-      // placed, an ambiguous slot cannot be hashed, and a name with no adapter is
-      // a build question, not a bundle question. The fifth is the only question
+      // placed, an ambiguous slot cannot be hashed, a slot that resolves to no
+      // picture or to two cannot be hashed either, and a name with no adapter is
+      // a build question, not a bundle question. The last is the only question
       // that needs the database at all, and the read above pays for it whether or
       // not this arm is reached — an earlier refusal throws the answer away. That
       // is one indexed SELECT against marketing_artifacts_bundle_idx on a path
@@ -461,15 +477,17 @@ export const stageBundleTool = createTool({
             ? `unusable page slug: ${slugIssue}`
             : slotIssue !== null
               ? `ambiguous page slot: ${slotIssue}`
-              : blocked.length > 0
-                ? `no adapter for ${blocked.join(', ')}`
-                : unreviewedTitles.length > 0
-                  ? // `documents.title` is NOT NULL with no unique constraint
-                    // (migrations/0009_crum_documents.sql:30), so two pictures can
-                    // share a name. Listing it twice tells the reviewer nothing they
-                    // can act on twice, so the refusal names each title once.
-                    `unreviewed images: ${[...new Set(unreviewedTitles)].join(', ')}`
-                  : null
+              : assetIssue !== null
+                ? `unresolvable page asset: ${assetIssue}`
+                : blocked.length > 0
+                  ? `no adapter for ${blocked.join(', ')}`
+                  : unreviewedTitles.length > 0
+                    ? // `documents.title` is NOT NULL with no unique constraint
+                      // (migrations/0009_crum_documents.sql:30), so two pictures can
+                      // share a name. Listing it twice tells the reviewer nothing they
+                      // can act on twice, so the refusal names each title once.
+                      `unreviewed images: ${[...new Set(unreviewedTitles)].join(', ')}`
+                    : null
       if (refusal !== null) {
         // Refusing here rather than at commit time is the difference between one
         // wasted review and a queue full of decisions that cannot be made.
@@ -496,6 +514,9 @@ export const stageBundleTool = createTool({
       }
 
       const publish = actions.find((a) => a.action === 'publish_page')
+      // Computed once: the output field and the message sentence answer the same
+      // question — which pictures this bundle paid for and no page placed.
+      const unreferenced = unreferencedAssetNames(artifacts)
       const payload = stagePayload({
         bundleId: bundle.id,
         // Recomputed from the stored row, never handed back by the caller: jsonb
@@ -553,8 +574,23 @@ export const stageBundleTool = createTool({
         pendingWriteId: draft.id,
         riskScore: draft.riskScore,
         gate: draft.gate === 'auto' ? ('auto' as const) : ('approval' as const),
+        // The refusal answer lives on the refusal branch; on success the key is
+        // held present-and-undefined rather than dropped, so a reader of the
+        // output can tell "this stage was not refused" from "this tool forgot
+        // to answer the question" — vitest's `toMatchObject` makes the two
+        // observable states distinct, and the stage test reads them that way.
+        proceed: undefined,
+        // Paid for, reviewed, and placed nowhere. Publishing it would put bytes on
+        // a public host that no reviewer positioned, so `resolveSite` leaves it out
+        // and this is the sentence that tells the funnel builder to place it.
+        assetsUnreferenced: unreferenced,
         message:
           `Bundle ${bundle.id} staged for approval (${draft.id}). ` +
+          `${unreferenced.length > 0 ? `${unreferenced.length} image(s) are not referenced by any page and will not be published: ${unreferenced.join(', ')}. ` : ''}` +
+          // The publish this approval queues carries the page's slug, so the
+          // answer names the bytes the staged hash covered rather than only the
+          // bundle uuid that produced them.
+          `${typeof publish?.payload['slug'] === 'string' ? `Approving this queues a publish of the page ${publish.payload['slug']}. ` : ''}` +
           `${numOf('artifactCount', artifacts.length)} asset(s), ${numOf('actionCount', actions.length)} action(s), ` +
           `ceiling ${numOf('requestedCeilingMinor', input.requestedCeilingMinor)} minor units.`,
       }
@@ -659,8 +695,9 @@ export async function stagePromotion(params: {
     throw err
   }
   // Null and unequal are two answers, not one: null means there is no page to
-  // compare (a missing bundle, a plan with no page, or an ambiguous slot), while
-  // unequal means there is a page and it is not the one the reviewer saw.
+  // compare (a missing bundle, a plan with no page, an ambiguous slot, or a page
+  // whose picture cannot resolve), while unequal means there is a page and it is
+  // not the one the reviewer saw.
   if (liveHash === null) return { ok: false, reason: 'bundle_unavailable' }
   if (liveHash !== pageAction.siteHash) {
     return { ok: false, reason: 'site_hash_moved' }
@@ -769,9 +806,9 @@ export async function stageRetry(params: {
     throw err
   }
   // Null and unequal are two answers, not one: null means the row's bundle has
-  // no page to compare (missing, plan without one, or an ambiguous slot), while
-  // unequal means there is a page and it is not the bytes the failed row
-  // recorded.
+  // no page to compare (missing, plan without one, an ambiguous slot, or a page
+  // whose picture cannot resolve), while unequal means there is a page and it is
+  // not the bytes the failed row recorded.
   if (liveHash === null) return { ok: false, reason: 'bundle_unavailable' }
   if (liveHash !== failed.siteHash) return { ok: false, reason: 'site_hash_moved' }
 
