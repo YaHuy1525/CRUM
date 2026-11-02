@@ -14,7 +14,6 @@ import {
   getFailedAction,
   getMarketingBundle,
   insertMarketingArtifacts,
-  listMarketingArtifacts,
   listPublishSucceeded,
   markBundleStaged,
   roleColumnsOf,
@@ -44,6 +43,7 @@ import {
   getDesignerArtifactText,
   insertAssetDocument,
   listImageAssetStatuses,
+  loadSiteArtifacts,
 } from '../../db/marketing-assets'
 import { parseAssetPrompts } from '../../marketing/asset-prompts'
 import type { AssetPrompt } from '../../marketing/asset-prompts'
@@ -425,7 +425,7 @@ export const stageBundleTool = createTool({
       // payload and the message report. `countMarketingArtifacts` is gone from this
       // file because a count you cannot name the rows behind is the number this
       // slice stops trusting.
-      const artifacts = await listMarketingArtifacts(rc.tenantId, bundle.id)
+      const artifacts = await loadSiteArtifacts(rc.tenantId, bundle.id)
       const slugIssue = slugProblem(pageSlugOf(bundle))
       // Nothing is derived for a bundle whose page cannot be placed. deriveActions
       // calls resolveSite, which throws SlugProblemError on such a slug, and a throw

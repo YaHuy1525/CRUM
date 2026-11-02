@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const db = vi.hoisted(() => ({ listMarketingArtifacts: vi.fn() }))
+const db = vi.hoisted(() => ({ loadSiteArtifacts: vi.fn() }))
 
-vi.mock('../../src/db/marketing', () => ({
-  listMarketingArtifacts: db.listMarketingArtifacts,
+vi.mock('../../src/db/marketing-assets', () => ({
+  loadSiteArtifacts: db.loadSiteArtifacts,
 }))
 
 import { buildUploadForm, PageHostError, type PageHostConfig } from '@/marketing/page-host'
@@ -58,7 +58,7 @@ function stubUpload() {
 }
 
 beforeEach(() => {
-  db.listMarketingArtifacts.mockReset()
+  db.loadSiteArtifacts.mockReset()
   uploads.length = 0
 })
 
@@ -194,7 +194,7 @@ describe('the page adapters', () => {
 
   it('reads the bundle with the tenant the drainer claimed, not one the payload could name', async () => {
     stubUpload()
-    db.listMarketingArtifacts.mockResolvedValue([artifactRow()])
+    db.loadSiteArtifacts.mockResolvedValue([artifactRow()])
     const { makePublishPageAdapter } = await import('@/marketing/page-host')
     const deployed = await makePublishPageAdapter(CONFIG).execute(
       // A payload that somehow carried a tenant is still not the authority: the
@@ -203,27 +203,52 @@ describe('the page adapters', () => {
       { action: 'publish_page', payload: { ...PAYLOAD, tenantId: OTHER_TENANT } },
       { tenantId: TENANT },
     )
-    expect(db.listMarketingArtifacts).toHaveBeenCalledWith(TENANT, BUNDLE)
+    expect(db.loadSiteArtifacts).toHaveBeenCalledWith(TENANT, BUNDLE)
     expect(deployed).toEqual({ externalId: 'd1', url: 'https://h1.pages.dev', fileCount: 1 })
   })
 
   it('threads the same tenant through the promote read, because promotion re-uploads the same bundle', async () => {
     stubUpload()
-    db.listMarketingArtifacts.mockResolvedValue([artifactRow()])
+    db.loadSiteArtifacts.mockResolvedValue([artifactRow()])
     const { makePromotePageAdapter } = await import('@/marketing/page-host')
     const deployed = await makePromotePageAdapter(CONFIG).execute(
       { action: 'promote_page', payload: PAYLOAD },
       { tenantId: TENANT },
     )
-    expect(db.listMarketingArtifacts).toHaveBeenCalledWith(TENANT, BUNDLE)
+    expect(db.loadSiteArtifacts).toHaveBeenCalledWith(TENANT, BUNDLE)
     expect(deployed).toEqual({ externalId: 'd1', url: 'https://h1.pages.dev', fileCount: 1 })
+  })
+
+  it('uploads the picture as its own part, under the hash the approval signed', async () => {
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x7f])
+    const DOC = '44444444-4444-4444-8444-444444444444'
+    const stored = [
+      { id: 'a1', kind: 'page_html', textContent: '<img src="{{ASSET:hero}}">' },
+      { id: 'a2', kind: 'image', textContent: null, documentId: DOC, title: 'hero', mime: 'image/png', bytes: png },
+    ]
+    db.loadSiteArtifacts.mockResolvedValue(stored)
+    const approved = siteHashOf(resolveSite('physio', stored))
+    const uploaded = stubUpload()
+    const { makePublishPageAdapter } = await import('@/marketing/page-host')
+    const deployed = await makePublishPageAdapter(CONFIG).execute(
+      { action: 'publish_page', payload: { bundleId: BUNDLE, slug: 'physio', siteHash: approved } },
+      { tenantId: TENANT },
+    )
+    expect(deployed.fileCount).toBe(2)
+    const form = (uploaded.mock.calls[0]![1]!.body as FormData)
+    const manifest = JSON.parse(formText(form, 'manifest')) as Record<string, string>
+    const assetPath = `physio/assets/${DOC}.png`
+    expect(manifest[assetPath]).toBeDefined()
+    const part = form.get(manifest[assetPath]!) as Blob
+    expect(part.type).toBe('image/png')
+    expect(new Uint8Array(await part.arrayBuffer())).toEqual(png)
   })
 })
 
 describe('the branch each adapter uploads to', () => {
   it('publishes to the preview branch the config prefix and the slug name', async () => {
     stubUpload()
-    db.listMarketingArtifacts.mockResolvedValue([artifactRow()])
+    db.loadSiteArtifacts.mockResolvedValue([artifactRow()])
     const { makePublishPageAdapter } = await import('@/marketing/page-host')
     await makePublishPageAdapter(CONFIG).execute(
       { action: 'publish_page', payload: PAYLOAD },
@@ -234,7 +259,7 @@ describe('the branch each adapter uploads to', () => {
 
   it('promotes to the production branch, because a re-upload anywhere else never goes live', async () => {
     stubUpload()
-    db.listMarketingArtifacts.mockResolvedValue([artifactRow()])
+    db.loadSiteArtifacts.mockResolvedValue([artifactRow()])
     const { makePromotePageAdapter } = await import('@/marketing/page-host')
     await makePromotePageAdapter(CONFIG).execute(
       { action: 'promote_page', payload: PAYLOAD },
@@ -247,7 +272,7 @@ describe('the branch each adapter uploads to', () => {
 describe('the byte re-check', () => {
   it('refuses bytes that no longer hash to the approved one, before anything is uploaded', async () => {
     const uploaded = stubUpload()
-    db.listMarketingArtifacts.mockResolvedValue([{ ...artifactRow(), textContent: '<h1>edited</h1>' }])
+    db.loadSiteArtifacts.mockResolvedValue([{ ...artifactRow(), textContent: '<h1>edited</h1>' }])
     const { makePublishPageAdapter } = await import('@/marketing/page-host')
     await expect(makePublishPageAdapter(CONFIG).execute(
       { action: 'publish_page', payload: PAYLOAD },
@@ -258,7 +283,7 @@ describe('the byte re-check', () => {
 
   it('refuses a payload with no string hash, because an unchecked upload publishes unapproved bytes', async () => {
     const uploaded = stubUpload()
-    db.listMarketingArtifacts.mockResolvedValue([artifactRow()])
+    db.loadSiteArtifacts.mockResolvedValue([artifactRow()])
     const { makePublishPageAdapter } = await import('@/marketing/page-host')
     const adapter = makePublishPageAdapter(CONFIG)
     const payloads = [

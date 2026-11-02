@@ -18,6 +18,7 @@ import { SlugProblemError, resolveSite, siteHashOf } from '@/marketing/site'
 
 const TENANT = '11111111-1111-4111-8111-111111111111'
 const BUNDLE = '33333333-3333-4333-8333-333333333333'
+const DOC = '44444444-4444-4444-8444-444444444444'
 const RECEIPT = '99999999-9999-4999-8999-999999999999'
 
 // The one-page fixture these commit cases share, and the hash a stage would have
@@ -40,7 +41,11 @@ function bundleRow(over: Record<string, unknown> = {}) {
   }
 }
 
-function clientReturning(rows: unknown[], artifacts: unknown[] = []) {
+function clientReturning(
+  rows: unknown[],
+  artifacts: unknown[] = [],
+  assetFiles: unknown[] = [],
+) {
   // The fake mirrors prospect-merge.test.ts's stubQueries: a plain function that
   // hands back a resolved Promise, so `await client.query(...)` sees the branch
   // taken on the SQL text. `_values` is captured only so the enqueue params are
@@ -51,6 +56,9 @@ function clientReturning(rows: unknown[], artifacts: unknown[] = []) {
     // past the unread check issues this SELECT. Answering it with bundle rows
     // would make the fake derive artifacts from columns that do not exist.
     if (sql.includes('FROM marketing_artifacts')) return Promise.resolve({ rows: artifacts })
+    // The loader's second read, answered separately because a page that names an
+    // asset has to get either real bytes or a real empty, not the default row.
+    if (sql.includes('FROM document_files')) return Promise.resolve({ rows: assetFiles })
     return Promise.resolve({ rows: [{ id: BUNDLE }] })
   })
   return { query, sqls: () => query.mock.calls.map((c) => c[0]) }
@@ -308,6 +316,54 @@ describe('commitBundleApproval', () => {
         siteHash: PAGE_HASH,
       }
       expect(insert?.[1]).toEqual([TENANT, BUNDLE, 'publish_page', JSON.stringify(expectedPayload), RECEIPT])
+    } finally {
+      unregister()
+    }
+  })
+
+  it('refuses an approval whose page names an asset that has no bytes, and signs nothing', async () => {
+    const artifacts = [
+      { id: 'a1', kind: 'page_html', text_content: '<img src="{{ASSET:hero}}">' },
+      { id: 'a2', kind: 'image', text_content: null, document_id: DOC, title: 'hero', mime: 'image/png' },
+    ]
+    const client = clientReturning(
+      [bundleRow({ funnel_plan: { page: { slug: 'free-scan' } } })],
+      artifacts,
+    )
+    await expect(approve(client, PAGE_HASH)).rejects.toThrow(BundleNotApprovableError)
+    const message = await approve(client, PAGE_HASH).catch((e: unknown) => String((e as Error).message))
+    expect(message).toContain('asset_bytes_missing')
+    expect(client.sqls().some((sql) => sql.includes('INSERT INTO marketing_actions'))).toBe(false)
+  })
+
+  it('hashes the picture into the approval rather than beside it', async () => {
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x01])
+    const siteArtifacts = [
+      { id: 'a1', kind: 'page_html', textContent: '<img src="{{ASSET:hero}}">' },
+      { id: 'a2', kind: 'image', textContent: null, documentId: DOC, title: 'hero', mime: 'image/png', bytes: png },
+    ]
+    // The hash a stage would have recorded, computed by the resolver over the
+    // picture as well as the page.
+    const expected = siteHashOf(resolveSite('free-scan', siteArtifacts))
+    const client = clientReturning(
+      [bundleRow({ funnel_plan: { page: { slug: 'free-scan' } } })],
+      [
+        { id: 'a1', kind: 'page_html', text_content: '<img src="{{ASSET:hero}}">' },
+        { id: 'a2', kind: 'image', text_content: null, document_id: DOC, title: 'hero', mime: 'image/png' },
+      ],
+      [{ document_id: DOC, data: png }],
+    )
+    // The proof is that the comparison passes: `expected` names the PNG's bytes, and
+    // the code before this task resolved a text-only page and refused this hash.
+    // The adapter scaffold is not part of the proof: without one the case would
+    // refuse at `blockedActions` after the comparison, exactly like the sibling
+    // 'approves when the bytes still hash' case above registers to avoid.
+    const unregister = registerActionAdapter({
+      name: 'publish_page',
+      execute: () => Promise.resolve({ externalId: 'x' }),
+    })
+    try {
+      await expect(approve(client, expected)).resolves.toBe(BUNDLE)
     } finally {
       unregister()
     }

@@ -1,7 +1,8 @@
 import { getDbClient, type Queryable } from './client'
+import { loadSiteArtifacts } from './marketing-assets'
 import { artifactIdFor, type BundleHashInput } from '../marketing/hash'
 import { pageSlugOf } from '../marketing/outbox'
-import { resolveSite, siteHashOf, slotProblem } from '../marketing/site'
+import { resolveSite, siteHashOf, siteProblem } from '../marketing/site'
 
 export const MARKETING_OBJECTIVES = ['outreach_support', 'inbound_leads', 'proof_asset'] as const
 export type MarketingObjective = (typeof MARKETING_OBJECTIVES)[number]
@@ -321,19 +322,12 @@ export async function siteHashInTransaction(
   if (!row) return null
   const slug = pageSlugOf({ funnelPlan: row.funnel_plan })
   if (slug === null) return null
-  const artifactsResult = await client.query<{ id: string; kind: string; text_content: string | null }>(
-    `SELECT id, kind, text_content
-       FROM marketing_artifacts
-      WHERE tenant_id = $1 AND bundle_id = $2
-      ORDER BY created_at ASC`,
-    [tenantId, bundleId],
-  )
-  const artifacts = artifactsResult.rows.map((a) => ({
-    id: a.id,
-    kind: a.kind,
-    textContent: a.text_content,
-  }))
-  if (slotProblem(artifacts) !== null) return null
+  const artifacts = await loadSiteArtifacts(tenantId, bundleId, client)
+  // Null, not a throw: this is the read behind `currentSiteHash`, whose contract
+  // is "null when the bundle has no publishable page". An unresolvable asset is
+  // that same nothing-to-publish answer, and the promote and retry callers already
+  // refuse on null.
+  if (siteProblem(artifacts) !== null) return null
   return siteHashOf(resolveSite(slug, artifacts))
 }
 

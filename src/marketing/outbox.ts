@@ -1,8 +1,12 @@
 import type { MarketingBundleRow } from '../db/marketing'
+import { loadSiteArtifacts } from '../db/marketing-assets'
+import type { Queryable } from '../db/client'
 import {
+  AssetProblemError,
   SlugProblemError,
   resolveSite,
   siteHashOf,
+  siteProblem,
   slotProblem,
   type SiteArtifact,
 } from './site'
@@ -190,14 +194,8 @@ interface BundleLockRow {
   media_plan: unknown
 }
 
-interface ArtifactSqlRow {
-  id: string
-  kind: string
-  text_content: string | null
-}
-
 export async function commitBundleApproval(
-  client: { query: <T = Record<string, unknown>>(text: string, values?: unknown[]) => Promise<{ rows: T[] }> },
+  client: Queryable,
   params: {
     tenantId: string
     bundleId: string
@@ -241,20 +239,15 @@ export async function commitBundleApproval(
   // the lock is the last place that can still ask. Artifacts are read here rather
   // than passed in: they live in rows the FOR UPDATE lock does not cover, and a
   // re-read inside the transaction is the only version the commit may rely on.
-  const artifactResult = await client.query<ArtifactSqlRow>(
-    `SELECT id, kind, text_content
-       FROM marketing_artifacts
-      WHERE tenant_id = $1 AND bundle_id = $2
-      ORDER BY created_at ASC`,
-    [params.tenantId, row.id],
-  )
-  const artifacts: SiteArtifact[] = artifactResult.rows.map((a) => ({
-    id: a.id,
-    kind: a.kind,
-    textContent: a.text_content,
-  }))
+  // The read rides the caller's client for the same reason: a picture fetched on a
+  // second connection is a version this commit is not holding.
+  const artifacts = await loadSiteArtifacts(params.tenantId, row.id, client)
 
-  const problem = slotProblem(artifacts)
+  // `siteProblem`, not `slotProblem`: an asset the page cannot resolve is the same
+  // class of unapprovable bundle, and the sentence it returns names the placeholder
+  // and the titles that exist. A slot problem still wins the ordering, because
+  // `siteProblem` asks it first.
+  const problem = siteProblem(artifacts)
   if (problem !== null) {
     throw new BundleNotApprovableError(
       `marketing bundle ${row.id} cannot be approved: ${problem}`,
@@ -274,7 +267,7 @@ export async function commitBundleApproval(
       artifacts,
     )
   } catch (err) {
-    if (err instanceof SlugProblemError) {
+    if (err instanceof SlugProblemError || err instanceof AssetProblemError) {
       throw new BundleNotApprovableError(err.message)
     }
     throw err

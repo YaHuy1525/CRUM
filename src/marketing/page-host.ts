@@ -4,7 +4,7 @@
  * Hand-written fetch rather than wrangler, because wrangler is a CLI and this is
  * a server that must report what the provider said.
  */
-import { listMarketingArtifacts } from '../db/marketing'
+import { loadSiteArtifacts } from '../db/marketing-assets'
 import { resolveSite, siteHashOf, type SiteFile } from './site'
 import type { DerivedAction, MarketingActionAdapter, MarketingActionName } from './outbox'
 import { injectPixelIntoFiles } from './pixel-injection'
@@ -105,15 +105,19 @@ function stringField(value: unknown): string {
  * The outbox payload is a hash and an id, never the bytes: spec section 7. So
  * the adapter reads the artifacts back and re-derives the hash, and refuses to
  * upload anything other than the bytes the receipt covered. The read goes
- * through `listMarketingArtifacts`, because the payload's bundle id carries no
+ * through `loadSiteArtifacts`, because the payload's bundle id carries no
  * tenant: only the claimed action row knows whose bundle this is, and a query
- * scoped by bundle id alone would happily publish another tenant's page.
+ * scoped by bundle id alone would happily publish another tenant's page. The
+ * loader is also the only read that answers the byte question: a page that
+ * names a picture resolves to substituted markup plus the picture's own bytes,
+ * and the approval hashes exactly that file set — so this re-derivation must
+ * ride the same loader or the two hashes are computed over different sites.
  */
 export async function readSiteFiles(action: DerivedAction, tenantId: string): Promise<SiteFile[]> {
   const bundleId = stringField(action.payload['bundleId'])
   const slug = stringField(action.payload['slug'])
   const expected = stringField(action.payload['siteHash'])
-  const artifacts = await listMarketingArtifacts(tenantId, bundleId)
+  const artifacts = await loadSiteArtifacts(tenantId, bundleId)
   const files = resolveSite(slug, artifacts)
   if (files.length === 0) {
     throw new Error(`no_site_files: bundle ${bundleId} holds no uploaded file for slug ${slug}`)
