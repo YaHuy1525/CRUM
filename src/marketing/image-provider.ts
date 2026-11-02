@@ -11,10 +11,11 @@
  * slice 3 for the Meta adapters: an action cannot be taken until it can be
  * executed.
  *
- * The adapter also carries the four numbers that bound a run — the daily
- * ceiling, the per-image estimate used for admission, and the byte ceiling — so
- * the tool never reads `process.env` itself. `src/marketing/replicate.ts`'s file
- * comment says the same thing about its own config for the same reason.
+ * The adapter also carries the five numbers that bound a run — the daily
+ * ceiling, the per-bundle lifetime ceiling, the per-image estimate used for
+ * admission, and the byte ceiling — so the tool never reads `process.env`
+ * itself. `src/marketing/replicate.ts`'s file comment says the same thing
+ * about its own config for the same reason.
  */
 import { DEFAULT_REPLICATE_MODEL, generateImage } from './replicate'
 import type { ImageOutcome, ImageRequest } from './replicate'
@@ -24,6 +25,11 @@ export interface ImageAdapter {
   provider: string
   model: string
   ceilingMinor: number
+  // Lifetime per bundle, checked before the day ceiling. Spec section 7.2: the
+  // bundle ceiling tells the owner to revise the creative, and the day ceiling
+  // tells them to wait for midnight; the first is the more actionable answer
+  // when both are true.
+  bundleCeilingMinor: number
   costMinorPerImage: number
   maxBytes: number
   generate(request: ImageRequest): Promise<ImageOutcome>
@@ -33,6 +39,7 @@ export interface ReplicateAdapterParams {
   apiToken: string
   model?: string
   ceilingMinor: number
+  bundleCeilingMinor: number
   costMinorPerImage: number
   maxBytes: number
   fetchImpl?: typeof fetch
@@ -47,6 +54,7 @@ export function makeReplicateAdapter(params: ReplicateAdapterParams): ImageAdapt
     provider: REPLICATE_PROVIDER,
     model,
     ceilingMinor: params.ceilingMinor,
+    bundleCeilingMinor: params.bundleCeilingMinor,
     costMinorPerImage: params.costMinorPerImage,
     maxBytes: params.maxBytes,
     generate: (request) =>

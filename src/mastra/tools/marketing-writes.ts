@@ -48,7 +48,7 @@ import {
 import { parseAssetPrompts } from '../../marketing/asset-prompts'
 import type { AssetPrompt } from '../../marketing/asset-prompts'
 import { getImageAdapter } from '../../marketing/image-provider'
-import { admitsRun, committedSpendMinor, recordImageSpend } from '../../marketing/image-spend'
+import { admitsRun, committedBundleSpendMinor, committedSpendMinor, recordImageSpend } from '../../marketing/image-spend'
 import { generateAssetsRiskView } from '../../marketing/payload'
 
 // One role output is a JSON document, not a fixed shape: each producer owns its
@@ -1308,24 +1308,38 @@ export const generateAssetsTool = createTool({
       // ceiling check: admitsRun is false for an empty count by design (Task 4),
       // and a fully-carried bundle is a success, not a refusal.
       let committedMinor = 0
-      if (refused.length === 0 && pending.length > 0 && adapter !== null) {
+      let bundleCommittedMinor = 0
+      if (refused.length === 0 && pending.length > 0 && adapter !== null && bundle !== null) {
         committedMinor = await committedSpendMinor(rc.tenantId)
-        if (
-          !admitsRun({
-            ceilingMinor: adapter.ceilingMinor,
-            committedMinor,
-            costMinorPerImage: adapter.costMinorPerImage,
-            assetCount: pending.length,
-          })
-        ) {
-          // One refusal per pending asset, not one `'*'` for the whole run. Two
-          // reasons, and they point the same way: the mid-loop boundary refusal
-          // below already names every asset left in the queue, because an owner
-          // reading the human task has to be able to tell what the bundle is
-          // missing; and Step 8's integration case reads `refused.map(r => r.code)`
-          // as two `image_spend_ceiling_reached` entries under a human task titled
-          // "refused 2 asset(s)". A run-level `'*'` here writes one entry and titles
-          // it "1", so the plan's two halves disagreed with each other.
+        bundleCommittedMinor = await committedBundleSpendMinor(rc.tenantId, bundle.id)
+        const admission = { costMinorPerImage: adapter.costMinorPerImage, assetCount: pending.length }
+        const bundleBinds = !admitsRun({
+          ceilingMinor: adapter.bundleCeilingMinor,
+          committedMinor: bundleCommittedMinor,
+          ...admission,
+        })
+        const dayBinds = !admitsRun({
+          ceilingMinor: adapter.ceilingMinor,
+          committedMinor,
+          ...admission,
+        })
+        // Bundle first, then day, and both when both bind (spec section 7.2). The
+        // order is the actionable one: a bundle at its cap is a creative problem
+        // the owner can fix now, and a day at its cap is a wait. Reporting only the
+        // first would have them discover the second tomorrow morning.
+        if (bundleBinds) {
+          for (const entry of pending) {
+            refused.push({
+              name: entry.name,
+              code: 'image_bundle_ceiling_reached',
+              detail:
+                `Not attempted: bundle ${bundle.id} has cost ${bundleCommittedMinor} minor of a ${adapter.bundleCeilingMinor} ` +
+                `lifetime ceiling, and ${pending.length} asset(s) at ${adapter.costMinorPerImage} minor each need ${estimatedCostMinor}. ` +
+                'Raise CRUM_IMAGE_SPEND_CEILING_MINOR_PER_BUNDLE or attach fewer pictures. Nothing was requested.',
+            })
+          }
+        }
+        if (dayBinds) {
           for (const entry of pending) {
             refused.push({
               name: entry.name,
@@ -1344,24 +1358,28 @@ export const generateAssetsTool = createTool({
         for (let index = 0; index < pending.length; index += 1) {
           const entry = pending[index]!
           const nowCommitted = await committedSpendMinor(rc.tenantId)
-          if (
-            !admitsRun({
-              ceilingMinor: adapter.ceilingMinor,
-              committedMinor: nowCommitted,
-              costMinorPerImage: adapter.costMinorPerImage,
-              assetCount: 1,
-            })
-          ) {
+          const nowBundleCommitted = await committedBundleSpendMinor(rc.tenantId, bundle.id)
+          const admission = { costMinorPerImage: adapter.costMinorPerImage, assetCount: 1 }
+          const stops = (<Array<readonly [string, string]>> (
+            !admitsRun({ ceilingMinor: adapter.bundleCeilingMinor, committedMinor: nowBundleCommitted, ...admission })
+              ? [['image_bundle_ceiling_reached',
+                  `Not attempted: this bundle reached ${nowBundleCommitted} of a ${adapter.bundleCeilingMinor} minor lifetime ceiling.`] as const]
+              : []
+          )).concat(
+            !admitsRun({ ceilingMinor: adapter.ceilingMinor, committedMinor: nowCommitted, ...admission })
+              ? [['image_spend_ceiling_reached',
+                  `Not attempted: today's spend reached ${nowCommitted} of a ${adapter.ceilingMinor} minor ceiling.`] as const]
+              : [],
+          )
+          if (stops.length > 0) {
             // The boundary moved under the run, because what the provider
             // charged exceeded the estimate that admitted it. Every asset left
             // in the queue is reported as refused: an owner reading the human
             // task has to be able to tell what the bundle is missing.
             for (const stopped of pending.slice(index)) {
-              refused.push({
-                name: stopped.name,
-                code: 'image_spend_ceiling_reached',
-                detail: `Not attempted: today's spend reached ${nowCommitted} of a ${adapter.ceilingMinor} minor ceiling.`,
-              })
+              for (const [code, detail] of stops) {
+                refused.push({ name: stopped.name, code, detail })
+              }
             }
             break
           }
@@ -1527,7 +1545,11 @@ export const generateAssetsTool = createTool({
             runId: `assets:${bundle.id}`,
             toolName: 'marketing.generate_assets',
             riskScore: assessment.score,
-            title: `Image run for bundle ${bundle.id} refused ${refused.length} asset(s)`,
+            // Distinct names, because a refusal that binds both ceilings writes two
+            // lines for one asset and a human task that claims "6 asset(s)" when the
+            // bundle is missing three is a task nobody trusts. `refused.length` is
+            // still what `refusedProse` walks, so nothing is hidden from the body.
+            title: `Image run for bundle ${bundle.id} refused ${new Set(refused.map((entry) => entry.name)).size} asset(s)`,
             body:
               `Refused codes: ${codes}. Newly stored: ${attached.length}. Reused from the bundle: ${assets.length - attached.length}. ` +
               `Recorded spend: ${spentMinor} minor. ${refusedProse(refused)}`,

@@ -193,6 +193,7 @@ export function createCrumMastra(env: CrumEnv, options: CrumMastraOptions = {}):
         apiToken: imageToken,
         model: env.CRUM_REPLICATE_MODEL,
         ceilingMinor: env.CRUM_IMAGE_SPEND_CEILING_MINOR,
+        bundleCeilingMinor: env.CRUM_IMAGE_SPEND_CEILING_MINOR_PER_BUNDLE,
         costMinorPerImage: env.CRUM_IMAGE_COST_MINOR_PER_IMAGE,
         // The document lane's own limit, so a picture this build could not store
         // is a picture this build will not pay for.

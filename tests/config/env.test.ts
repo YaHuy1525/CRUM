@@ -234,6 +234,18 @@ describe('slice 4 image settings', () => {
     expect(() => parseEnv({ CRUM_IMAGE_SPEND_CEILING_MINOR: '1.5' })).toThrowError(EnvParseError)
     expect(() => parseEnv({ CRUM_IMAGE_SPEND_CEILING_MINOR: 'abc' })).toThrowError(EnvParseError)
   })
+  it('defaults the per-bundle ceiling to 200 and coerces a configured one', () => {
+    expect(parseEnv({}).CRUM_IMAGE_SPEND_CEILING_MINOR_PER_BUNDLE).toBe(200)
+    expect(parseEnv({ CRUM_IMAGE_SPEND_CEILING_MINOR_PER_BUNDLE: '50' }).CRUM_IMAGE_SPEND_CEILING_MINOR_PER_BUNDLE).toBe(50)
+    // Blank means unset, like every other blankAsUnset key.
+    expect(parseEnv({ CRUM_IMAGE_SPEND_CEILING_MINOR_PER_BUNDLE: '' }).CRUM_IMAGE_SPEND_CEILING_MINOR_PER_BUNDLE).toBe(200)
+  })
+
+  it('refuses a bundle ceiling that is not a positive whole number of minor units', () => {
+    expect(() => parseEnv({ CRUM_IMAGE_SPEND_CEILING_MINOR_PER_BUNDLE: '0' })).toThrowError(EnvParseError)
+    expect(() => parseEnv({ CRUM_IMAGE_SPEND_CEILING_MINOR_PER_BUNDLE: '1.5' })).toThrowError(EnvParseError)
+    expect(() => parseEnv({ CRUM_IMAGE_SPEND_CEILING_MINOR_PER_BUNDLE: 'abc' })).toThrowError(EnvParseError)
+  })
 })
 
 describe('.env.example is the contract', () => {

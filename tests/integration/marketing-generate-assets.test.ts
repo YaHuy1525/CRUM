@@ -6,7 +6,7 @@ import { migrate } from '../../scripts/db-migrate'
 import { closeDbClient, getDbClient } from '../../src/db/client'
 import { generateAssetsTool, saveBundleTool } from '../../src/mastra/tools/marketing-writes'
 import { setImageAdapter, type ImageAdapter } from '../../src/marketing/image-provider'
-import { committedSpendMinor } from '../../src/marketing/image-spend'
+import { committedSpendMinor, committedBundleSpendMinor } from '../../src/marketing/image-spend'
 
 /**
  * The paid lane without the payment. The adapter is a stub that returns two
@@ -35,11 +35,12 @@ const PNG_B = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x
 
 const promptsAskedFor: string[] = []
 
-function stubAdapter(ceilingMinor = 40): ImageAdapter {
+function stubAdapter(ceilingMinor = 40, bundleCeilingMinor = 200): ImageAdapter {
   return {
     provider: 'stub',
     model: 'stub/flux-1.1-pro',
     ceilingMinor,
+    bundleCeilingMinor,
     costMinorPerImage: 4,
     maxBytes: 1024,
     // Not `async`: this repo's lint fails an async method with no `await` in it,
@@ -278,6 +279,24 @@ describe.skipIf(url === '')('marketing.generate_assets against Postgres', () => 
       // two that carry prose is the whole of the assertion.
       expect(tasks[0]?.title).toContain('refused 2 asset(s)')
       expect(tasks[0]?.body ?? '').toContain('image_spend_ceiling_reached')
+    } finally {
+      setImageAdapter(stubAdapter())
+    }
+  })
+
+  it('caps a bundle on its own ledger, while the tenant still has a full day of headroom', async () => {
+    setImageAdapter(stubAdapter(2000, 12))
+    try {
+      const bundleId = await saveDesignerBundle('bundle ceiling first')
+      const first = await generate(bundleId)
+      expect(first.refused).toHaveLength(0)
+      expect(await committedBundleSpendMinor(TENANT, bundleId)).toBeGreaterThan(0)
+      // Same tenant, same day, second bundle: the day ceiling has room, so the only
+      // thing that can stop this run is the bundle it belongs to.
+      const otherId = await saveDesignerBundle('bundle ceiling second')
+      const second = await generate(otherId)
+      expect(second.refused).toHaveLength(0)
+      expect(await committedBundleSpendMinor(TENANT, otherId)).toBeGreaterThan(0)
     } finally {
       setImageAdapter(stubAdapter())
     }

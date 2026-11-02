@@ -113,6 +113,15 @@ export const EnvSchema = z.object({
   // to the in-process unpdf/mammoth path and still records blocks.
   DOCLING_URL: optionalString,
 
+  // OCR sidecar (Tesseract). Unset or unreachable, image documents fall back
+  // to the in-process plain text path. Works alongside or instead of Docling.
+  OCR_URL: optionalString,
+
+  // Redis for the BullMQ document and batch queues. The queue modules fall back
+  // to localhost when unset, so an install that never boots a worker is
+  // unaffected; it is the queue side that fails, not the boot.
+  REDIS_URL: optionalString,
+
   // Video revenue tracking – AES-256-GCM key used to encrypt OAuth refresh
   // tokens at rest.  Must be a 32-byte value encoded as 64 hex characters.
   // Required in production; optional in dev/test (tokens stay unencrypted).
@@ -206,6 +215,15 @@ export const EnvSchema = z.object({
   CRUM_IMAGE_COST_MINOR_PER_IMAGE: z.preprocess(
     blankAsUnset,
     z.coerce.number().int().min(1).max(100_000).default(4),
+  ),
+  // Minor units, so 200 is $2.00. Lifetime per bundle rather than per day: this
+  // number exists to stop one runaway loop on one bundle (spec section 7.1), and at
+  // the 4-minor admission estimate above it admits fifty images before a bundle is
+  // capped. No campaign page needs fifty, and a bundle that needed forty is a
+  // creative problem rather than a budget one.
+  CRUM_IMAGE_SPEND_CEILING_MINOR_PER_BUNDLE: z.preprocess(
+    blankAsUnset,
+    z.coerce.number().int().min(1).max(10_000_000).default(200),
   ),
 })
 

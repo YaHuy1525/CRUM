@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
   hashImageBytes: vi.fn(),
   listImageAssetStatuses: vi.fn(),
   committedSpendMinor: vi.fn(),
+  committedBundleSpendMinor: vi.fn(),
   recordImageSpend: vi.fn(),
   createHumanTask: vi.fn(),
   getImageAdapter: vi.fn(),
@@ -39,7 +40,7 @@ vi.mock('../../src/marketing/image-spend', async () => {
   const actual = await vi.importActual<typeof import('../../src/marketing/image-spend')>(
     '../../src/marketing/image-spend',
   )
-  return { ...actual, committedSpendMinor: h.committedSpendMinor, recordImageSpend: h.recordImageSpend }
+  return { ...actual, committedSpendMinor: h.committedSpendMinor, committedBundleSpendMinor: h.committedBundleSpendMinor, recordImageSpend: h.recordImageSpend }
 })
 vi.mock('../../src/db/pending-writes', () => ({ createHumanTask: h.createHumanTask }))
 vi.mock('../../src/marketing/image-provider', () => ({ getImageAdapter: h.getImageAdapter }))
@@ -92,18 +93,23 @@ function failImage(code: string, detail: string, charge: unknown = null, deadTok
 
 /**
  * The ledger as a closure, so the arithmetic under test is the real admitsRun over
- * a running total rather than a scripted sequence of answers.
+ * a running total rather than a scripted sequence of answers. Tracks both the
+ * daily total and the per-bundle lifetime total; the test uses one bundle,
+ * `BUNDLE`, throughout, so both increment together.
  */
-function ledger(start = 0) {
-  let committed = start
+function ledger(dayStart = 0, bundleStart = 0) {
+  let committed = dayStart
+  let bundleCommitted = bundleStart
   // Not `async () =>`: this repo's lint rejects an async arrow with no await in it,
   // and a promise literal keeps the ledger's timing identical.
   h.committedSpendMinor.mockImplementation(() => Promise.resolve(committed))
+  h.committedBundleSpendMinor.mockImplementation(() => Promise.resolve(bundleCommitted))
   h.recordImageSpend.mockImplementation((params: { costMinor: number }) => {
     committed += params.costMinor
+    bundleCommitted += params.costMinor
     return Promise.resolve('spend-row')
   })
-  return { get committed() { return committed } }
+  return { get committed() { return committed }, get bundleCommitted() { return bundleCommitted } }
 }
 
 async function run(input: { bundleId: string }) {
@@ -128,6 +134,7 @@ beforeEach(() => {
     provider: 'replicate',
     model: 'black-forest-labs/flux-1.1-pro',
     ceilingMinor: 2000,
+    bundleCeilingMinor: 200,
     costMinorPerImage: 4,
     maxBytes: 15 * 1024 * 1024,
     generate: h.generate,
@@ -217,6 +224,55 @@ describe('marketing.generate_assets refuses before it costs anything', () => {
     expect(result.refused.map((refusal) => refusal.name)).toEqual(['a', 'b', 'c'])
     const [task] = h.createHumanTask.mock.calls[0] as [{ title: string }]
     expect(task.title).toContain('refused 3 asset(s)')
+  })
+
+  it('refuses on the bundle ceiling before it mentions the day', async () => {
+    h.getDesignerArtifactText.mockResolvedValue(promptJson('a', 'b', 'c'))
+    ledger(0, 195)
+    const result = await run({ bundleId: BUNDLE })
+    expect(result.refused.map((r) => r.code)).toEqual([
+      'image_bundle_ceiling_reached',
+      'image_bundle_ceiling_reached',
+      'image_bundle_ceiling_reached',
+    ])
+    expect(h.generate).not.toHaveBeenCalled()
+    expect(String(result.refused[0]!.detail)).toContain('CRUM_IMAGE_SPEND_CEILING_MINOR_PER_BUNDLE')
+  })
+
+  it('reports both ceilings when both bind, because an owner should not have to discover the second one tomorrow', async () => {
+    h.getDesignerArtifactText.mockResolvedValue(promptJson('a', 'b', 'c'))
+    ledger(1990, 195)
+    const result = await run({ bundleId: BUNDLE })
+    const codes = result.refused.map((r) => r.code)
+    expect(codes).toContain('image_bundle_ceiling_reached')
+    expect(codes).toContain('image_spend_ceiling_reached')
+    // Three assets, six refusal lines, and a title that says three. The line count
+    // is what `refusedProse` needs to tell the owner what is missing; the asset count
+    // is what a human task title must claim.
+    const [task] = h.createHumanTask.mock.calls[0] as [{ title: string }]
+    expect(task.title).toContain('refused 3 asset(s)')
+    expect(result.refused).toHaveLength(6)
+  })
+
+  it('stops at the bundle boundary mid-run, after the provider actually charged past the estimate', async () => {
+    h.getDesignerArtifactText.mockResolvedValue(promptJson('a', 'b', 'c'))
+    // Pre-flight: 188 + 3*4 = 200 <= 200, admits. After 'a' costs 12: 188+12=200.
+    // Mid-loop for 'b': 200 + 4 = 204 > 200, refuses.
+    ledger(0, 188)
+    h.generate.mockResolvedValueOnce(okImage('a', 12)).mockResolvedValue(okImage('b'))
+    const result = await run({ bundleId: BUNDLE })
+    expect(result.assets.map((asset) => asset.name)).toEqual(['a'])
+    expect(result.refused.map((r) => [r.name, r.code])).toEqual([
+      ['b', 'image_bundle_ceiling_reached'],
+      ['c', 'image_bundle_ceiling_reached'],
+    ])
+  })
+
+  it('attributes every spend row to the bundle, including the ones with nothing to show', async () => {
+    h.getDesignerArtifactText.mockResolvedValue(promptJson('a'))
+    h.generate.mockResolvedValue(failImage('asset_too_large', '16 MB', { predictionId: 'pred-a', costUsd: '0.04', costMinor: 4 }))
+    await run({ bundleId: BUNDLE })
+    expect(h.recordImageSpend.mock.calls[0]![0]).toMatchObject({ bundleId: BUNDLE, documentId: null })
   })
 
   it('keeps the refusal prose to ten entries but reports every refusal', async () => {

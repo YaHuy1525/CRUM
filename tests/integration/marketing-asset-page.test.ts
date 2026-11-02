@@ -77,6 +77,7 @@ function stubAdapter(): ImageAdapter {
     provider: 'stub',
     model: 'stub/flux-1.1-pro',
     ceilingMinor: 40,
+    bundleCeilingMinor: 200,
     costMinorPerImage: 4,
     maxBytes: 1024,
     // Not `async`: this repo's lint fails an async method with no `await` in it,
