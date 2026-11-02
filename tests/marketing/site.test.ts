@@ -248,14 +248,25 @@ describe('assetNamesReferenced', () => {
     expect(assetNamesReferenced('{{ASSET:Hero image}}')).toEqual(['Hero image'])
   })
 
-  it('ignores a fragment with no closing braces and reports it as unterminated', () => {
+  it('reads nothing for a fragment with no closing braces', () => {
     expect(assetNamesReferenced('{{ASSET:hero')).toEqual([])
-    expect(unterminatedAssetReferences('{{ASSET:hero')).toEqual(['{{ASSET:hero'])
   })
 
   it('refuses a name containing a brace rather than half-matching it', () => {
     expect(assetNamesReferenced('{{ASSET:a{b}}')).toEqual([])
-    expect(unterminatedAssetReferences('{{ASSET:a{b}}')).toHaveLength(1)
+  })
+})
+
+describe('unterminatedAssetReferences', () => {
+  // Split out of the name block so a failure names the function that failed, and
+  // extended with the cases the corrected brief lists: the empty page, the blank
+  // name, two malformed literals, the fragment-not-the-copy guarantee, the bare
+  // literal at end of page, and the MAX_FRAGMENT_CHARS cut.
+
+  it('reports nothing for a page that never uses the placeholder', () => {
+    // The branch most pages take, and the cheapest guard against an off-by-one in
+    // the walk: an empty page has no literal to start a fragment at.
+    expect(unterminatedAssetReferences('<h1>hi</h1>')).toEqual([])
   })
 
   it('reports nothing for a page whose every placeholder is well formed', () => {
@@ -263,5 +274,51 @@ describe('assetNamesReferenced', () => {
     // or the count in unterminatedAssetReferences fires on every well-formed
     // page and Task 3 refuses the copy that is actually fine.
     expect(unterminatedAssetReferences('<img src="{{ASSET:hero}}">{{ASSET:Hero image}}')).toEqual([])
+  })
+
+  it('reports nothing for a well-formed page that names two assets', () => {
+    expect(unterminatedAssetReferences('<p>{{ASSET:hero}} and {{ASSET:map}}</p>')).toEqual([])
+  })
+
+  it('reports a fragment with no closing braces', () => {
+    expect(unterminatedAssetReferences('{{ASSET:hero')).toEqual(['{{ASSET:hero'])
+  })
+
+  it('reports a bare literal at the very end of the page', () => {
+    expect(unterminatedAssetReferences('{{ASSET:')).toEqual(['{{ASSET:'])
+  })
+
+  it('reports a blank name, which has no asset title to name in a refusal', () => {
+    expect(unterminatedAssetReferences('{{ASSET:}}')).toEqual(['{{ASSET:}}'])
+  })
+
+  it('reports a name containing a brace rather than half-matching it', () => {
+    expect(unterminatedAssetReferences('{{ASSET:a{b}}')).toHaveLength(1)
+  })
+
+  it('reports a well-formed placeholder sitting after a malformed one as one fragment', () => {
+    // The first literal is malformed and its run to the next `}}` swallows the
+    // following well-formed placeholder, so the page is one finding not two.
+    expect(unterminatedAssetReferences('{{ASSET:a}{{ASSET:b}}')).toHaveLength(1)
+  })
+
+  it('reports each of two malformed literals', () => {
+    // Two broken placeholders are two findings, not the single prefix the count
+    // would have returned.
+    expect(unterminatedAssetReferences('{{ASSET:a}} {{ASSET:b {{ASSET:c')).toHaveLength(2)
+  })
+
+  it('quotes the fragment and not the page around it', () => {
+    const html = '<h1>Bring your back pain to the clinic</h1><p>Book now</p>{{ASSET:hero</p>'
+    expect(unterminatedAssetReferences(html)).toEqual(['{{ASSET:hero</p>'])
+  })
+
+  it('cuts a runaway fragment at MAX_FRAGMENT_CHARS', () => {
+    // A literal with no closing `}}` would otherwise quote the whole rest of the
+    // page; the refusal quotes a phrase, so the fragment is capped, not truncated
+    // to the page head.
+    const fragments = unterminatedAssetReferences('{{ASSET:' + 'x'.repeat(200))
+    expect(fragments).toHaveLength(1)
+    expect(fragments[0]).toHaveLength(120)
   })
 })
