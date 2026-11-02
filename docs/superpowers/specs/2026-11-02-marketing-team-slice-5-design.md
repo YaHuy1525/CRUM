@@ -247,7 +247,7 @@ No automatic fallback, which was the ruling taken as option A. A provider that f
 
 ### 9.1 The tool
 
-`setCampaignStatusTool`, `id: 'marketing.set_campaign_status'`, added to `crumToolRegistry` in `src/mastra/agent.ts` as the 41st key. It wraps the existing `stageCampaignStatusChange` and copies the shape of `promoteBundleTool` (`marketing-writes.ts:910`): a synchronous `requireApproval` that scores a placeholder view, an `execute` that recomputes on the real payload, an input schema of `{bundleId, campaignExternalId, status, reason}` and the `StageOutputSchema` output. `policy/tools.yaml:281` already declares it with `class: approval` and `scope: marketing:status`, and `write-claim-guard.ts:25` already lists it, so the governance triangle only needs the registry edge.
+`setCampaignStatusTool`, `id: 'marketing.set_campaign_status'`, added to `crumToolRegistry` in `src/mastra/agent.ts` as the 42nd key. The registry holds 41 today, and the admin's active-tool list is already 42, because `resolveActiveTools` (`src/mastra/active-tools.ts:10`) is derived from `policy/tools.yaml` and never asks the registry whether the tool exists. So the agent has been told it can call `marketing.set_campaign_status` in every turn since slice 3, and the call has failed. It wraps the existing `stageCampaignStatusChange` and copies the shape of `promoteBundleTool` (`marketing-writes.ts:910`): a synchronous `requireApproval` that scores a placeholder view, an `execute` that recomputes on the real payload, an input schema of `{bundleId, campaignExternalId, status, reason}` and the `StageOutputSchema` output. `policy/tools.yaml:281` already declares it with `class: approval` and `scope: marketing:status`, and `write-claim-guard.ts:24` already lists it, so the governance triangle only needs the registry edge.
 
 This is what makes the analyst's scale and kill recommendations reachable from chat rather than only from the cron, which is what slice 3 intended and never shipped.
 
@@ -284,7 +284,9 @@ No new route, no new scope, no new table. A generated image is a document, which
 
 ### 10.2 The thumbnails go through the gate that already exists
 
-`console/components/DocumentManager.tsx` gains an Assets tab that lists `kind=marketing_asset` with title, review status, mime, created date and a thumbnail from the existing gated route `/api/marketing/assets/:documentId/bytes` (`src/api/marketing.ts:186`). When that route answers 409 because the owning bundle is staged and unpredicted, the tab renders an "awaiting review" placeholder rather than the picture.
+The tab lives in `console/app/knowledge/page.tsx`, which already hosts the Knowledge, Invoices and Contracts tabs, and its body is a new `console/components/AssetManager.tsx` rather than a third `kind` on `DocumentManager`. That component is `{ kind: 'invoice' | 'contract' }` and everything in it is wrong for a generated picture: it uploads a multipart file into the intake workflow, it fetches an invoice or contract detail row beside the document, and its review button is the only part worth keeping. A list of titles, mime, review status and thumbnails is a different job, and `DocumentManager` is 342 lines that this change would only dilute.
+
+`AssetManager` lists `kind=marketing_asset` with title, review status, mime, created date and a thumbnail from the existing gated route `/api/marketing/assets/:documentId/bytes` (`src/api/marketing.ts:186`), and offers the same `POST /api/documents/:id/review` flip `DocumentManager:127` already uses, because an asset that cannot be flipped to `ready` is an asset that can never be staged. When the byte route answers 409 because the owning bundle is staged and unpredicted, the thumbnail slot renders an "awaiting review" placeholder rather than the picture.
 
 This is a decision with a cost, and the cost is recorded here rather than discovered in review. The tempting alternative is a browse-only byte route with no prediction check, which would make the asset library pleasant and the cognitive forcing gate a joke: a reviewer who wants to peek before writing a prediction would open a different tab. Withholding in the review flow and serving in the browse flow is not one rule with two contexts, it is no rule. So the browse surface inherits the gate, and an owner who wants to browse freely browses assets whose bundles are already decided, which is most of them most of the time.
 
@@ -365,7 +367,7 @@ Unit, in the existing projects:
 
 `tests/mastra/processors/write-claim-guard.test.ts` rewritten to the three derived assertions in 11.2, and a new guard test case for the outreach lane: a turn that called `crm.send_outreach` and claims the send is not flagged.
 
-Console, `console/components/DocumentManager.test.tsx` for the assets tab, its filter, and a 409 thumbnail rendering as awaiting review.
+Console, `console/tests/AssetManager.test.tsx` for the asset list, its review flip, and a 409 thumbnail rendering as awaiting review. The console's Vitest setup puts its tests in `console/tests/`, not beside the components, and reuses `console/tests/fetchStub.ts`.
 
 Integration, against the throwaway cluster on 5455 with `CRUM_INTEGRATION_DATABASE_URL`:
 
@@ -405,7 +407,8 @@ No second image provider, no video, no audio. No automatic fallback between prov
 | `src/db/timestamps.ts` | new: the shared normaliser, and the crash on a value that is neither |
 | `src/mastra/processors/write-claim-guard.ts` | four prospect-lane mutating ids join the list |
 | `scripts/analyst-cron.ts` | configured user, skip-with-log when unset |
-| `console/components/DocumentManager.tsx` | assets tab and thumbnails |
+| `console/components/AssetManager.tsx` | new: the generated-asset list, its thumbnails through the gated byte route, and the review flip |
+| `console/app/knowledge/page.tsx` | a fourth tab holding `AssetManager` |
 
 ## 16. Delivery slices
 
