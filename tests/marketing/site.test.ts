@@ -3,12 +3,14 @@ import { describe, expect, it } from 'vitest'
 import {
   SlugProblemError,
   SlotProblemError,
+  assetNamesReferenced,
   resolveSite,
   siteHashOf,
   siteTextOf,
   slugProblem,
   slotProblem,
   type SiteArtifact,
+  unterminatedAssetReferences,
 } from '@/marketing/site'
 
 const file = (id: string, kind: string, text: string): SiteArtifact => ({ id, kind, textContent: text })
@@ -222,5 +224,44 @@ describe('the byte lane (slice 5 R1)', () => {
         .digest('hex'),
     )
     expect(hash).toBe(TWO_FILE_SITE_HASH)
+  })
+})
+
+describe('assetNamesReferenced', () => {
+  it('reads one name', () => {
+    expect(assetNamesReferenced('<img src="{{ASSET:hero}}">')).toEqual(['hero'])
+  })
+
+  it('reads the same name once, however many times the page uses it', () => {
+    expect(assetNamesReferenced('{{ASSET:hero}} {{ASSET:hero}}')).toEqual(['hero'])
+  })
+
+  it('keeps two names in the order the page wrote them', () => {
+    expect(assetNamesReferenced('{{ASSET:b}} then {{ASSET:a}}')).toEqual(['b', 'a'])
+  })
+
+  it('trims, because a model writes {{ASSET: hero }} as readily as {{ASSET:hero}}', () => {
+    expect(assetNamesReferenced('{{ASSET:  hero  }}')).toEqual(['hero'])
+  })
+
+  it('allows a space inside a name, because asset titles are prose', () => {
+    expect(assetNamesReferenced('{{ASSET:Hero image}}')).toEqual(['Hero image'])
+  })
+
+  it('ignores a fragment with no closing braces and reports it as unterminated', () => {
+    expect(assetNamesReferenced('{{ASSET:hero')).toEqual([])
+    expect(unterminatedAssetReferences('{{ASSET:hero')).toEqual(['{{ASSET:hero'])
+  })
+
+  it('refuses a name containing a brace rather than half-matching it', () => {
+    expect(assetNamesReferenced('{{ASSET:a{b}}')).toEqual([])
+    expect(unterminatedAssetReferences('{{ASSET:a{b}}')).toHaveLength(1)
+  })
+
+  it('reports nothing for a page whose every placeholder is well formed', () => {
+    // The other half of the refusal: a page that resolves must not be reported,
+    // or the count in unterminatedAssetReferences fires on every well-formed
+    // page and Task 3 refuses the copy that is actually fine.
+    expect(unterminatedAssetReferences('<img src="{{ASSET:hero}}">{{ASSET:Hero image}}')).toEqual([])
   })
 })

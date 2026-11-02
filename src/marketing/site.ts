@@ -180,3 +180,36 @@ export function siteHashOf(files: readonly SiteFile[]): string {
     .join('\n')
   return createHash('sha256').update(canonical).digest('hex')
 }
+
+/**
+ * The handle is the designer's asset name, which `marketing.generate_assets`
+ * already stores as the document title, so the funnel builder can write a page
+ * that names a picture before that picture is paid for. Spec section 5.1.
+ *
+ * `[^{}]+?` and not `.+?`: a name with a brace in it is refused by the prompt
+ * parser long before it reaches a page, and a grammar that could match across a
+ * second placeholder would make one typo eat the page.
+ */
+export const ASSET_REFERENCE = /\{\{ASSET:([^{}]+?)\}\}/g
+export const ASSET_LITERAL = '{{ASSET:'
+
+export function assetNamesReferenced(html: string): string[] {
+  const names: string[] = []
+  for (const match of html.matchAll(ASSET_REFERENCE)) {
+    const name = (match[1] ?? '').trim()
+    if (name !== '' && !names.includes(name)) names.push(name)
+  }
+  return names
+}
+
+/**
+ * The fragments the grammar refused to match. A page that survives substitution
+ * still carrying the literal is a page whose placeholder was malformed, and
+ * publishing `{{ASSET:hero` to a live domain is a bug the owner finds by
+ * clicking, which is the finding this slice refuses to leave in place.
+ */
+export function unterminatedAssetReferences(html: string): string[] {
+  const matched = [...html.matchAll(ASSET_REFERENCE)].length
+  const literals = html.split(ASSET_LITERAL).length - 1
+  return literals > matched ? [html.slice(0, 120)] : []
+}
