@@ -327,16 +327,20 @@ describe.skipIf(!url)('a generated picture, approved and drained to a local page
       expect(Object.keys(manifest)).toHaveLength(2)
       expect(manifest[asset!.path]).toBe(asset!.sha256)
       // Spec section 13 case 1's other half: the page the host received carries the
-      // resolved path and no longer asks for a picture.
-      expect(upload.body.toString('latin1')).toContain(asset!.path)
+      // resolved path and no longer asks for a picture. The leading slash is not a
+      // typo: it is what binds the check to the page. `assetPathOf`
+      // (`src/marketing/site.ts`) puts `/${slug}/assets/<documentId>.<ext>` into the
+      // markup, while the manifest key is the same string without the slash — so the
+      // bare form was satisfied by the manifest part and proved nothing about the page.
+      expect(upload.body.toString('latin1')).toContain('/' + asset!.path)
       expect(upload.body.toString('latin1')).not.toContain('{{ASSET:')
-      // The bytes on the wire are the bytes the hash names, and the part is labelled
-      // as a picture. A page whose manifest lied about its picture is the failure
-      // this slice exists to remove. `Uint8Array.from` is the same copy the byte lane
-      // makes in `plainBytesOf` (`src/db/marketing-assets.ts`): `.subarray()` answers a
-      // Buffer, and Vitest compares a Buffer and a plain Uint8Array as different types,
-      // so the copy is what makes this a byte-for-byte comparison rather than a
-      // constructor comparison.
+      // The bytes the hash names are in the body the host received. That is the whole
+      // of what these two lines can see: a containment check proves the picture
+      // travelled, not which part of the multipart body it sits in — the per-part
+      // labelling is proven in the unit lane (`tests/marketing/page-host.test.ts:243-244`).
+      // `Uint8Array.from` is the copy the byte lane makes in `plainBytesOf`
+      // (`src/db/marketing-assets.ts`): `.subarray()` answers a Buffer, and Vitest
+      // compares the two as different types, so the copy makes it a byte comparison.
       const wire = Uint8Array.from(
         upload.body.subarray(upload.body.indexOf(PNG_A), upload.body.indexOf(PNG_A) + PNG_A.length),
       )
