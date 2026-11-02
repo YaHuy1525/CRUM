@@ -136,9 +136,16 @@ An image the page does not reference is not published and not hashed. It is repo
 
 The scan that produces those names is `assetNamesReferenced(html)` in `site.ts`, because the placeholder grammar belongs with the resolver that substitutes it. `resolveSite` stays pure: it receives artifacts that already carry `bytes` and `mime` on the images they name.
 
-This is why `deriveActions` stays synchronous. It already receives artifacts from its caller, so the caller does the I/O and the derivation stays a function of data in memory. Three callers gain the loader call: `marketing.stage_bundle`, `commitBundleApproval` (which reads artifacts inside its transaction today, at `outbox.ts` in the block that starts "The bytes the reviewer approved are identified by a hash"), and `readSiteFiles` in `page-host.ts`. The transactional shape does not change: the artifacts, and now the bytes, are re-read inside the approval transaction because the `FOR UPDATE` lock covers the bundle row and nothing else.
+This is why `deriveActions` stays synchronous. It already receives artifacts from its caller, so the caller does the I/O and the derivation stays a function of data in memory. The hash is computed at four sites and all four must move to the loader in the same slice, because two resolutions of one page is the drift R2 exists to catch:
 
-For testability, `commitBundleApproval` gains an injected reader rather than calling the DB module directly, defaulting to the real one. Its existing `client` parameter exists because the lock must ride the caller's transaction, and the byte read has to ride the same one.
+| Site | Who calls it |
+|---|---|
+| `marketing.stage_bundle` at `marketing-writes.ts:428` | the agent, when the staged payload records the hash |
+| `siteHashInTransaction` at `src/db/marketing.ts:306` | `currentSiteHash`, which `promoteBundle` and `retryPublish` both re-check |
+| `commitBundleApproval` in `outbox.ts`, the block whose query starts at `outbox.ts:245` | the approval, under the `FOR UPDATE` lock |
+| `readSiteFiles` in `page-host.ts` | the publisher, at drain time |
+
+The first three read artifacts through `listMarketingArtifacts` or their own copy of that query, and none of them can see a byte. For the approval the transactional shape does not change, because the `FOR UPDATE` lock covers the bundle row and nothing else, so `loadSiteArtifacts` takes the caller's queryable as an optional fourth parameter and defaults to `getDbClient()`. A byte read that rode a different connection than the lock would be reading a version the commit is not holding.
 
 ### 5.5 The problems, in text first
 
