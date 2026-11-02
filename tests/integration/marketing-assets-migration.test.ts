@@ -120,6 +120,7 @@ describe.skipIf(!url)('migration 0021: marketing assets, spend and predictions',
         WHERE table_name = 'marketing_image_spend'`,
     )
     expect(rows.map((r) => r.column_name).sort()).toEqual([
+      'bundle_id',
       'cost_minor',
       'created_at',
       'document_id',

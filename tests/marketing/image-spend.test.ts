@@ -15,6 +15,7 @@ vi.mock('../../src/config/env', () => ({
 const TENANT = '11111111-1111-4111-8111-111111111111'
 const DOC = '99999999-9999-4999-8999-999999999999'
 const SPEND_ID = '44444444-4444-4444-8444-444444444444'
+const BUNDLE = '55555555-5555-4555-8555-555555555555'
 
 function calls(fragment: string): Array<{ sql: string; params: unknown[] }> {
   return (mockQuery.mock.calls as unknown[][])
@@ -80,6 +81,20 @@ describe('the ledger', () => {
     expect(call!.params).toEqual([TENANT])
   })
 
+  it('sums one bundle over every day, and does not touch the day window', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ total: '12' }] })
+    const { committedBundleSpendMinor, committedSpendMinor } = await load()
+    expect(await committedBundleSpendMinor(TENANT, BUNDLE)).toBe(12)
+    const [bundleRead] = calls('FROM marketing_image_spend')
+    expect(bundleRead!.sql).not.toContain('spent_on')
+    expect(bundleRead!.params).toEqual([TENANT, BUNDLE])
+    // The sibling read keeps its own window, because a ceiling that quietly changes
+    // the window it was tested against stops being the tenant's day ceiling.
+    mockQuery.mockResolvedValueOnce({ rows: [{ total: '5' }] })
+    expect(await committedSpendMinor(TENANT)).toBe(5)
+    expect(calls('FROM marketing_image_spend').at(-1)!.sql).toContain('spent_on = CURRENT_DATE')
+  })
+
   it('reads an empty ledger as zero and an unreadable ledger as an error', async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ total: '0' }] })
     const { committedSpendMinor } = await load()
@@ -95,12 +110,31 @@ describe('the ledger', () => {
     await expect(committedSpendMinor(TENANT)).rejects.toThrow(/marketing_image_spend/)
   })
 
+  it('fails closed on an unreadable bundle total, and says which read failed', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ total: null }] })
+    const { committedBundleSpendMinor } = await load()
+    await expect(committedBundleSpendMinor(TENANT, BUNDLE)).rejects.toThrow(/instead of one non-negative integer total/)
+    // The label is the half of the message an owner acts on: two ceilings now answer
+    // through one function, and "the bundle spend read" is what tells them which one.
+    await expect(committedBundleSpendMinor(TENANT, BUNDLE)).rejects.toThrow(/bundle spend read answered/)
+  })
+
+  it('writes the bundle the money was spent on, as a named parameter', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: SPEND_ID }] })
+    const { recordImageSpend } = await load()
+    await recordImageSpend({ tenantId: TENANT, bundleId: BUNDLE, documentId: DOC, costMinor: 4 })
+    const [call] = calls('INSERT INTO marketing_image_spend')
+    expect(call!.sql).toContain('bundle_id')
+    expect(call!.params).toEqual([TENANT, BUNDLE, DOC, 'replicate', 4, null])
+  })
+
   it('appends a spend with a document', async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ id: SPEND_ID }] })
     const { recordImageSpend } = await load()
     expect(
       await recordImageSpend({
         tenantId: TENANT,
+        bundleId: null,
         documentId: DOC,
         costMinor: 4,
         rawExtract: { predictionId: 'p1', model: 'flux-1.1-pro', costUsd: '0.04' },
@@ -110,6 +144,7 @@ describe('the ledger', () => {
     expect(call!.sql).toContain('RETURNING id')
     expect(call!.params).toEqual([
       TENANT,
+      null,
       DOC,
       'replicate',
       4,
@@ -120,12 +155,12 @@ describe('the ledger', () => {
   it('appends a spend with no document, because a failed prediction still cost money', async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ id: SPEND_ID }] })
     const { recordImageSpend } = await load()
-    await recordImageSpend({ tenantId: TENANT, documentId: null, costMinor: 4 })
+    await recordImageSpend({ tenantId: TENANT, bundleId: null, documentId: null, costMinor: 4 })
     const [call] = calls('INSERT INTO marketing_image_spend')
     // No rawExtract passed is a null jsonb, not the string "null": a row written
     // by a caller that never saw a prediction must not look like a row whose
     // extract was parsed into nothing.
-    expect(call!.params).toEqual([TENANT, null, 'replicate', 4, null])
+    expect(call!.params).toEqual([TENANT, null, null, 'replicate', 4, null])
   })
 
   it('names the prediction on a spend with no document, which is the failed path', async () => {
@@ -133,6 +168,7 @@ describe('the ledger', () => {
     const { recordImageSpend } = await load()
     await recordImageSpend({
       tenantId: TENANT,
+      bundleId: null,
       documentId: null,
       costMinor: 2,
       rawExtract: { predictionId: 'p-f', model: 'flux-1.1-pro', costUsd: '0.02' },
@@ -145,6 +181,7 @@ describe('the ledger', () => {
     expect(call!.params).toEqual([
       TENANT,
       null,
+      null,
       'replicate',
       2,
       JSON.stringify({ predictionId: 'p-f', model: 'flux-1.1-pro', costUsd: '0.02' }),
@@ -153,8 +190,12 @@ describe('the ledger', () => {
 
   it('refuses to under-report a negative or fractional cost before the database sees it', async () => {
     const { recordImageSpend } = await load()
-    await expect(recordImageSpend({ tenantId: TENANT, documentId: null, costMinor: -1 })).rejects.toThrow(/cost_minor/)
-    await expect(recordImageSpend({ tenantId: TENANT, documentId: null, costMinor: 1.5 })).rejects.toThrow(/cost_minor/)
+    await expect(
+      recordImageSpend({ tenantId: TENANT, bundleId: null, documentId: null, costMinor: -1 }),
+    ).rejects.toThrow(/cost_minor/)
+    await expect(
+      recordImageSpend({ tenantId: TENANT, bundleId: null, documentId: null, costMinor: 1.5 }),
+    ).rejects.toThrow(/cost_minor/)
     expect(calls('INSERT INTO marketing_image_spend')).toHaveLength(0)
   })
 })

@@ -1,14 +1,15 @@
 // tests/integration/marketing-image-spend.test.ts
 // The unit file proves the ceiling arithmetic with no database at all; this
-// file proves the two SQL lanes of src/marketing/image-spend.ts work against
-// the table migration 0021 actually built: the per-tenant, per-day committed
-// read, the append-only write with its raw_extract handle, and the day the
+// file proves the SQL lanes of src/marketing/image-spend.ts work against the
+// table migration 0021 built and 0022 widened: the per-tenant, per-day
+// committed read, the per-bundle lifetime read over every day that bundle has
+// ever run, the append-only write with its raw_extract handle, and the day the
 // database stamps into spent_on itself.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
 import { migrate } from '../../scripts/db-migrate'
 import { closeDbClient } from '../../src/db/client'
-import { committedSpendMinor, recordImageSpend } from '../../src/marketing/image-spend'
+import { committedBundleSpendMinor, committedSpendMinor, recordImageSpend } from '../../src/marketing/image-spend'
 
 const url = process.env.CRUM_INTEGRATION_DATABASE_URL ?? ''
 // committedSpendMinor and recordImageSpend speak through getDbClient(), which
@@ -51,6 +52,7 @@ describe.skipIf(!url)('the image spend ledger against real Postgres', () => {
     try {
       const spendId = await recordImageSpend({
         tenantId: tenant,
+        bundleId: null,
         documentId: doc,
         costMinor: 4,
         rawExtract: { predictionId: 'p-int-1', model: 'flux-1.1-pro', costUsd: '0.04' },
@@ -88,7 +90,7 @@ describe.skipIf(!url)('the image spend ledger against real Postgres', () => {
       // costUsdToMinor('0.004') is 0 (Task 3): a sub-half-cent charge is honest
       // arithmetic, and a row of it must still land in the append-only ledger
       // even though it moves the day's sum by nothing.
-      const spendId = await recordImageSpend({ tenantId: tenant, documentId: null, costMinor: 0 })
+      const spendId = await recordImageSpend({ tenantId: tenant, bundleId: null, documentId: null, costMinor: 0 })
       expect(await committedSpendMinor(tenant)).toBe(0)
       const { rows } = await pool.query<{ id: string }>(
         `SELECT id FROM marketing_image_spend WHERE id = $1`,
@@ -104,9 +106,9 @@ describe.skipIf(!url)('the image spend ledger against real Postgres', () => {
     const mine = await uniqueTenant()
     const other = await uniqueTenant()
     try {
-      await recordImageSpend({ tenantId: mine, documentId: null, costMinor: 600 })
-      await recordImageSpend({ tenantId: mine, documentId: null, costMinor: 1380 })
-      await recordImageSpend({ tenantId: other, documentId: null, costMinor: 500 })
+      await recordImageSpend({ tenantId: mine, bundleId: null, documentId: null, costMinor: 600 })
+      await recordImageSpend({ tenantId: mine, bundleId: null, documentId: null, costMinor: 1380 })
+      await recordImageSpend({ tenantId: other, bundleId: null, documentId: null, costMinor: 500 })
       expect(await committedSpendMinor(mine)).toBe(1980)
       expect(await committedSpendMinor(other)).toBe(500)
     } finally {
@@ -122,7 +124,7 @@ describe.skipIf(!url)('the image spend ledger against real Postgres', () => {
   it('sums only today, so a backdated spend does not eat the new day', async () => {
     const tenant = await uniqueTenant()
     try {
-      await recordImageSpend({ tenantId: tenant, documentId: null, costMinor: 40 })
+      await recordImageSpend({ tenantId: tenant, bundleId: null, documentId: null, costMinor: 40 })
       // The module deliberately exposes no spent_on parameter — an append-only
       // ledger whose caller can rewrite history is not append-only — so the
       // backdated row goes in through raw SQL to prove the read's day scoping.
@@ -135,5 +137,27 @@ describe.skipIf(!url)('the image spend ledger against real Postgres', () => {
     } finally {
       await pool.query(`DELETE FROM marketing_image_spend WHERE tenant_id = $1`, [tenant])
     }
+  })
+
+  it('counts a bundle across days, because the bundle ceiling is lifetime', async () => {
+    const tenant = await uniqueTenant()
+    const bundle = await unique()
+    await recordImageSpend({ tenantId: tenant, bundleId: bundle, documentId: null, costMinor: 7 })
+    await pool.query(
+      `UPDATE marketing_image_spend SET spent_on = CURRENT_DATE - 30 WHERE tenant_id = $1 AND bundle_id = $2`,
+      [tenant, bundle],
+    )
+    await recordImageSpend({ tenantId: tenant, bundleId: bundle, documentId: null, costMinor: 5 })
+    // The backdated row is invisible to the day read and unavoidable for the bundle
+    // read: one runaway loop on one bundle is stopped by the bundle ceiling even
+    // after the day rolls over.
+    expect(await committedBundleSpendMinor(tenant, bundle)).toBe(12)
+    expect(await committedSpendMinor(tenant)).toBe(5)
+  })
+
+  it('leaves a NULL bundle out of every bundle total', async () => {
+    const tenant = await uniqueTenant()
+    await recordImageSpend({ tenantId: tenant, bundleId: null, documentId: null, costMinor: 9 })
+    expect(await committedBundleSpendMinor(tenant, await unique())).toBe(0)
   })
 })

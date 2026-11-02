@@ -33,15 +33,22 @@ export function admitsRun(params: {
 }
 
 /**
- * `SUM(integer)` comes back from node-pg as a string, because Postgres widens an
- * integer sum to bigint, so Number() is the whole conversion. The COALESCE in the
- * query means an empty ledger answers '0' rather than null.
- *
- * Anything else the database could answer throws. This number is the only thing
- * standing between an agent loop and a real bill, and 0 is the answer that
- * admits unlimited spend, so an unreadable ledger must fail closed and let the
- * caller refuse rather than spend.
+ * The one place that decides what a readable ledger total is. Both ceiling reads
+ * answer `SUM(cost_minor)`, which node-pg hands back as a string because Postgres
+ * widens an integer sum to bigint, and 0 is the answer that admits unlimited
+ * spend. So an unreadable total throws rather than defaulting, and there is exactly
+ * one function that knows this rule.
  */
+function totalMinorOrThrow(rows: { total: string | null }[], label: string): number {
+  const total = rows[0]?.total ?? null
+  if (total === null || !/^\d+$/.test(String(total))) {
+    throw new Error(
+      `marketing_image_spend: the ${label} read answered ${JSON.stringify(rows)} instead of one non-negative integer total`,
+    )
+  }
+  return Number(total)
+}
+
 export async function committedSpendMinor(tenantId: string): Promise<number> {
   const result = await getDbClient().query<{ total: string | null }>(
     `SELECT COALESCE(SUM(cost_minor), 0) AS total
@@ -49,13 +56,23 @@ export async function committedSpendMinor(tenantId: string): Promise<number> {
       WHERE tenant_id = $1 AND spent_on = CURRENT_DATE`,
     [tenantId],
   )
-  const total = result.rows[0]?.total ?? null
-  if (total === null || !/^\d+$/.test(String(total))) {
-    throw new Error(
-      `marketing_image_spend: the ceiling read answered ${JSON.stringify(result.rows)} instead of one non-negative integer total`,
-    )
-  }
-  return Number(total)
+  return totalMinorOrThrow(result.rows, 'daily spend')
+}
+
+/**
+ * What one bundle has cost, over every day it has ever run. Spec section 7.1: the
+ * window is lifetime on purpose, because the job of this number is to stop one
+ * runaway loop on one bundle, and a bundle that already had forty images paid for
+ * does not deserve forty more tomorrow.
+ */
+export async function committedBundleSpendMinor(tenantId: string, bundleId: string): Promise<number> {
+  const result = await getDbClient().query<{ total: string | null }>(
+    `SELECT COALESCE(SUM(cost_minor), 0) AS total
+       FROM marketing_image_spend
+      WHERE tenant_id = $1 AND bundle_id = $2`,
+    [tenantId, bundleId],
+  )
+  return totalMinorOrThrow(result.rows, 'bundle spend')
 }
 
 export interface SpendRawExtract {
@@ -71,6 +88,7 @@ export interface SpendRawExtract {
  */
 export async function recordImageSpend(params: {
   tenantId: string
+  bundleId: string | null
   documentId: string | null
   costMinor: number
   provider?: string
@@ -80,15 +98,20 @@ export async function recordImageSpend(params: {
     throw new Error(`cost_minor: ${params.costMinor} is not a non-negative integer of cents`)
   }
   const result = await getDbClient().query<{ id: string }>(
-    // $5::jsonb, not a bare $5: every other jsonb write in src/ names the type
+    // $6::jsonb, not a bare $6: every other jsonb write in src/ names the type
     // (src/db/pending-writes.ts:626, src/db/documents.ts:299, src/db/alerts.ts:113).
     // Postgres infers it correctly at a VALUES position today, and an explicit
     // cast is what keeps it correct the day this INSERT grows a SELECT.
-    `INSERT INTO marketing_image_spend (tenant_id, document_id, provider, cost_minor, raw_extract)
-     VALUES ($1, $2, $3, $4, $5::jsonb)
+    `INSERT INTO marketing_image_spend (tenant_id, bundle_id, document_id, provider, cost_minor, raw_extract)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb)
      RETURNING id`,
     [
       params.tenantId,
+      // Required rather than optional, on the same principle as the document id
+      // below it: a caller that has not answered "which bundle" is a caller that
+      // should have to write null and mean it. A NULL row still counts toward the
+      // tenant's day and toward no bundle's lifetime.
+      params.bundleId,
       params.documentId,
       params.provider ?? REPLICATE_PROVIDER,
       params.costMinor,

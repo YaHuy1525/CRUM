@@ -295,6 +295,7 @@ describe('marketing.generate_assets spends', () => {
     const result = await run({ bundleId: BUNDLE })
     expect(h.recordImageSpend).toHaveBeenCalledWith({
       tenantId: TENANT,
+      bundleId: BUNDLE,
       documentId: DOC,
       costMinor: 7,
       // Named explicitly by the tool, not left to `image-spend.ts`'s
@@ -389,6 +390,7 @@ describe('marketing.generate_assets spends', () => {
     const result = await run({ bundleId: BUNDLE })
     expect(h.recordImageSpend).toHaveBeenCalledWith({
       tenantId: TENANT,
+      bundleId: BUNDLE,
       documentId: null,
       costMinor: 4,
       provider: 'replicate',
@@ -419,6 +421,7 @@ describe('marketing.generate_assets spends', () => {
     expect(h.generate).toHaveBeenCalledTimes(1)
     expect(h.recordImageSpend).toHaveBeenCalledWith({
       tenantId: TENANT,
+      bundleId: BUNDLE,
       documentId: null,
       costMinor: 4,
       provider: 'replicate',

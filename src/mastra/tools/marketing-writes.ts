@@ -1378,6 +1378,7 @@ export const generateAssetsTool = createTool({
             if (outcome.charge !== null) {
               await recordImageSpend({
                 tenantId: rc.tenantId,
+                bundleId: bundle.id,
                 documentId: null,
                 costMinor: outcome.charge.costMinor,
                 // Named, not left to image-spend.ts's default. That default is
@@ -1449,6 +1450,7 @@ export const generateAssetsTool = createTool({
             // it would silently un-invoice the run.
             await recordImageSpend({
               tenantId: rc.tenantId,
+              bundleId: bundle.id,
               documentId: null,
               costMinor: outcome.image.costMinor,
               provider: adapter.provider,
@@ -1480,6 +1482,7 @@ export const generateAssetsTool = createTool({
           // bundle gained.
           await recordImageSpend({
             tenantId: rc.tenantId,
+            bundleId: bundle.id,
             documentId: document.id,
             costMinor: outcome.image.costMinor,
             provider: adapter.provider,
