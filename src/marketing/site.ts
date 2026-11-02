@@ -65,6 +65,14 @@ export type AssetProblemToken =
   | 'asset_unresolved'
 
 /**
+ * Which of the three byte ceilings refused. All three answer `asset_too_large`,
+ * and the token union stays at its six members (spec section 12), so a consumer
+ * that has to tell "shrink this picture" from "use fewer pictures" from "the
+ * bundle is too big" reads this field rather than parsing English.
+ */
+export type AssetCeiling = 'image' | 'count' | 'site'
+
+/**
  * The asset refusal as a throw, for the path that must not proceed: the approval
  * re-derives the site hash, and a page whose picture cannot be resolved is not a
  * page anyone approved. `siteProblem` says the same thing in text for the tool
@@ -73,12 +81,16 @@ export type AssetProblemToken =
 export class AssetProblemError extends Error {
   readonly token: AssetProblemToken
   readonly detail: string
+  // Present on exactly the three lanes that check a ceiling and absent elsewhere,
+  // so a consumer branching on it is never handed a guess.
+  readonly ceiling?: AssetCeiling
 
-  constructor(token: AssetProblemToken, detail: string) {
+  constructor(token: AssetProblemToken, detail: string, ceiling?: AssetCeiling) {
     super(`${token}: ${detail}`)
     this.name = 'AssetProblemError'
     this.token = token
     this.detail = detail
+    this.ceiling = ceiling
   }
 }
 
@@ -220,7 +232,13 @@ function referencedNames(artifacts: readonly SiteArtifact[]): string[] {
   return names
 }
 
-interface AssetChoice {
+/**
+ * A picture a page named whose bytes were found, with the pieces the hosted path
+ * and the site total are built from. Exported because `assetPathOf` takes one: an
+ * export whose parameter type cannot be named outside this module is a decoy, and
+ * Task 7's integration proof has to name the hosted path it fetched.
+ */
+export interface AssetChoice {
   name: string
   artifact: SiteArtifact
   documentId: string
@@ -229,16 +247,44 @@ interface AssetChoice {
 }
 
 /**
- * Every asset question this slice can ask, in the order it asks it: a name with
- * no answer, then two answers, then the bytes behind the answer, then the size of
- * the whole site. Cheapest and most specific first, because the owner reading a
- * stage refusal has to be able to act on the first sentence they see.
+ * The answer a lane gives when it refuses: a token, a sentence, and which ceiling
+ * it hit when a ceiling is what it hit. `refuse` is the only thing that builds one.
+ */
+interface AssetProblem {
+  token: AssetProblemToken
+  detail: string
+  ceiling?: AssetCeiling
+}
+
+/**
+ * One refusal, spelled the same way in every lane, so `resolveAssets` reads as the
+ * list of questions it answers rather than as a stack of object literals: nothing
+ * is chosen, and the sentence says what the owner can do about it.
+ */
+function refuse(token: AssetProblemToken, detail: string, ceiling?: AssetCeiling): {
+  choices: AssetChoice[]
+  problem: AssetProblem
+} {
+  return { choices: [], problem: { token, detail, ceiling } }
+}
+
+/**
+ * Every asset question this slice can ask, in the order it asks it: a placeholder
+ * that names nothing, whether it never closed or its name came out blank, then a
+ * name with no answer, then more answers than one, then the bytes behind the
+ * answer, then the size of the whole site. Cheapest and most specific first,
+ * because the owner reading a stage refusal has to be able to act on the first
+ * sentence they see.
  */
 function resolveAssets(artifacts: readonly SiteArtifact[]): {
   choices: AssetChoice[]
-  problem: { token: AssetProblemToken; detail: string } | null
+  problem: AssetProblem | null
 } {
   const images = imageArtifacts(artifacts)
+  // A picture is findable by its title and an untitled one is skipped rather than
+  // matched on the empty string. `marketing.generate_assets` requires a non-empty
+  // name in its input schema and Task 4's loader carries `title` straight from the
+  // document row, so nothing that reaches this map can be without one.
   const byTitle = new Map<string, SiteArtifact[]>()
   for (const image of images) {
     const key = (image.title ?? '').trim()
@@ -251,13 +297,23 @@ function resolveAssets(artifacts: readonly SiteArtifact[]): {
     const html = page.textContent ?? ''
     const bad = unterminatedAssetReferences(html)
     if (bad.length > 0) {
-      return {
-        choices: [],
-        problem: {
-          token: 'asset_unresolved',
-          detail: `a page carries \`${ASSET_LITERAL}\` with no closing braces, so nothing could ` +
-            `be substituted into ${JSON.stringify(bad[0])}`,
-        },
+      return refuse(
+        'asset_unresolved',
+        `a page carries \`${ASSET_LITERAL}\` with no closing braces, so nothing could ` +
+          `be substituted into ${JSON.stringify(bad[0])}`,
+      )
+    }
+    // A placeholder the grammar matches but no name fills is the same mistake in a
+    // different shape: `assetNamesReferenced` drops it, so the name lanes never see
+    // it, and substitution would look up the empty string. Refusing here is what
+    // keeps the promise that `siteProblem` says everything `resolveSite` would throw
+    // about.
+    for (const match of html.matchAll(ASSET_REFERENCE)) {
+      if ((match[1] ?? '').trim() === '') {
+        return refuse(
+          'asset_unresolved',
+          `a page carries ${JSON.stringify(match[0])}, which names no asset, so there is nothing to substitute`,
+        )
       }
     }
   }
@@ -267,91 +323,76 @@ function resolveAssets(artifacts: readonly SiteArtifact[]): {
     const matches = byTitle.get(name) ?? []
     if (matches.length === 0) {
       const titles = [...byTitle.keys()].sort()
-      return {
-        choices: [],
-        problem: {
-          token: 'asset_name_missing',
-          detail: `the page names the asset "${name}" and the bundle holds no image with that ` +
-            `title (its images are ${titles.length > 0 ? titles.map((t) => `"${t}"`).join(', ') : 'none'})`,
-        },
-      }
+      return refuse(
+        'asset_name_missing',
+        `the page names the asset "${name}" and the bundle holds no image with that ` +
+          `title (its images are ${titles.length > 0 ? titles.map((t) => `"${t}"`).join(', ') : 'none'})`,
+      )
     }
     if (matches.length > 1) {
-      return {
-        choices: [],
-        problem: {
-          token: 'asset_name_ambiguous',
-          detail: `two images in this bundle are titled "${name}" (${matches.map((m) => m.id).join(', ')}), ` +
-            'so the placeholder has more than one answer',
-        },
-      }
+      // Counted, not assumed: the guard is more than one, and an owner told there
+      // are two would delete a picture that is not the mistake.
+      return refuse(
+        'asset_name_ambiguous',
+        `${matches.length} images in this bundle are titled "${name}" (${matches.map((m) => m.id).join(', ')}), ` +
+          'so the placeholder has more than one answer',
+      )
     }
     const artifact = matches[0]!
     const documentId = artifact.documentId ?? ''
     if (documentId === '') {
-      return {
-        choices: [],
-        problem: {
-          token: 'asset_bytes_missing',
-          detail: `the image "${name}" (${artifact.id}) is attached to no document, so there are no bytes to publish`,
-        },
-      }
+      return refuse(
+        'asset_bytes_missing',
+        `the image "${name}" (${artifact.id}) is attached to no document, so there are no bytes to publish`,
+      )
     }
     const mime = artifact.mime ?? ''
     const extension = ASSET_MIME_EXTENSIONS[mime]
     if (extension === undefined) {
-      return {
-        choices: [],
-        problem: {
-          token: 'asset_mime_unsupported',
-          detail: `the image "${name}" is ${mime || 'mime-less'} and CRUM publishes png, jpeg and webp only`,
-        },
-      }
+      return refuse(
+        'asset_mime_unsupported',
+        `the image "${name}" is ${mime || 'mime-less'} and CRUM publishes png, jpeg and webp only`,
+      )
     }
     const bytes = artifact.bytes ?? null
     if (bytes === null || bytes.byteLength === 0) {
-      return {
-        choices: [],
-        problem: {
-          token: 'asset_bytes_missing',
-          detail: `the image "${name}" (document ${documentId}) has no file row, or an empty one`,
-        },
-      }
+      return refuse(
+        'asset_bytes_missing',
+        `the image "${name}" (document ${documentId}) has no file row, or an empty one`,
+      )
     }
     if (bytes.byteLength > MAX_ASSET_BYTES) {
-      return {
-        choices: [],
-        problem: {
-          token: 'asset_too_large',
-          detail: `the image "${name}" is ${bytes.byteLength} bytes and CRUM publishes nothing over ${MAX_ASSET_BYTES}`,
-        },
-      }
+      return refuse(
+        'asset_too_large',
+        `the image "${name}" is ${bytes.byteLength} bytes and CRUM publishes nothing over ${MAX_ASSET_BYTES}`,
+        'image',
+      )
     }
     choices.push({ name, artifact, documentId, extension, byteLength: bytes.byteLength })
   }
 
   if (choices.length > MAX_SITE_ASSETS) {
-    return {
-      choices: [],
-      problem: {
-        token: 'asset_too_large',
-        detail: `the page references ${choices.length} images and ${MAX_SITE_ASSETS} is the most CRUM publishes for one bundle`,
-      },
-    }
+    return refuse(
+      'asset_too_large',
+      `the page references ${choices.length} images and ${MAX_SITE_ASSETS} is the most CRUM publishes for one bundle`,
+      'count',
+    )
   }
   // The page counts against the site ceiling with its pictures, because a
   // deployment is refused as a whole and a 30 MB page with a 30-byte picture is
-  // the same mistake as the reverse.
+  // the same mistake as the reverse. And in the unit the sentence quotes: a page
+  // of accented copy is up to three times its `.length`, so counting code units
+  // here would understate the very bundle it then refuses.
   const total = choices.reduce((sum, c) => sum + c.byteLength, 0) +
-    pageArtifacts(artifacts).reduce((sum, p) => sum + (p.textContent ?? '').length, 0)
+    pageArtifacts(artifacts).reduce((sum, p) => sum + encodeSiteText(p.textContent ?? '').byteLength, 0)
   if (total > MAX_SITE_BYTES) {
-    return {
-      choices: [],
-      problem: {
-        token: 'asset_too_large',
-        detail: `the page and its pictures together are ${total} bytes over a ${MAX_SITE_BYTES} ceiling`,
-      },
-    }
+    // The size and the bound, never the size as an excess: Task 6 shows this
+    // sentence to an owner deciding how much creative to re-cut.
+    return refuse(
+      'asset_too_large',
+      `the page and its pictures together are ${total} bytes and CRUM publishes nothing over ${MAX_SITE_BYTES}`,
+      'site',
+    )
   }
   return { choices, problem: null }
 }
@@ -360,8 +401,9 @@ function resolveAssets(artifacts: readonly SiteArtifact[]): {
  * The URL a page is given for its picture, root-relative from the first
  * character: the thank-you page sits one directory deeper than the landing page,
  * so a path relative to the page would mean two different files for one
- * placeholder. `SiteFile.path` holds the same string without the leading slash,
- * because a host key is a key and not a URL.
+ * placeholder. `resolveSite` derives the published key from this string rather
+ * than spelling it again, because a host key is a key and not a URL and the two
+ * must never be one edit apart.
  */
 export function assetPathOf(slug: string, choice: AssetChoice): string {
   return `/${slug}/assets/${choice.documentId}.${choice.extension}`
@@ -372,13 +414,19 @@ export function assetPathOf(slug: string, choice: AssetChoice): string {
  * a page without an unused image is correct — but the stage report names them,
  * because five images generated and four used is the conversation the owner
  * should have before launch rather than the one they find by clicking around a
- * live page.
+ * live page. A title twice is one line, the way `referencedNames` dedupes: two
+ * unused pictures sharing a title are one mistake to read, not the same sentence
+ * printed twice.
  */
 export function unreferencedAssetNames(artifacts: readonly SiteArtifact[]): string[] {
   const names = new Set(referencedNames(artifacts))
-  return imageArtifacts(artifacts)
-    .map((a) => (a.title ?? '').trim())
-    .filter((t) => t !== '' && !names.has(t))
+  const unused: string[] = []
+  for (const image of imageArtifacts(artifacts)) {
+    const title = (image.title ?? '').trim()
+    if (title === '' || names.has(title) || unused.includes(title)) continue
+    unused.push(title)
+  }
+  return unused
 }
 
 /**
@@ -392,7 +440,7 @@ export function siteProblem(artifacts: readonly SiteArtifact[]): string | null {
   const slot = slotProblem(artifacts)
   if (slot !== null) return slot
   const { problem } = resolveAssets(artifacts)
-  return problem === null ? null : new AssetProblemError(problem.token, problem.detail).message
+  return problem === null ? null : new AssetProblemError(problem.token, problem.detail, problem.ceiling).message
 }
 
 /**
@@ -406,15 +454,16 @@ export function siteProblem(artifacts: readonly SiteArtifact[]): string | null {
  */
 export function resolveSite(slug: string, artifacts: readonly SiteArtifact[]): SiteFile[] {
   if (!slugIsPublishable(slug)) throw new SlugProblemError(slug)
-  const slot = slotProblem(artifacts)
-  if (slot !== null) {
-    for (const kind of SLOT_KINDS) {
-      const rows = ofKind(artifacts, kind)
-      if (rows.length > 1) throw new SlotProblemError(kind, rows.map((r) => r.id))
-    }
+  // The throw spelling of `slotProblem`, and unconditional rather than nested
+  // inside its answer: the publish loop below takes `rows[0]`, so a short-circuit
+  // added to the text predicate would otherwise drop a page silently here instead
+  // of refusing it.
+  for (const kind of SLOT_KINDS) {
+    const rows = ofKind(artifacts, kind)
+    if (rows.length > 1) throw new SlotProblemError(kind, rows.map((r) => r.id))
   }
   const { choices, problem } = resolveAssets(artifacts)
-  if (problem !== null) throw new AssetProblemError(problem.token, problem.detail)
+  if (problem !== null) throw new AssetProblemError(problem.token, problem.detail, problem.ceiling)
   const byName = new Map(choices.map((c) => [c.name, c]))
 
   const files: SiteFile[] = []
@@ -440,10 +489,14 @@ export function resolveSite(slug: string, artifacts: readonly SiteArtifact[]): S
 
   // Only the images a page actually named, and once each: two placeholders for
   // one picture are one file, and a hash the approval re-derives must not depend
-  // on how many times the copy asked for it.
+  // on how many times the copy asked for it. The key is `assetPathOf` with its
+  // leading slash taken off, so the URL inside the hashed page cannot name a file
+  // this list does not upload. Two choices landing on one path are the same
+  // document twice, because the path is keyed on `documentId`, and then the bytes
+  // the first one writes are the bytes the second would have written.
   const seen = new Set<string>()
   for (const choice of choices) {
-    const path = `${slug}/assets/${choice.documentId}.${choice.extension}`
+    const path = assetPathOf(slug, choice).slice(1)
     if (seen.has(path)) continue
     seen.add(path)
     const bytes = choice.artifact.bytes as Uint8Array

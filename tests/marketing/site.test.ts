@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   AssetProblemError,
   MAX_ASSET_BYTES,
+  MAX_SITE_BYTES,
   SlugProblemError,
   SlotProblemError,
   assetNamesReferenced,
@@ -13,6 +14,7 @@ import {
   siteTextOf,
   slugProblem,
   slotProblem,
+  type AssetProblemToken,
   type SiteArtifact,
   unreferencedAssetNames,
   unterminatedAssetReferences,
@@ -22,10 +24,15 @@ const file = (id: string, kind: string, text: string): SiteArtifact => ({ id, ki
 
 // Beside `file`, and the same shape of helper: an image artifact carries a
 // document, a title, a mime and bytes, and only Task 4's loader can fill them
-// from a row. `PNG_BYTES` is four bytes so the byte ceilings stay testable
-// without a megabyte in a fixture, and the padded segment keeps the twelve
-// characters a real uuid's last group has, because `documentId` is a uuid.
-const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
+// from a row. The bytes are the PNG signature followed by the fixture's own id, so
+// every artifact in a case holds a buffer no other artifact holds: one shared
+// four-byte buffer cannot say *which* picture's bytes were published, and swapping
+// two of them in the publish loop would satisfy it. They stay a handful of
+// bytes so the byte ceilings remain testable without a megabyte in a fixture, and
+// the padded segment keeps the twelve characters a real uuid's last group has,
+// because `documentId` is a uuid.
+const pngBytes = (id: string): Uint8Array =>
+  new Uint8Array([0x89, 0x50, 0x4e, 0x47, ...Array.from(id, (character) => character.charCodeAt(0))])
 const asset = (
   id: string,
   title: string,
@@ -37,7 +44,7 @@ const asset = (
   documentId: `00000000-0000-4000-8000-${id.padEnd(12, '0')}`,
   title,
   mime: 'image/png',
-  bytes: PNG_BYTES,
+  bytes: pngBytes(id),
   ...over,
 })
 const page = (html: string): SiteArtifact => ({ id: 'p1', kind: 'page_html', textContent: html })
@@ -369,10 +376,35 @@ describe('resolveSite with assets', () => {
     expect(files.map((f) => f.path)).toEqual(['physio/assets/00000000-0000-4000-8000-i10000000000.png', 'physio/index.html'])
     const image = files.find((f) => f.path.endsWith('.png'))!
     expect(image.contentType).toBe('image/png')
-    expect(image.content).toEqual(PNG_BYTES)
+    // `pngBytes('i1')`, not a shared fixture buffer: this asserts that the bytes
+    // published at the `i1` path are the `i1` artifact's own.
+    expect(image.content).toEqual(pngBytes('i1'))
     // The image's hash is over the uploaded bytes, and never through
     // `sha256OfText`, which is the text lane's helper.
-    expect(image.sha256).toBe(createHash('sha256').update(PNG_BYTES).digest('hex'))
+    expect(image.sha256).toBe(createHash('sha256').update(pngBytes('i1')).digest('hex'))
+  })
+
+  it('publishes each picture with its own bytes and its own hash', () => {
+    // Two pictures, each holding bytes the other does not. With one shared fixture
+    // buffer they were interchangeable, so a publish loop that wrote one artifact's
+    // bytes to every path could not be caught from the outside.
+    const files = resolveSite('physio', [page('{{ASSET:hero}} {{ASSET:map}}'), asset('i1', 'hero'), asset('i2', 'map')])
+    const hero = files.find((f) => f.path.endsWith('-i10000000000.png'))!
+    const map = files.find((f) => f.path.endsWith('-i20000000000.png'))!
+    expect(hero.content).toEqual(pngBytes('i1'))
+    expect(map.content).toEqual(pngBytes('i2'))
+    expect(hero.sha256).toBe(createHash('sha256').update(pngBytes('i1')).digest('hex'))
+    expect(map.sha256).toBe(createHash('sha256').update(pngBytes('i2')).digest('hex'))
+  })
+
+  it('gives the page a URL that is the published path with its slash put back', () => {
+    // `assetPathOf` is the only spelling of a hosted path, and `SiteFile.path` is
+    // the same string without its leading slash, so the URL the approval hashed
+    // cannot name a file the publisher does not upload.
+    const files = resolveSite('physio', [page('<img src="{{ASSET:hero}}">'), asset('i1', 'hero')])
+    const image = files.find((f) => f.path.endsWith('.png'))!
+    const html = files.find((f) => f.path === 'physio/index.html')!
+    expect(siteTextOf(html)).toBe(`<img src="/${image.path}">`)
   })
 
   it('substitutes a root-relative URL into the page before hashing it', () => {
@@ -390,6 +422,14 @@ describe('resolveSite with assets', () => {
     expect(unreferencedAssetNames([page('<p>text only</p>'), asset('i1', 'hero')])).toEqual(['hero'])
   })
 
+  it('names an unreferenced title once, because Task 6 prints one line per picture', () => {
+    // Two unused images sharing a title are one picture to the owner reading a
+    // stage report, the same way `referencedNames` dedupes a placeholder the page
+    // wrote three times.
+    const artifacts = [page('<p>text only</p>'), asset('i1', 'hero'), asset('i2', 'hero'), asset('i3', 'map')]
+    expect(unreferencedAssetNames(artifacts)).toEqual(['hero', 'map'])
+  })
+
   it('hashes a repeated reference once, because it is one file', () => {
     const twice = resolveSite('physio', [page('{{ASSET:hero}} {{ASSET:hero}}'), asset('i1', 'hero')])
     expect(twice.filter((f) => f.path.endsWith('.png'))).toHaveLength(1)
@@ -405,8 +445,10 @@ describe('resolveSite with assets', () => {
 describe('siteProblem names each asset failure', () => {
   // `token`, then the `needle` the sentence must name, then the artifacts: the
   // title format prints its two `%s` slots in argument order, so the needle sits
-  // where the title can read it.
-  const cases: Array<[string, string, SiteArtifact[]]> = [
+  // where the title can read it. The token is `AssetProblemToken` and not `string`,
+  // so a lane that stops existing is a compile error in this table rather than a row
+  // comparing an error against a word nothing throws any more.
+  const cases: Array<[AssetProblemToken, string, SiteArtifact[]]> = [
     ['asset_name_missing', 'hero', [page('{{ASSET:hero}}')]],
     ['asset_name_ambiguous', 'hero', [page('{{ASSET:hero}}'), asset('i1', 'hero'), asset('i2', 'hero')]],
     ['asset_mime_unsupported', 'image/tiff', [page('{{ASSET:hero}}'), asset('i1', 'hero', { mime: 'image/tiff' })]],
@@ -414,6 +456,13 @@ describe('siteProblem names each asset failure', () => {
     ['asset_bytes_missing', 'hero', [page('{{ASSET:hero}}'), asset('i1', 'hero', { bytes: new Uint8Array(0) })]],
     ['asset_too_large', '8388608', [page('{{ASSET:hero}}'), asset('i1', 'hero', { bytes: new Uint8Array(MAX_ASSET_BYTES + 1) })]],
     ['asset_unresolved', '{{ASSET:hero', [page('{{ASSET:hero')]],
+    // `ASSET_REFERENCE` matches `{{ASSET: }}` and `assetNamesReferenced` drops the
+    // blank capture, so the name lanes never see a placeholder substitution does meet.
+    // The second row is the divergence in its worst shape: a bundle holding the one
+    // picture the page asked for, waved through by the predicate and refused by the
+    // throw.
+    ['asset_unresolved', '"{{ASSET: }}"', [page('<img src="{{ASSET: }}">')]],
+    ['asset_unresolved', '"{{ASSET:  }}"', [page('{{ASSET:hero}} {{ASSET:  }}'), asset('i1', 'hero')]],
   ]
 
   it.each(cases)('%s is refused in a sentence naming %s', (token, needle, artifacts) => {
@@ -427,10 +476,53 @@ describe('siteProblem names each asset failure', () => {
     expect((refusal as AssetProblemError).token).toBe(token)
   })
 
+  it('names the ids behind an ambiguous title, which is the half an owner can act on', () => {
+    const problem = siteProblem([page('{{ASSET:hero}}'), asset('i1', 'hero'), asset('i7', 'hero')])
+    expect(problem).toContain('(i1, i7)')
+  })
+
+  it('counts the images it found rather than asserting there are two', () => {
+    // The guard is `matches.length > 1`, so three pictures answering one placeholder
+    // are a bundle that exists. A sentence saying "two" would send the owner to
+    // delete a picture that is not the mistake.
+    const three = [page('{{ASSET:hero}}'), asset('i1', 'hero'), asset('i2', 'hero'), asset('i3', 'hero')]
+    const problem = siteProblem(three)
+    expect(problem).toContain('3 images in this bundle are titled "hero" (i1, i2, i3)')
+    expect(problem).not.toContain('two images')
+  })
+
+  it('names no ceiling where no ceiling was checked', () => {
+    // `ceiling` is the discriminator for the three lanes that share
+    // `asset_too_large`. A name or mime refusal checked no ceiling, and a consumer
+    // branching on the field must read nothing there rather than a guess.
+    const mime = thrownBy(() =>
+      resolveSite('physio', [page('{{ASSET:hero}}'), asset('i1', 'hero', { mime: 'image/tiff' })]),
+    ) as AssetProblemError
+    expect(mime.token).toBe('asset_mime_unsupported')
+    expect(mime.ceiling).toBeUndefined()
+    const missing = thrownBy(() => resolveSite('physio', [page('{{ASSET:hero}}')])) as AssetProblemError
+    expect(missing.token).toBe('asset_name_missing')
+    expect(missing.ceiling).toBeUndefined()
+  })
+
   it('counts one asset over the ceiling by itself, and twelve of them too', () => {
-    const twelve = Array.from({ length: 13 }, (_unused, i) => asset(`i${i}`, `a${i}`))
-    const names = twelve.map((a) => `{{ASSET:${a.title}}}`).join(' ')
-    expect(siteProblem([page(names), ...twelve])).toContain('12')
+    // Both halves the title promises, because all three byte lanes refuse with one
+    // token and a consumer has to tell them apart: one picture over
+    // `MAX_ASSET_BYTES` alone is "shrink this", and thirteen referenced pictures
+    // under it are "use fewer". Twelve publish; the thirteenth is the one refused.
+    const one = thrownBy(() =>
+      resolveSite('physio', [page('{{ASSET:hero}}'), asset('i1', 'hero', { bytes: new Uint8Array(MAX_ASSET_BYTES + 1) })]),
+    ) as AssetProblemError
+    expect(one.token).toBe('asset_too_large')
+    expect(one.ceiling).toBe('image')
+    expect(one.detail).toContain(`${MAX_ASSET_BYTES + 1} bytes and CRUM publishes nothing over ${MAX_ASSET_BYTES}`)
+
+    const thirteen = Array.from({ length: 13 }, (_unused, i) => asset(`i${i}`, `a${i}`))
+    const names = thirteen.map((a) => `{{ASSET:${a.title}}}`).join(' ')
+    const tooMany = thrownBy(() => resolveSite('physio', [page(names), ...thirteen])) as AssetProblemError
+    expect(tooMany.token).toBe('asset_too_large')
+    expect(tooMany.ceiling).toBe('count')
+    expect(siteProblem([page(names), ...thirteen])).toContain('12')
   })
 
   it('adds the page and its pictures together when it checks the site ceiling', () => {
@@ -439,13 +531,45 @@ describe('siteProblem names each asset failure', () => {
     // only the page's own bytes can tip it over. Two pictures never could: the
     // per-image ceiling caps a pair at 16 MiB, well under a 24 MiB site.
     const big = new Uint8Array(MAX_ASSET_BYTES)
+    const html = '{{ASSET:a}} {{ASSET:b}} {{ASSET:c}}'
     const artifacts = [
-      page('{{ASSET:a}} {{ASSET:b}} {{ASSET:c}}'),
+      page(html),
       asset('i1', 'a', { bytes: big }),
       asset('i2', 'b', { bytes: big }),
       asset('i3', 'c', { bytes: big }),
     ]
-    expect(siteProblem(artifacts)).toContain('asset_too_large')
+    const problem = siteProblem(artifacts)
+    expect(problem).toContain('asset_too_large')
+    // The sentence states the size and the bound, and never calls the size an
+    // excess: Task 6 prints it verbatim to an owner deciding how much creative to
+    // re-cut, and "25165859 bytes over a 25165824 ceiling" says the bundle is that
+    // many bytes too big when it is 35 bytes too big.
+    const total = 3 * MAX_ASSET_BYTES + Buffer.byteLength(html, 'utf8')
+    expect(problem).toContain(`${total} bytes and CRUM publishes nothing over ${MAX_SITE_BYTES}`)
+    expect(problem).not.toContain('over a')
+    expect((thrownBy(() => resolveSite('physio', artifacts)) as AssetProblemError).ceiling).toBe('site')
+  })
+
+  it('counts a page in UTF-8 bytes, because the ceiling it quotes is in bytes', () => {
+    // Three pictures 40 bytes short of the site ceiling and a page of 38 characters
+    // that is 41 UTF-8 bytes: the byte measure lands one over the ceiling and a
+    // count of UTF-16 code units lands two under it, so accented copy could
+    // publish a site over the bound its own refusal names. The three pictures are
+    // views over one buffer, so the case pays 8 MiB rather than 24.
+    const big = new Uint8Array(MAX_ASSET_BYTES)
+    const html = '{{ASSET:a}} {{ASSET:b}} {{ASSET:c}}ééé'
+    expect(html.length).toBe(38)
+    expect(Buffer.byteLength(html, 'utf8')).toBe(41)
+    const artifacts = [
+      page(html),
+      asset('i1', 'a', { bytes: big }),
+      asset('i2', 'b', { bytes: big }),
+      asset('i3', 'c', { bytes: big.subarray(0, MAX_ASSET_BYTES - 40) }),
+    ]
+    expect(siteProblem(artifacts)).toContain(
+      `${MAX_SITE_BYTES + 1} bytes and CRUM publishes nothing over ${MAX_SITE_BYTES}`,
+    )
+    expect((thrownBy(() => resolveSite('physio', artifacts)) as AssetProblemError).ceiling).toBe('site')
   })
 
   it('is null for a page with no placeholders and for a bundle with no page', () => {
