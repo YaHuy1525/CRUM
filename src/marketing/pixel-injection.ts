@@ -3,8 +3,7 @@
 // publish time, so every published page carries tracking without the
 // funnel-builder having to paste the snippet by hand.
 
-import { createHash } from 'node:crypto'
-import { encodeSiteText, siteTextOf, type SiteFile } from './site'
+import { encodeSiteText, sha256OfText, siteTextOf, type SiteFile } from './site'
 
 const PIXEL_SNIPPET = `<!-- Meta Pixel Code -->
 <script>
@@ -85,7 +84,7 @@ export function injectPixelIntoFiles(
     // readSiteFiles compares the approved hash BEFORE injecting, so the receipt
     // still covers the bytes the reviewer saw, and the pixel stays the documented
     // deviation from them (spec section 2).
-    return { ...file, content: encodeSiteText(injected), sha256: createHash('sha256').update(injected).digest('hex') }
+    return { ...file, content: encodeSiteText(injected), sha256: sha256OfText(injected) }
   })
   return { files: patched, injected: true }
 }

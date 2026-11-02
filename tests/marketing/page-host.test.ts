@@ -7,7 +7,7 @@ vi.mock('../../src/db/marketing', () => ({
 }))
 
 import { buildUploadForm, PageHostError, type PageHostConfig } from '@/marketing/page-host'
-import { resolveSite, siteHashOf } from '@/marketing/site'
+import { resolveSite, siteHashOf, type SiteFile } from '@/marketing/site'
 
 const CONFIG: PageHostConfig = {
   accountId: 'acc',
@@ -80,7 +80,25 @@ describe('buildUploadForm', () => {
     expect(manifest['physio/index.html']).toBe(files[0]?.sha256)
     const part = form.get(files[0]!.sha256)
     expect(part).toBeInstanceOf(Blob)
+    // The part's own media type, which `Blob.text()` cannot see: this is the one
+    // behaviour Task 1 changed here, and a hardcoded `'text/html'` default would
+    // still hand back the same markup on the next line, so the label needs its
+    // own assertion — and one that a non-`text/html` file can differ from.
+    expect((part as Blob).type).toBe('text/html')
     expect(await (part as Blob).text()).toBe('<h1>hi</h1>')
+  })
+
+  it('labels each part with the type its own file carries, because one default for every part is the bug', () => {
+    const asset: SiteFile = {
+      path: 'physio/assets/hero.png',
+      sha256: '039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81',
+      contentType: 'image/png',
+      content: new Uint8Array([1, 2, 3]),
+    }
+    const form = buildUploadForm([...files, asset], 'b', 'm')
+    expect((form.get(asset.sha256) as Blob).type).toBe('image/png')
+    // And the page keeps its own label instead of inheriting the last one set.
+    expect((form.get(files[0]!.sha256) as Blob).type).toBe('text/html')
   })
 
   it('sends no zip, because the documented body is a hash manifest', () => {

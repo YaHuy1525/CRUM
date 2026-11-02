@@ -168,6 +168,20 @@ describe('the byte lane (slice 5 R1)', () => {
   // Computed with `node -e "console.log(require('crypto').createHash('sha256').update('<h1>hi</h1>').digest('hex'))"`,
   // so this is the UTF-8 hash of the page, not the hash of whatever the code under test happens to produce.
   const INDEX_HASH = 'e7fbb6fbbf4ce294913eb62b53ff03a7546649cfdc0d824d9e3a2b4541502f7f'
+  // The same recipe over a page whose bytes are not pure ASCII: node's
+  // `createHash` and `printf '%s' '<h1>café</h1>' | sha256sum` both give this, so
+  // the 14 bytes those 13 characters encode to are pinned, not only the 11 of
+  // `<h1>hi</h1>`.
+  const CAFE_HASH = 'ae1320ea2c0c99b82038a29a7e45c7a275f1f62db2a386c6698afa577125f51f'
+  // `printf '%s' '<p>thanks</p>' | sha256sum`, the second page's own hash.
+  const THANKS_HASH = '6b487a6b7a271ead9ca03bee630011496562c6b025ba884542fe77a19bcd5791'
+  // `siteHashOf`'s canonical string for this two-page site —
+  // `physio/index.html:<INDEX_HASH>\nphysio/thanks/index.html:<THANKS_HASH>`, the
+  // pair order `resolveSite` sorts to — hashed in the shell with `node -e` and
+  // confirmed by `sha256sum`. Nothing here calls the function under test, which
+  // is the point: slice 2 pinned no two-file aggregate anywhere in the repo, so
+  // this is the first value that a moved aggregate can actually break.
+  const TWO_FILE_SITE_HASH = '3647921c72f4829942919f1c34c1b325d588b7a0f5f2e94d8161b095d50aaec8'
 
   it('hashes the same bytes a text page had before it carried a Uint8Array', () => {
     // `page`, not `file`: a local named `file` would shadow the `file()` fixture
@@ -180,13 +194,33 @@ describe('the byte lane (slice 5 R1)', () => {
     expect(page?.content).toBeInstanceOf(Uint8Array)
   })
 
+  it('hashes the UTF-8 bytes of a page that is not pure ASCII', () => {
+    const [page] = resolveSite('physio', [file('a1', 'page_html', '<h1>café</h1>')])
+    expect(page?.sha256).toBe(CAFE_HASH)
+    expect(siteTextOf(page!)).toBe('<h1>café</h1>')
+    // The bytes are longer than the characters, so a hash taken over a
+    // latin-1 or UTF-16 spelling of the same string cannot satisfy this.
+    expect(page?.content).toHaveLength(14)
+  })
+
   it('leaves a multi-file site hash unchanged across the string to bytes move', () => {
-    // The canonical value slice 2 pinned: two pages, sorted pairs, one hash.
-    const hash = siteHashOf(resolveSite('physio', [
+    const site = resolveSite('physio', [
       file('a1', 'page_html', '<h1>hi</h1>'),
       file('a2', 'thank_you_html', '<p>thanks</p>'),
-    ]))
-    expect(hash).toHaveLength(64)
-    expect(/^[0-9a-f]{64}$/.test(hash)).toBe(true)
+    ])
+    // The inputs the aggregate is built over, pinned before the aggregate itself:
+    // if a per-file hash moves, this fails rather than the next line quietly
+    // composing the expectation from the moved value.
+    expect(site.map((f) => f.sha256)).toEqual([INDEX_HASH, THANKS_HASH])
+    const hash = siteHashOf(site)
+    // Composed here, in the same file, from the two literal hashes above and the
+    // `path:sha256` pairs joined with `\n` — `siteHashOf` is not used to build
+    // what it is then compared against.
+    expect(hash).toBe(
+      createHash('sha256')
+        .update(`physio/index.html:${INDEX_HASH}\nphysio/thanks/index.html:${THANKS_HASH}`)
+        .digest('hex'),
+    )
+    expect(hash).toBe(TWO_FILE_SITE_HASH)
   })
 })

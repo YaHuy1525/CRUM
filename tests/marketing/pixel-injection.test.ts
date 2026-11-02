@@ -11,12 +11,15 @@ import {
   injectPixel,
   injectPixelIntoFiles,
 } from '@/marketing/pixel-injection'
-import { siteTextOf, type SiteFile } from '@/marketing/site'
+import { encodeSiteText, sha256OfText, siteTextOf, type SiteFile } from '@/marketing/site'
 
 const PIXEL_ID = '1234567890'
 
 function makeFile(path: string, content: string): SiteFile {
-  return { path, content: new TextEncoder().encode(content), contentType: 'text/html', sha256: 'unused' }
+  // The hash is the real one for these bytes, not a placeholder: the deviation
+  // test below compares the injected hash against the approved hash, and a
+  // fixture that lied about `sha256` would make that comparison a tautology.
+  return { path, content: encodeSiteText(content), contentType: 'text/html', sha256: sha256OfText(content) }
 }
 
 describe('buildPixelSnippet', () => {
@@ -123,15 +126,29 @@ describe('injectPixelIntoFiles', () => {
 
 describe('the hash after injection', () => {
   it('describes the bytes that were injected, not the bytes that were approved', () => {
-    const [one] = injectPixelIntoFiles([makeFile('physio/index.html', '<html><head></head></html>')], PIXEL_ID).files
+    // One fixture, used as both the input the reviewer approved and the source
+    // of the hash the injected file must now differ from.
+    const approved = makeFile('physio/index.html', '<html><head></head></html>')
+    const [one] = injectPixelIntoFiles([approved], PIXEL_ID).files
     const file = one!
     expect(file.sha256).toBe(createHash('sha256').update(siteTextOf(file)).digest('hex'))
-    expect(file.sha256).not.toBe(makeFile('physio/index.html', '<html><head></head></html>').sha256)
+    expect(file.sha256).not.toBe(approved.sha256)
   })
 
   it('leaves a non-html file byte-identical', () => {
-    const png = { path: 'physio/assets/a.png', sha256: 'deadbeef', contentType: 'image/png', content: new Uint8Array([1, 2, 3]) }
+    // A real 64-hex hash over these three bytes (`printf '\001\002\003' |
+    // sha256sum`), because Task 3 hands this path an asset whose hash is the
+    // bytes it carries, not a placeholder.
+    const png = {
+      path: 'physio/assets/a.png',
+      sha256: '039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81',
+      contentType: 'image/png',
+      content: new Uint8Array([1, 2, 3]),
+    }
     const result = injectPixelIntoFiles([png], PIXEL_ID)
-    expect(result.files[0]).toEqual(png)
+    // `toBe`, not `toEqual`: the `.html` guard returns the very same object, so
+    // identity is the stronger claim, and a pass-through that quietly copied and
+    // re-hashed the asset would still satisfy a deep equal.
+    expect(result.files[0]).toBe(png)
   })
 })
