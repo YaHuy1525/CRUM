@@ -383,6 +383,11 @@ Run `npx vitest run tests/marketing/site.test.ts`; expect the whole new block to
  * `[^{}]+?` and not `.+?`: a name with a brace in it is refused by the prompt
  * parser long before it reaches a page, and a grammar that could match across a
  * second placeholder would make one typo eat the page.
+ *
+ * Never call `.test()` or `.exec()` on this exported global. `matchAll` clones the
+ * regex and a global `replace` resets `lastIndex`, but a manual `.test()` would
+ * leave the pointer mid-string and make this scan and Task 3's substitution
+ * disagree about one page, which is the divergence this slice cannot afford.
  */
 export const ASSET_REFERENCE = /\{\{ASSET:([^{}]+?)\}\}/g
 export const ASSET_LITERAL = '{{ASSET:'
@@ -397,19 +402,42 @@ export function assetNamesReferenced(html: string): string[] {
 }
 
 /**
- * The fragments the grammar refused to match. A page that survives substitution
- * still carrying the literal is a page whose placeholder was malformed, and
- * publishing `{{ASSET:hero` to a live domain is a bug the owner finds by
- * clicking, which is the finding this slice refuses to leave in place.
+ * The fragments the grammar refused to match. A literal that no well-formed
+ * placeholder explains is the whole finding, so each entry starts at that literal
+ * and runs to the next `}}` or the end of the page, cut at `MAX_FRAGMENT_CHARS` so
+ * a refusal quotes a phrase rather than a paragraph of the client's copy. A page
+ * that survives substitution still carrying the literal is a page whose placeholder
+ * was malformed, and publishing `{{ASSET:hero` to a live domain is a bug the owner
+ * finds by clicking, which is the finding this slice refuses to leave in place.
+ *
+ * Counting literals against matches would report the fact but not the place, and it
+ * would under-report a page with two broken placeholders, so this walks the literals.
  */
+const MAX_FRAGMENT_CHARS = 120
+
 export function unterminatedAssetReferences(html: string): string[] {
-  const matched = [...html.matchAll(ASSET_REFERENCE)].length
-  const literals = html.split(ASSET_LITERAL).length - 1
-  return literals > matched ? [html.slice(0, 120)] : []
+  const matchedStarts = new Set([...html.matchAll(ASSET_REFERENCE)].map((match) => match.index))
+  const fragments: string[] = []
+  for (let at = html.indexOf(ASSET_LITERAL); at !== -1; at = html.indexOf(ASSET_LITERAL, at + ASSET_LITERAL.length)) {
+    if (matchedStarts.has(at)) continue
+    const closing = html.indexOf('}}', at)
+    const end = closing === -1 ? html.length : Math.min(closing + 2, html.length)
+    fragments.push(html.slice(at, Math.min(end, at + MAX_FRAGMENT_CHARS)))
+  }
+  return fragments
 }
 ```
 
 `assetNamesReferenced` returning `[]` for a blank name (`{{ASSET:}}`) is deliberate: `unterminatedAssetReferences` reports it, because a blank name has no title to name in a refusal.
+
+Step 1's block tests two functions, so split it: keep `describe('assetNamesReferenced')` for the name cases and add a sibling `describe('unterminatedAssetReferences')` for the cases that only call the second, because a failure must name the function that failed. Add these four cases to the second block while you split it: a page with no placeholder at all returns `[]` (the branch most pages take, and the cheapest guard against an off-by-one in the count), `unterminatedAssetReferences('{{ASSET:}}')` equals `['{{ASSET:}}']`, `unterminatedAssetReferences('{{ASSET:a}} {{ASSET:b {{ASSET:c')` has length 2 (two malformed literals are two findings, not one), and a long page quotes the fragment rather than the copy around it:
+
+```ts
+  it('quotes the fragment and not the page around it', () => {
+    const html = '<h1>Bring your back pain to the clinic</h1><p>Book now</p>{{ASSET:hero</p>'
+    expect(unterminatedAssetReferences(html)).toEqual(['{{ASSET:hero</p>'])
+  })
+```
 
 - [ ] **Step 3: Run the tests**
 
