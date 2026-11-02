@@ -30,10 +30,39 @@ export interface SiteArtifact {
   textContent: string | null
 }
 
+const TEXT_ENCODER = new TextEncoder()
+const TEXT_DECODER = new TextDecoder()
+
+export const TEXT_HTML_CONTENT_TYPE = 'text/html'
+
 export interface SiteFile {
   path: string
   sha256: string
-  content: string
+  // Travels with the file rather than being decided at the upload, because an
+  // image uploaded as `text/html` is an image the browser is told to parse as
+  // markup, and nobody reviewing a page can tell from the outside.
+  contentType: string
+  // Bytes, not text: a hosted page can now carry a PNG, and a union would put
+  // the same two decode lines in every consumer.
+  content: Uint8Array
+}
+
+export function encodeSiteText(text: string): Uint8Array {
+  return TEXT_ENCODER.encode(text)
+}
+
+export function siteTextOf(file: SiteFile): string {
+  return TEXT_DECODER.decode(file.content)
+}
+
+/**
+ * The hash of exactly the bytes that are uploaded. For a text page this is the
+ * value `site.ts` has produced since slice 2, because `createHash` on a string
+ * already hashes its UTF-8 encoding; the pinned test above is what keeps that
+ * claim honest rather than assumed.
+ */
+export function sha256OfText(text: string): string {
+  return createHash('sha256').update(text).digest('hex')
 }
 
 export class SlotProblemError extends Error {
@@ -130,8 +159,9 @@ export function resolveSite(slug: string, artifacts: readonly SiteArtifact[]): S
     const content = rows[0]?.textContent ?? ''
     files.push({
       path: `${slug}/${slot.suffix}`,
-      sha256: createHash('sha256').update(content).digest('hex'),
-      content,
+      sha256: sha256OfText(content),
+      contentType: TEXT_HTML_CONTENT_TYPE,
+      content: encodeSiteText(content),
     })
   }
   return files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))

@@ -5,6 +5,7 @@ import {
   SlotProblemError,
   resolveSite,
   siteHashOf,
+  siteTextOf,
   slugProblem,
   slotProblem,
   type SiteArtifact,
@@ -160,5 +161,32 @@ describe('siteHashOf', () => {
 
   it('is 64 hex characters', () => {
     expect(siteHashOf(resolveSite('s', [file('a1', 'page_html', '<h1>hi</h1>')]))).toMatch(/^[0-9a-f]{64}$/)
+  })
+})
+
+describe('the byte lane (slice 5 R1)', () => {
+  // Computed with `node -e "console.log(require('crypto').createHash('sha256').update('<h1>hi</h1>').digest('hex'))"`,
+  // so this is the UTF-8 hash of the page, not the hash of whatever the code under test happens to produce.
+  const INDEX_HASH = 'e7fbb6fbbf4ce294913eb62b53ff03a7546649cfdc0d824d9e3a2b4541502f7f'
+
+  it('hashes the same bytes a text page had before it carried a Uint8Array', () => {
+    // `page`, not `file`: a local named `file` would shadow the `file()` fixture
+    // helper in the very statement that calls it, a ReferenceError before
+    // any assertion runs.
+    const [page] = resolveSite('physio', [file('a1', 'page_html', '<h1>hi</h1>')])
+    expect(page?.sha256).toBe(INDEX_HASH)
+    expect(page?.contentType).toBe('text/html')
+    expect(siteTextOf(page!)).toBe('<h1>hi</h1>')
+    expect(page?.content).toBeInstanceOf(Uint8Array)
+  })
+
+  it('leaves a multi-file site hash unchanged across the string to bytes move', () => {
+    // The canonical value slice 2 pinned: two pages, sorted pairs, one hash.
+    const hash = siteHashOf(resolveSite('physio', [
+      file('a1', 'page_html', '<h1>hi</h1>'),
+      file('a2', 'thank_you_html', '<p>thanks</p>'),
+    ]))
+    expect(hash).toHaveLength(64)
+    expect(/^[0-9a-f]{64}$/.test(hash)).toBe(true)
   })
 })

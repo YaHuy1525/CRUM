@@ -48,7 +48,7 @@ export function buildUploadForm(files: readonly SiteFile[], branch: string, comm
   const manifest: Record<string, string> = {}
   for (const file of files) {
     manifest[file.path] = file.sha256
-    form.set(file.sha256, new Blob([file.content], { type: 'text/html' }))
+    form.set(file.sha256, new Blob([file.content], { type: file.contentType }))
   }
   form.set('manifest', JSON.stringify(manifest))
   form.set('branch', branch)

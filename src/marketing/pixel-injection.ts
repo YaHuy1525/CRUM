@@ -3,7 +3,8 @@
 // publish time, so every published page carries tracking without the
 // funnel-builder having to paste the snippet by hand.
 
-import type { SiteFile } from './site'
+import { createHash } from 'node:crypto'
+import { encodeSiteText, siteTextOf, type SiteFile } from './site'
 
 const PIXEL_SNIPPET = `<!-- Meta Pixel Code -->
 <script>
@@ -75,8 +76,16 @@ export function injectPixelIntoFiles(
     return { files: [...files], injected: false }
   }
   const patched = files.map((file) => {
+    // The `.html` test is what keeps this module from ever touching a picture:
+    // an asset's bytes go through the resolver, not through a string rewrite.
     if (!file.path.endsWith('.html')) return file
-    return { ...file, content: injectPixel(file.content, pixelId) }
+    const injected = injectPixel(siteTextOf(file), pixelId)
+    // Recomputed, because after Task 6 the same field describes a PNG's bytes in
+    // a manifest Cloudflare checks. This does not weaken the approval invariant:
+    // readSiteFiles compares the approved hash BEFORE injecting, so the receipt
+    // still covers the bytes the reviewer saw, and the pixel stays the documented
+    // deviation from them (spec section 2).
+    return { ...file, content: encodeSiteText(injected), sha256: createHash('sha256').update(injected).digest('hex') }
   })
   return { files: patched, injected: true }
 }

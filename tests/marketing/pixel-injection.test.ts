@@ -4,18 +4,19 @@
 // is skipped with a warning when the pixel ID is not configured, is applied to
 // every HTML file in a multi-file site, and leaves non-HTML files untouched.
 
+import { createHash } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 import {
   buildPixelSnippet,
   injectPixel,
   injectPixelIntoFiles,
 } from '@/marketing/pixel-injection'
-import type { SiteFile } from '@/marketing/site'
+import { siteTextOf, type SiteFile } from '@/marketing/site'
 
 const PIXEL_ID = '1234567890'
 
 function makeFile(path: string, content: string): SiteFile {
-  return { path, content, sha256: 'unused' }
+  return { path, content: new TextEncoder().encode(content), contentType: 'text/html', sha256: 'unused' }
 }
 
 describe('buildPixelSnippet', () => {
@@ -71,7 +72,7 @@ describe('injectPixelIntoFiles', () => {
     expect(injected).toBe(true)
     expect(result).toHaveLength(2)
     for (const f of result) {
-      expect(f.content).toContain(buildPixelSnippet(PIXEL_ID))
+      expect(siteTextOf(f)).toContain(buildPixelSnippet(PIXEL_ID))
     }
   })
 
@@ -84,8 +85,8 @@ describe('injectPixelIntoFiles', () => {
     const { files: result } = injectPixelIntoFiles(files, PIXEL_ID)
     const css = result.find((f) => f.path.endsWith('.css'))!
     const js = result.find((f) => f.path.endsWith('.js'))!
-    expect(css.content).toBe('body { color: red }')
-    expect(js.content).toBe('console.log("hi")')
+    expect(siteTextOf(css)).toBe('body { color: red }')
+    expect(siteTextOf(js)).toBe('console.log("hi")')
   })
 
   it('skips injection and logs a warning when pixel ID is undefined', () => {
@@ -116,6 +117,21 @@ describe('injectPixelIntoFiles', () => {
     const files: SiteFile[] = [original]
     const { files: result } = injectPixelIntoFiles(files, PIXEL_ID)
     expect(result[0]).not.toBe(original)
-    expect(original.content).not.toContain(buildPixelSnippet(PIXEL_ID))
+    expect(siteTextOf(original)).not.toContain(buildPixelSnippet(PIXEL_ID))
+  })
+})
+
+describe('the hash after injection', () => {
+  it('describes the bytes that were injected, not the bytes that were approved', () => {
+    const [one] = injectPixelIntoFiles([makeFile('physio/index.html', '<html><head></head></html>')], PIXEL_ID).files
+    const file = one!
+    expect(file.sha256).toBe(createHash('sha256').update(siteTextOf(file)).digest('hex'))
+    expect(file.sha256).not.toBe(makeFile('physio/index.html', '<html><head></head></html>').sha256)
+  })
+
+  it('leaves a non-html file byte-identical', () => {
+    const png = { path: 'physio/assets/a.png', sha256: 'deadbeef', contentType: 'image/png', content: new Uint8Array([1, 2, 3]) }
+    const result = injectPixelIntoFiles([png], PIXEL_ID)
+    expect(result.files[0]).toEqual(png)
   })
 })
