@@ -683,6 +683,15 @@ function resolveAssets(artifacts: readonly SiteArtifact[]): { choices: AssetChoi
     if (bad.length > 0) {
       return { choices: [], problem: { token: 'asset_unresolved', detail: `a page carries \`${ASSET_LITERAL}\` with no closing braces, so nothing could be substituted into ${JSON.stringify(bad[0])}` } }
     }
+    // A placeholder the grammar matches but no name fills is the same mistake in a
+    // different shape: `assetNamesReferenced` drops it, so the name lanes never see it,
+    // and substitution would look up the empty string. Refusing here is what keeps the
+    // promise that `siteProblem` says everything `resolveSite` would throw about.
+    for (const match of html.matchAll(ASSET_REFERENCE)) {
+      if ((match[1] ?? '').trim() === '') {
+        return { choices: [], problem: { token: 'asset_unresolved', detail: `a page carries ${JSON.stringify(match[0])}, which names no asset, so there is nothing to substitute` } }
+      }
+    }
   }
 
   const choices: AssetChoice[] = []
@@ -693,7 +702,7 @@ function resolveAssets(artifacts: readonly SiteArtifact[]): { choices: AssetChoi
       return { choices: [], problem: { token: 'asset_name_missing', detail: `the page names the asset "${name}" and the bundle holds no image with that title (its images are ${titles.length > 0 ? titles.map((t) => `"${t}"`).join(', ') : 'none'}` } }
     }
     if (matches.length > 1) {
-      return { choices: [], problem: { token: 'asset_name_ambiguous', detail: `two images in this bundle are titled "${name}" (${matches.map((m) => m.id).join(', ')}), so the placeholder has more than one answer` } }
+      return { choices: [], problem: { token: 'asset_name_ambiguous', detail: `${matches.length} images in this bundle are titled "${name}" (${matches.map((m) => m.id).join(', ')}), so the placeholder has more than one answer` } }
     }
     const artifact = matches[0]!
     const documentId = artifact.documentId ?? ''
@@ -718,9 +727,9 @@ function resolveAssets(artifacts: readonly SiteArtifact[]): { choices: AssetChoi
   if (choices.length > MAX_SITE_ASSETS) {
     return { choices: [], problem: { token: 'asset_too_large', detail: `the page references ${choices.length} images and ${MAX_SITE_ASSETS} is the most CRUM publishes for one bundle` } }
   }
-  const total = choices.reduce((sum, c) => sum + c.byteLength, 0) + pageArtifacts(artifacts).reduce((sum, p) => sum + (p.textContent ?? '').length, 0)
+  const total = choices.reduce((sum, c) => sum + c.byteLength, 0) + pageArtifacts(artifacts).reduce((sum, p) => sum + encodeSiteText(p.textContent ?? '').byteLength, 0)
   if (total > MAX_SITE_BYTES) {
-    return { choices: [], problem: { token: 'asset_too_large', detail: `the page and its pictures together are ${total} bytes over a ${MAX_SITE_BYTES} ceiling` } }
+    return { choices: [], problem: { token: 'asset_too_large', detail: `the page and its pictures together are ${total} bytes and CRUM publishes nothing over ${MAX_SITE_BYTES}` } }
   }
   return { choices, problem: null }
 }
@@ -744,7 +753,9 @@ export function siteProblem(artifacts: readonly SiteArtifact[]): string | null {
 }
 ```
 
-`resolveAssets` returns the first problem only, which is what makes the assertion in Step 1's `it.each` table true for a fixture with exactly one defect. The `asset_too_large` detail for the site ceiling says the token, not a sentence, because that row of the spec's table is the arithmetic case and the number is the actionable part.
+`resolveAssets` returns the first problem only, which is what makes the assertion in Step 1's `it.each` table true for a fixture with exactly one defect.
+
+Four corrections this task's own review forced, and they are now part of the requirement above rather than suggestions: the site total counts a page in **UTF-8 bytes** (`encodeSiteText(...).byteLength`), not UTF-16 code units, because the ceiling is quoted in bytes and a sentence that mixes units is the same class of untruth the plan forbids for hashes; the site-ceiling sentence states the size and the bound rather than calling the size an excess; an `ASSET_REFERENCE` match whose capture trims to empty is refused here with `asset_unresolved`, because otherwise `siteProblem` stays silent while `resolveSite` throws and the stage-and-approve sequence the plan refuses comes back; and the ambiguity sentence counts the images instead of asserting there are exactly two. One more, for the lanes a consumer has to branch on: `AssetProblemError` gains an optional third constructor parameter, `readonly ceiling?: 'image' | 'count' | 'site'`, passed from the three byte-ceiling lanes only. The token union stays at its six members (spec section 12), so a consumer that must tell "shrink this picture" from "use fewer pictures" from "the bundle is too big" reads the field rather than parsing English.
 
 - [ ] **Step 4: `resolveSite` builds the image files**
 
