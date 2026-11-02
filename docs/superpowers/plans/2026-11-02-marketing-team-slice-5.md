@@ -1352,9 +1352,21 @@ it('reports a picture no page references without refusing the stage', async () =
     'UPDATE marketing_bundles': [{ id: BUNDLE_ID }],
   })
   const result = await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
-  expect(result).toMatchObject({ proceed: undefined, assetsUnreferenced: ['hero'] })
+  expect(result.proceed).toBeUndefined()
+  expect(result.assetsUnreferenced).toEqual(['hero'])
+  expect(result.message).toContain('1 image(s) are not referenced by any page and will not be published: hero')
 })
 ```
+
+Assert `result.proceed` with `toBeUndefined()` rather than `toMatchObject({ proceed: undefined })`.
+Vitest's `toMatchObject` requires the key to exist, so the object assertion can only be satisfied by
+adding an explicit `proceed: undefined` to the tool's success return — a production shape change,
+asymmetric with the refusal branch's `proceed: false`, made to please a test rather than a
+consumer. `toBeUndefined()` passes whether or not the key is present, so the success return keeps
+its shape, and `toEqual(['hero'])` says exactly what the field must hold. The third line is what
+keeps Step 3's sentence honest: a mandated message nobody asserts can regress silently, and this
+case stages a bundle whose `hero` no page places, so the assertion costs one line and fails the
+moment the sentence is dropped or its count changes.
 
 The last case's `'JOIN documents d'` handler sits first in its object on purpose, the way the
 file's existing fixtures do it at `:774-777`: `stubQueries` answers from the first fragment, in
@@ -1451,6 +1463,17 @@ Append to the success message when the list is non-empty, in the same sentence s
 ```
 
 Compute `const unreferenced = unreferencedAssetNames(artifacts)` once and use it in both places. It is not added to the staged payload: `tests/governance/marketing-payload.test.ts` sweeps prose out of payloads, and an image title is prose an agent wrote.
+
+Two corrections to the snippet above, both from the review of this task's first pass. The
+skeleton it replaces (`Bundle … staged for approval (…). Approving this queues a publish of the
+page <slug>. <n> asset(s) … ceiling … minor units`) is what the existing assertions in
+`tests/mastra/marketing-write-tools.test.ts` are pinned to — `'3 asset(s)'` and the ceiling
+sentence are verbatim there — and case three above asserts `toContain('free-scan')`, which the
+snippet's form can never produce because a bundle id is a uuid and the counts are numbers. So do
+not swap the skeleton for the snippet: insert the snippet's unreferenced clause into the existing
+message where it reads naturally, and keep the slug sentence the skeleton already carries. The
+clause itself is verbatim. Second: nothing in this task adds `proceed` to the success return. If
+`assetsUnreferenced` is the only new key, it is the only new key.
 
 - [ ] **Step 4: Run the tests**
 
