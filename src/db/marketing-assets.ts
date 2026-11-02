@@ -5,8 +5,9 @@
 // section 4.1) and the byte lane already exists.
 
 import { createHash } from 'node:crypto'
-import { getDbClient } from './client'
+import { getDbClient, type Queryable } from './client'
 import { insertDocument } from './documents'
+import { assetNamesReferenced, type SiteArtifact } from '../marketing/site'
 
 export interface AssetProvenance {
   replicateId: string
@@ -136,6 +137,128 @@ export async function getAssetBytes(
   const row = result.rows[0]
   if (!row) return null
   return { kind: row.kind, status: row.status, mime: row.mime, data: row.data }
+}
+
+/**
+ * A `bytea` comes back from node-pg as a `Buffer`, and `Buffer` *is* a
+ * `Uint8Array` — which is the trap rather than the excuse: its `.slice()` answers a
+ * view of the driver's shared allocation pool instead of a copy, and the pool is
+ * the memory the next small read on that connection writes over. The byte reads
+ * hand their value straight to a `sha256` and then to an upload, so the conversion
+ * is made here, once, and it copies. Only the images a page references reach this
+ * function, so the copy is bounded by the placeholders on the page rather than by
+ * everything a bundle ever paid for.
+ */
+function plainBytesOf(value: Uint8Array): Uint8Array {
+  return Uint8Array.from(value)
+}
+
+/**
+ * The one batched byte read. `getAssetBytes` stays for the single-document route
+ * because that route needs the kind and status columns too, and a second
+ * per-document call in a loop would be N round trips to answer one question the
+ * site already knows the whole list of.
+ */
+export async function getAssetBytesByIds(
+  tenantId: string,
+  documentIds: readonly string[],
+  client: Queryable = getDbClient(),
+): Promise<Map<string, Uint8Array>> {
+  const found = new Map<string, Uint8Array>()
+  if (documentIds.length === 0) return found
+  const result = await client.query<{ document_id: string; data: Uint8Array }>(
+    // `document_id` is unique per document in this lane, and the LIMIT in the
+    // sibling read at `getAssetBytes` is there for the same reason. A second file
+    // row for one document would silently pick one, so the map keeps the first
+    // rather than pretending the question has no answer.
+    `SELECT f.document_id, f.data
+       FROM document_files f
+      WHERE f.tenant_id = $1 AND f.document_id = ANY($2::uuid[])
+        AND EXISTS (
+              SELECT 1 FROM documents k
+               WHERE k.id = f.document_id AND k.kind = 'marketing_asset'
+            )
+      ORDER BY f.created_at ASC`,
+    [tenantId, [...documentIds]],
+  )
+  for (const row of result.rows) {
+    if (!found.has(row.document_id)) found.set(row.document_id, plainBytesOf(row.data))
+  }
+  return found
+}
+
+/**
+ * The artifacts of one bundle, in the shape `resolveSite` reads, with the bytes of
+ * only the images a page actually references.
+ *
+ * Two reads rather than one, and the second only when there is something to read:
+ * the first names the referenced documents, the second fetches their bytes. A
+ * single join that always pulled `document_files.data` would put every megabyte a
+ * bundle ever paid for into memory to hash a page that mentions none of them, and
+ * Cloudflare's per-request body limit is where that mistake would surface.
+ *
+ * Every row of the bundle comes back, not just the three kinds a site can carry:
+ * `marketing.stage_bundle` counts this list for its payload, and a loader that
+ * quietly filtered the count would move a number a reviewer is shown.
+ *
+ * The `k` alias and the `EXISTS` are load-bearing, not tidiness: this file's
+ * sibling status read is matched by the fragment `'JOIN documents d'` in the stub
+ * harness of `tests/mastra/marketing-write-tools.test.ts`, and a loader carrying
+ * that fragment would be answered with status rows instead of artifact rows. These
+ * two reads stay matchable by `'FROM marketing_artifacts'` and
+ * `'FROM document_files'` alone.
+ */
+export async function loadSiteArtifacts(
+  tenantId: string,
+  bundleId: string,
+  client: Queryable = getDbClient(),
+): Promise<SiteArtifact[]> {
+  const rows = await client.query<{
+    id: string
+    kind: string
+    text_content: string | null
+    document_id: string | null
+    title: string | null
+    mime: string | null
+  }>(
+    `SELECT a.id, a.kind, a.text_content, a.document_id, k.title, k.mime
+       FROM marketing_artifacts a
+       LEFT JOIN documents k ON k.id = a.document_id
+      WHERE a.tenant_id = $1 AND a.bundle_id = $2
+      ORDER BY a.created_at ASC`,
+    [tenantId, bundleId],
+  )
+  const artifacts: SiteArtifact[] = rows.rows.map((row) => ({
+    id: row.id,
+    kind: row.kind,
+    textContent: row.text_content,
+    documentId: row.document_id,
+    title: row.title,
+    mime: row.mime,
+  }))
+
+  const referenced = new Set(artifacts.flatMap((a) => (a.kind === 'page_html' || a.kind === 'thank_you_html' ? assetNamesReferenced(a.textContent ?? '') : [])))
+  // `typeof … === 'string'` and not `!== null` on both sides: `documentId` is
+  // optional on `SiteArtifact`, so the absent key is `undefined`, and a `null` test
+  // alone would let it into the byte read. The two predicates below are the same
+  // question — which images does this page pay for — so they are written the same
+  // way: an image the byte read was asked for but never handed `bytes` would be a
+  // resolver refusing `asset_bytes_missing` on a picture that exists.
+  const want = artifacts
+    .filter((a) => a.kind === 'image' && typeof a.documentId === 'string' && referenced.has((a.title ?? '').trim()))
+    .map((a) => a.documentId as string)
+  if (want.length === 0) return artifacts
+
+  const bytes = await getAssetBytesByIds(tenantId, want, client)
+  for (const artifact of artifacts) {
+    if (artifact.kind !== 'image' || typeof artifact.documentId !== 'string') continue
+    if (!referenced.has((artifact.title ?? '').trim())) continue
+    // Set explicitly rather than left absent, so a document with no file row is
+    // `null` — the state `resolveAssets` refuses as `asset_bytes_missing` — and a
+    // caller that reads the key gets the same answer the resolver reads.
+    artifact.bytes = bytes.get(artifact.documentId) ?? null
+  }
+  return artifacts
 }
 
 /**

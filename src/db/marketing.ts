@@ -1,4 +1,4 @@
-import { getDbClient } from './client'
+import { getDbClient, type Queryable } from './client'
 import { artifactIdFor, type BundleHashInput } from '../marketing/hash'
 import { pageSlugOf } from '../marketing/outbox'
 import { resolveSite, siteHashOf, slotProblem } from '../marketing/site'
@@ -302,9 +302,12 @@ export async function getFailedAction(
  * `site_hash_moved` instead of trusting a hash computed earlier. Through
  * `currentSiteHash` there is no transaction to hold the lock, so there it
  * covers only the statement that takes it.
+ *
+ * The client parameter is `Queryable`, the name `./client` gives that shape,
+ * rather than the structural type spelled out again here.
  */
 export async function siteHashInTransaction(
-  client: { query: <T = Record<string, unknown>>(text: string, values?: unknown[]) => Promise<{ rows: T[] }> },
+  client: Queryable,
   tenantId: string,
   bundleId: string,
 ): Promise<string | null> {

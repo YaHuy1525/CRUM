@@ -3,6 +3,17 @@ import { parseEnv } from '../config/env'
 
 let pool: Pool | null = null
 
+/**
+ * The one-parameter read shape a data module takes when it must be able to run
+ * either on the pool or inside somebody else's transaction. `Pool` satisfies it,
+ * so a caller can pass `getDbClient()` or a client it checked out; naming it here
+ * is what keeps the fourth module that needs it from re-spelling the structural
+ * type and drifting from the first three.
+ */
+export interface Queryable {
+  query: <T = Record<string, unknown>>(text: string, values?: unknown[]) => Promise<{ rows: T[] }>
+}
+
 export function getDbClient(): Pool {
   if (pool) return pool
 

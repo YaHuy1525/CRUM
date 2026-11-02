@@ -61,6 +61,52 @@ const PROVENANCE = {
 
 const HASHED = sha(BYTES)
 
+type Row = Record<string, unknown>
+
+/**
+ * The documents behind the artifact fixtures. The byte read is keyed on
+ * `document_id`, so one test has to name the same uuid in two places — the
+ * artifact row the first query answers and the file row the second one does —
+ * and a literal uuid pasted twice proves nothing about the key the loader
+ * actually joined on.
+ */
+const DOC_IDS: Record<string, string> = {
+  a1: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaaa1',
+  a2: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaaa2',
+  a3: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaaa3',
+}
+
+function docId(artifactId: string): string {
+  const id = DOC_IDS[artifactId]
+  if (id === undefined) throw new Error(`docId: no document id is registered for artifact ${artifactId}`)
+  return id
+}
+
+/**
+ * One artifact row, shaped exactly as `loadSiteArtifacts`' first query selects
+ * it: the artifact columns plus the two enrichment columns that come from the
+ * joined document row (`title`, `mime`). `textContent` is accepted beside
+ * `text_content` because the field the resolver reads is camelCase, and a fixture
+ * that set the wrong key would read as a page with no copy rather than as a page.
+ */
+function artifactRow(over: Row = {}): Row {
+  const id = typeof over.id === 'string' ? over.id : 'a1'
+  const kind = typeof over.kind === 'string' ? over.kind : 'page_html'
+  const { textContent, ...rest } = over
+  return {
+    id,
+    kind,
+    // Only an image row carries a document: that is the key the byte read is made
+    // from, and a page row's `document_id` is never read.
+    document_id: kind === 'image' ? docId(id) : null,
+    text_content: '<h1>hi</h1>',
+    title: null,
+    mime: null,
+    ...(textContent === undefined ? {} : { text_content: textContent }),
+    ...rest,
+  }
+}
+
 beforeEach(() => {
   vi.resetModules()
   mockQuery.mockReset()
@@ -309,5 +355,98 @@ describe('the reads', () => {
     expect(call!.sql).toContain('tenant_id = $1')
     expect(call!.sql).toContain('document_id = $2')
     expect(call!.params).toEqual([TENANT, DOC])
+  })
+})
+
+describe('loadSiteArtifacts', () => {
+  it('reads the artifact rows without touching the data column', async () => {
+    const { loadSiteArtifacts } = await load()
+    const client = { query: vi.fn().mockResolvedValueOnce({ rows: [artifactRow()] }) }
+    const artifacts = await loadSiteArtifacts(TENANT, BUNDLE, client)
+    expect(artifacts[0]).toMatchObject({ kind: 'page_html', textContent: '<h1>hi</h1>' })
+    expect(client.query.mock.calls[0]![0]).not.toContain('f.data')
+    expect(client.query.mock.calls[0]![0]).toContain('k.title')
+    // The order is the promise the interface makes — the same `created_at ASC`
+    // `listMarketingArtifacts` reads with, so the two reads of one bundle agree on
+    // which artifact is first. The mock answers with whatever rows the fixture
+    // supplies, so only the SQL text can show the sort was dropped.
+    expect(client.query.mock.calls[0]![0]).toContain('ORDER BY a.created_at ASC')
+    // The alias is a test-harness requirement, not a style choice. Read the note
+    // under Step 2: eight stage fixtures route their artifact read by SQL
+    // fragment, and a loader whose SQL contains `JOIN documents d` gets answered
+    // with the wrong rows.
+    expect(client.query.mock.calls[0]![0]).not.toContain('JOIN documents d')
+    expect(client.query.mock.calls[0]![0]).not.toContain('FROM document_files')
+  })
+
+  it('reads bytes for exactly the documents a page references, in one second query', async () => {
+    const { loadSiteArtifacts } = await load()
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [artifactRow({ kind: 'page_html', textContent: '<img src="{{ASSET:hero}}">' }), artifactRow({ id: 'a2', kind: 'image', text_content: null, title: 'hero', mime: 'image/png' }), artifactRow({ id: 'a3', kind: 'image', text_content: null, title: 'unused', mime: 'image/png' })] })
+        .mockResolvedValueOnce({ rows: [{ document_id: docId('a2'), data: new Uint8Array([1]) }] }),
+    }
+    const artifacts = await loadSiteArtifacts(TENANT, BUNDLE, client)
+    const second = client.query.mock.calls[1]!
+    expect(String(second[0])).toContain('ANY($2::uuid[])')
+    expect(second[1]).toEqual([TENANT, [docId('a2')]])
+    expect(artifacts.find((a) => a.id === 'a2')?.bytes).toEqual(new Uint8Array([1]))
+    expect(artifacts.find((a) => a.id === 'a3')?.bytes).toBeUndefined()
+  })
+
+  it('asks for no bytes at all when no page has a placeholder', async () => {
+    const { loadSiteArtifacts } = await load()
+    const client = { query: vi.fn().mockResolvedValueOnce({ rows: [artifactRow()] }) }
+    await loadSiteArtifacts(TENANT, BUNDLE, client)
+    expect(client.query).toHaveBeenCalledTimes(1)
+  })
+
+  it('hands back a null bytes for an image whose document has no file row', async () => {
+    const { loadSiteArtifacts } = await load()
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [artifactRow({ kind: 'page_html', textContent: '{{ASSET:hero}}' }), artifactRow({ id: 'a2', kind: 'image', text_content: null, title: 'hero', mime: 'image/png' })] })
+        .mockResolvedValueOnce({ rows: [] }),
+    }
+    const artifacts = await loadSiteArtifacts(TENANT, BUNDLE, client)
+    expect(artifacts.find((a) => a.id === 'a2')?.bytes).toBeNull()
+  })
+})
+
+describe('getAssetBytesByIds', () => {
+  it('reads one batch of bytes, tenant-scoped and asset-kind only', async () => {
+    const { getAssetBytesByIds } = await load()
+    // A `Buffer`, because that is what node-pg hands back for a `bytea` column and
+    // the interface promises a plain `Uint8Array`. The conversion is the finding:
+    // a Buffer keeps `.slice()` as a view of the driver's pooled ArrayBuffer, which
+    // the driver recycles, so a caller that hashed these bytes after a second query
+    // could hash somebody else's.
+    const source = Buffer.from([1, 2, 3])
+    const client = { query: vi.fn().mockResolvedValueOnce({ rows: [{ document_id: docId('a2'), data: source }] }) }
+    const found = await getAssetBytesByIds(TENANT, [docId('a2')], client)
+    expect([...found.keys()]).toEqual([docId('a2')])
+    const bytes = found.get(docId('a2'))!
+    // `constructor.name` and not `instanceof`: a `Buffer` *is* a `Uint8Array`, so
+    // the instanceof question answers yes to both and proves nothing about which
+    // one the caller was handed.
+    expect(bytes.constructor.name).toBe('Uint8Array')
+    // And a copy rather than an alias: node-pg builds a small `bytea` inside a
+    // shared allocation pool that the next read on the connection writes over, so
+    // an aliased byte here is a hash of somebody else's picture later.
+    source[0] = 9
+    expect(Array.from(bytes)).toEqual([1, 2, 3])
+    expect(String(client.query.mock.calls[0]![0])).toContain("k.kind = 'marketing_asset'")
+    expect(client.query.mock.calls[0]![1]).toEqual([TENANT, [docId('a2')]])
+  })
+
+  it('issues no query at all for an empty list of documents', async () => {
+    const { getAssetBytesByIds } = await load()
+    const client = { query: vi.fn().mockResolvedValue({ rows: [] }) }
+    const found = await getAssetBytesByIds(TENANT, [], client)
+    // Not "one query that matches nothing": an empty array against `= ANY($2::uuid[])`
+    // is a round trip to Postgres for an answer the caller already knows, and a
+    // `[]` parameter the driver can render as an untypeable literal.
+    expect(found.size).toBe(0)
+    expect(client.query).not.toHaveBeenCalled()
   })
 })
