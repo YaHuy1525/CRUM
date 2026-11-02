@@ -202,6 +202,13 @@ export const EnvSchema = z.object({
     blankAsUnset,
     z.string().trim().min(1).default('black-forest-labs/flux-1.1-pro'),
   ),
+  // Which registered provider this deployment pays. One name, because a fallback
+  // would make the ceiling arithmetic a lie (spec section 8.1). The value is not
+  // validated against a list here: the registry is built at boot, and
+  // marketing.generate_assets refuses an unknown name with `image_provider_unknown`
+  // naming what *is* registered, which is a better message than a boot failure on a
+  // spelling.
+  CRUM_IMAGE_PROVIDER: z.preprocess(blankAsUnset, z.string().trim().min(1).default('replicate')),
   // Minor units, i.e. cents: the same unit line `marketing_image_spend` stores,
   // so the ceiling and the ledger are one number line and a reader never has to
   // convert between them. 2000 is $20 a day.

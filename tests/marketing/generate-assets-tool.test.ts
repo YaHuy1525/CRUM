@@ -12,7 +12,9 @@ const h = vi.hoisted(() => ({
   committedBundleSpendMinor: vi.fn(),
   recordImageSpend: vi.fn(),
   createHumanTask: vi.fn(),
-  getImageAdapter: vi.fn(),
+  selectImageAdapter: vi.fn(),
+  listImageProviders: vi.fn(),
+  selectedImageProviderName: vi.fn(),
   generate: vi.fn(),
 }))
 
@@ -43,7 +45,11 @@ vi.mock('../../src/marketing/image-spend', async () => {
   return { ...actual, committedSpendMinor: h.committedSpendMinor, committedBundleSpendMinor: h.committedBundleSpendMinor, recordImageSpend: h.recordImageSpend }
 })
 vi.mock('../../src/db/pending-writes', () => ({ createHumanTask: h.createHumanTask }))
-vi.mock('../../src/marketing/image-provider', () => ({ getImageAdapter: h.getImageAdapter }))
+vi.mock('../../src/marketing/image-provider', () => ({
+  selectImageAdapter: h.selectImageAdapter,
+  listImageProviders: h.listImageProviders,
+  selectedImageProviderName: h.selectedImageProviderName,
+}))
 
 const TENANT = '11111111-1111-4111-8111-111111111111'
 const OWNER = '77777777-7777-4777-8777-777777777777'
@@ -130,7 +136,7 @@ async function run(input: { bundleId: string }) {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  h.getImageAdapter.mockReturnValue({
+  h.selectImageAdapter.mockReturnValue({
     provider: 'replicate',
     model: 'black-forest-labs/flux-1.1-pro',
     ceilingMinor: 2000,
@@ -139,6 +145,8 @@ beforeEach(() => {
     maxBytes: 15 * 1024 * 1024,
     generate: h.generate,
   })
+  h.listImageProviders.mockReturnValue(['replicate'])
+  h.selectedImageProviderName.mockReturnValue('replicate')
   h.getMarketingBundle.mockResolvedValue(bundle('draft'))
   h.getDesignerArtifactText.mockResolvedValue(promptJson('hero-image'))
   h.hashImageBytes.mockReturnValue('c'.repeat(64))
@@ -199,10 +207,38 @@ describe('marketing.generate_assets refuses before it costs anything', () => {
   })
 
   it('refuses at call time when no adapter is registered, which is an absent token', async () => {
-    h.getImageAdapter.mockReturnValue(null)
+    h.selectImageAdapter.mockReturnValue(null)
+    h.listImageProviders.mockReturnValue([])
+    h.selectedImageProviderName.mockReturnValue('replicate')
     const result = await run({ bundleId: BUNDLE })
     expect(result.refused[0]!.code).toBe('image_provider_not_configured')
     expect(h.generate).not.toHaveBeenCalled()
+  })
+
+  it('refuses with image_provider_unknown when the config names something nothing registered', async () => {
+    h.selectImageAdapter.mockReturnValue(null)
+    h.listImageProviders.mockReturnValue(['replicate'])
+    h.selectedImageProviderName.mockReturnValue('stability')
+    const result = await run({ bundleId: BUNDLE })
+    expect(result.refused[0]!.code).toBe('image_provider_unknown')
+    expect(String(result.refused[0]!.detail)).toContain('stability')
+    expect(String(result.refused[0]!.detail)).toContain('replicate')
+    expect(h.generate).not.toHaveBeenCalled()
+  })
+
+  it('never charges a second provider for a picture the first one failed to make', async () => {
+    // The ruling (option A) in test form: one adapter registered, one failure with a
+    // charge, and the run reports the charge with no second attempt. A fallback would
+    // make the ceiling arithmetic a lie, because two providers failing one image
+    // bill one image twice.
+    h.generate.mockResolvedValueOnce(
+      failImage('replicate_down', 'replicate down', { predictionId: 'pred-hero-image', costUsd: '0.04', costMinor: 4 }),
+    )
+    const result = await run({ bundleId: BUNDLE })
+    expect(h.generate).toHaveBeenCalledTimes(1)
+    expect(h.recordImageSpend).toHaveBeenCalledTimes(1)
+    expect(result.refused[0]!.code).toBe('replicate_down')
+    expect(result.spentMinor).toBe(4)
   })
 
   it('refuses the whole run before any money moves when the ceiling will not cover it', async () => {

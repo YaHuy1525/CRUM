@@ -119,18 +119,20 @@ describe('slice 4 image adapter registration', () => {
   }
 
   it('leaves no adapter registered when the token is absent', async () => {
-    const { getImageAdapter } = await import('../../src/marketing/image-provider')
+    const { selectImageAdapter, __imageProviderRegistry } = await import('../../src/marketing/image-provider')
+    __imageProviderRegistry.clear()
     createCrumMastra(envWith(), { storage: testStore() })
-    expect(getImageAdapter()).toBeNull()
+    expect(selectImageAdapter()).toBeNull()
   })
 
   it('registers an adapter carrying the ceiling and estimate the env supplied', async () => {
-    const { getImageAdapter } = await import('../../src/marketing/image-provider')
+    const { selectImageAdapter, __imageProviderRegistry } = await import('../../src/marketing/image-provider')
+    __imageProviderRegistry.clear()
     createCrumMastra(
       envWith({ ...IMAGE_ENV, CRUM_IMAGE_SPEND_CEILING_MINOR: '5000', CRUM_IMAGE_COST_MINOR_PER_IMAGE: '9' }),
       { storage: testStore() },
     )
-    const adapter = getImageAdapter()
+    const adapter = selectImageAdapter()
     expect(adapter).not.toBeNull()
     expect(adapter?.provider).toBe('replicate')
     expect(adapter?.model).toBe('black-forest-labs/flux-1.1-pro')

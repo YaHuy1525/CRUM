@@ -47,7 +47,7 @@ import {
 } from '../../db/marketing-assets'
 import { parseAssetPrompts } from '../../marketing/asset-prompts'
 import type { AssetPrompt } from '../../marketing/asset-prompts'
-import { getImageAdapter } from '../../marketing/image-provider'
+import { selectImageAdapter, listImageProviders, selectedImageProviderName } from '../../marketing/image-provider'
 import { admitsRun, committedBundleSpendMinor, committedSpendMinor, recordImageSpend } from '../../marketing/image-spend'
 import { generateAssetsRiskView } from '../../marketing/payload'
 
@@ -1089,14 +1089,14 @@ export const retryPublishTool = createTool({
 /**
  * The codes this tool can put in `refused[].code`, in the order the refusal chain
  * reaches them: run-level `not_found`, `bundle_not_generable`,
- * `image_provider_not_configured`, `no_asset_prompts`, `asset_prompts_unparsable`,
+ * `image_provider_not_configured`, `image_provider_unknown`, `no_asset_prompts`, `asset_prompts_unparsable`,
  * `image_spend_ceiling_reached`, `policy_gate_raised`; per-asset
  * `image_generation_failed`, `image_generation_timeout`, `asset_too_large`,
  * `prompt_too_long`, `unsupported_aspect_ratio` (the five `ImageFailureCode` values
  * `src/marketing/replicate.ts:26-31` can answer with, carried through verbatim) and
  * `asset_storing_failed`.
  *
- * The adapter check (`getImageAdapter()`) comes before the artifact read
+ * The adapter check (`selectImageAdapter()`) comes before the artifact read
  * (`getDesignerArtifactText`) on purpose, so a run with no adapter
  * registered and an unparsable artifact answers `image_provider_not_configured`,
  * not `asset_prompts_unparsable`: the adapter is the cheaper of the two questions
@@ -1228,12 +1228,16 @@ export const generateAssetsTool = createTool({
         })
       }
 
-      const adapter = refused.length === 0 ? getImageAdapter() : null
+      const adapter = refused.length === 0 ? selectImageAdapter() : null
       if (refused.length === 0 && adapter === null) {
+        const registered = listImageProviders()
         refused.push({
           name: '*',
-          code: 'image_provider_not_configured',
-          detail: 'No image adapter is registered, so CRUM_REPLICATE_API_TOKEN is unset. Nothing was requested and nothing was spent.',
+          code: registered.length === 0 ? 'image_provider_not_configured' : 'image_provider_unknown',
+          detail:
+            registered.length === 0
+              ? 'No image adapter is registered, so this install has no provider credential. Nothing was requested and nothing was spent.'
+              : `CRUM_IMAGE_PROVIDER is "${selectedImageProviderName()}", which no adapter answers. Registered: ${registered.join(', ')}. Nothing was requested and nothing was spent.`,
         })
       }
 

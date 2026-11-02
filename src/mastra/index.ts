@@ -39,7 +39,7 @@ import { createGmailConnectRoute, createGmailCallbackRoute } from '../api/gmail'
 import { registerActionAdapter } from '../marketing/outbox'
 import { makePromotePageAdapter, makePublishPageAdapter, pageHostConfigFromEnv } from '../marketing/page-host'
 import { makeCreateCampaignAdapter, makeSetCampaignStatusAdapter } from '../marketing/meta-ads'
-import { makeReplicateAdapter, setImageAdapter } from '../marketing/image-provider'
+import { makeReplicateAdapter, registerImageAdapter, setSelectedImageProvider } from '../marketing/image-provider'
 
 export interface CrumMastraOptions {
   storage?: CrumStorage
@@ -102,7 +102,7 @@ export function buildCrumServerConfig(env: CrumEnv): ServerConfig {
 // can find when asking why staging refuses.
 let lastLane: 'pages' | 'none' | undefined
 let lastMetaLane: 'meta-ads' | 'none' | undefined
-let lastImageLane: 'replicate' | 'none' | undefined
+let lastImageLane: string | undefined
 
 function logLaneOnce(lane: 'pages' | 'none'): void {
   if (lastLane === lane) return
@@ -124,13 +124,13 @@ function logMetaLaneOnce(lane: 'meta-ads' | 'none'): void {
   )
 }
 
-function logImageLaneOnce(lane: 'replicate' | 'none'): void {
+function logImageLaneOnce(lane: string): void {
   if (lastImageLane === lane) return
   lastImageLane = lane
   console.log(
-    lane === 'replicate'
-      ? '[CRUM] image adapter registered: replicate'
-      : '[CRUM] image provider not configured; marketing.generate_assets will refuse',
+    lane === 'none'
+      ? '[CRUM] image provider not configured; marketing.generate_assets will refuse'
+      : `[CRUM] image adapter registered: ${lane}`,
   )
 }
 
@@ -181,14 +181,14 @@ export function createCrumMastra(env: CrumEnv, options: CrumMastraOptions = {}):
     logMetaLaneOnce('none')
   }
 
-  // Slice 4: the image adapter registers only when the token is present. This
-  // assignment runs on every construction, exactly like the Meta registrations
-  // above, because createCrumMastra runs per request and a Map.set is cheap; only
-  // the log is guarded. setImageAdapter(null) below is what makes an install
-  // without a token refuse at call time rather than at boot.
+  // The registry starts empty and the selection is set whether or not a credential
+  // is present, because the refusal message names the selected provider.
+  // `createCrumMastra` runs per request, so a registration is a Map.set and
+  // re-setting the same name is expected rather than an error.
   const imageToken = env.CRUM_REPLICATE_API_TOKEN
+  setSelectedImageProvider(env.CRUM_IMAGE_PROVIDER)
   if (imageToken) {
-    setImageAdapter(
+    registerImageAdapter(
       makeReplicateAdapter({
         apiToken: imageToken,
         model: env.CRUM_REPLICATE_MODEL,
@@ -200,9 +200,10 @@ export function createCrumMastra(env: CrumEnv, options: CrumMastraOptions = {}):
         maxBytes: MAX_DOCUMENT_BYTES,
       }),
     )
-    logImageLaneOnce('replicate')
+    logImageLaneOnce(env.CRUM_IMAGE_PROVIDER)
   } else {
-    setImageAdapter(null)
+    // Nothing to unregister: an install without a credential has no adapter, and
+    // selectImageAdapter() answers null for that reason rather than for a spelling.
     logImageLaneOnce('none')
   }
 

@@ -5,7 +5,7 @@ import { Pool } from 'pg'
 import { migrate } from '../../scripts/db-migrate'
 import { closeDbClient, getDbClient } from '../../src/db/client'
 import { generateAssetsTool, saveBundleTool } from '../../src/mastra/tools/marketing-writes'
-import { setImageAdapter, type ImageAdapter } from '../../src/marketing/image-provider'
+import { registerImageAdapter, __imageProviderRegistry, setSelectedImageProvider, type ImageAdapter } from '../../src/marketing/image-provider'
 import { committedSpendMinor, committedBundleSpendMinor } from '../../src/marketing/image-spend'
 
 /**
@@ -167,11 +167,12 @@ beforeAll(async () => {
   // tests/integration/marketing-bundle.test.ts:87-101.
   await db.query('DELETE FROM audit_receipts WHERE tenant_id = $1', [TENANT])
   await db.query('DELETE FROM pending_writes WHERE tenant_id = $1', [TENANT])
-  setImageAdapter(stubAdapter())
+  registerImageAdapter(stubAdapter())
+  setSelectedImageProvider('stub')
 })
 
 afterAll(async () => {
-  setImageAdapter(null)
+  __imageProviderRegistry.clear()
   if (url !== '') {
     await closeDbClient()
     await pool.end()
@@ -248,7 +249,7 @@ describe.skipIf(url === '')('marketing.generate_assets against Postgres', () => 
 
   it('refuses the whole pass before paying when the day is already spent', async () => {
     const bundleId = await saveDesignerBundle('already spent')
-    setImageAdapter(stubAdapter(4))
+    registerImageAdapter(stubAdapter(4))
     try {
       const out = await generate(bundleId)
       expect(out.assets).toEqual([])
@@ -280,12 +281,12 @@ describe.skipIf(url === '')('marketing.generate_assets against Postgres', () => 
       expect(tasks[0]?.title).toContain('refused 2 asset(s)')
       expect(tasks[0]?.body ?? '').toContain('image_spend_ceiling_reached')
     } finally {
-      setImageAdapter(stubAdapter())
+      registerImageAdapter(stubAdapter())
     }
   })
 
   it('caps a bundle on its own ledger, while the tenant still has a full day of headroom', async () => {
-    setImageAdapter(stubAdapter(2000, 12))
+    registerImageAdapter(stubAdapter(2000, 12))
     try {
       const bundleId = await saveDesignerBundle('bundle ceiling first')
       const first = await generate(bundleId)
@@ -298,7 +299,7 @@ describe.skipIf(url === '')('marketing.generate_assets against Postgres', () => 
       expect(second.refused).toHaveLength(0)
       expect(await committedBundleSpendMinor(TENANT, otherId)).toBeGreaterThan(0)
     } finally {
-      setImageAdapter(stubAdapter())
+      registerImageAdapter(stubAdapter())
     }
   })
 })

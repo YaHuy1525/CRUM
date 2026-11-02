@@ -68,19 +68,54 @@ export function makeReplicateAdapter(params: ReplicateAdapterParams): ImageAdapt
 }
 
 /**
- * One adapter per process, last write wins.
+ * Providers by name, and exactly one of them selected.
  *
- * `createCrumMastra` runs per request in the Hono lane (slice 2's conditional
- * adapter registration hit exactly this), so a registration that refused a
- * second write would throw on the second request of every day. An overwrite is
- * safe because the only inputs are the same environment variables.
+ * `createCrumMastra` runs per request in the Hono lane, so a registration is a
+ * `Map.set` and re-setting the same name is expected rather than an error; that is
+ * the property the single-slot `setImageAdapter` this replaced also had, and
+ * `tests/marketing/image-provider.test.ts` keeps it tested rather than assumed.
+ *
+ * There is no fallback, and that is a requirement rather than a preference. A
+ * provider that fails gets its own error, its own spend row, and no second provider
+ * charged: CRUM does not make a purchase decision on the owner's behalf at runtime,
+ * the same rule that makes `pageHostConfigFromEnv` refuse a half-configured host and
+ * `blockedActions` refuse an action with no adapter. A retry chain would also make
+ * the ceiling arithmetic a lie, because two providers failing one image would bill
+ * one image twice.
  */
-let current: ImageAdapter | null = null
+export const __imageProviderRegistry = new Map<string, ImageAdapter>()
 
-export function setImageAdapter(adapter: ImageAdapter | null): void {
-  current = adapter
+export function registerImageAdapter(adapter: ImageAdapter): () => void {
+  __imageProviderRegistry.set(adapter.provider, adapter)
+  return () => {
+    if (__imageProviderRegistry.get(adapter.provider) === adapter) __imageProviderRegistry.delete(adapter.provider)
+  }
 }
 
-export function getImageAdapter(): ImageAdapter | null {
-  return current
+export function listImageProviders(): string[] {
+  return [...__imageProviderRegistry.keys()]
+}
+
+// The selection lives here, not in the tool: `marketing.generate_assets` reads no
+// `process.env` for run bounds (this file's header comment), and which provider this
+// deployment pays is a run bound. `src/mastra/index.ts` sets it from `parseEnv` at
+// boot, the same moment it registers the adapters.
+let selection = 'replicate'
+
+export function setSelectedImageProvider(name: string): void {
+  selection = name
+}
+
+export function selectedImageProviderName(): string {
+  return selection
+}
+
+/**
+ * The selected adapter, or null when nothing answers that name. Null means two
+ * different refusals, and the caller tells them apart with `listImageProviders()`:
+ * an empty registry is an install with no credential, and a non-empty one is a
+ * credential configured for a provider this build does not know.
+ */
+export function selectImageAdapter(): ImageAdapter | null {
+  return __imageProviderRegistry.get(selection) ?? null
 }

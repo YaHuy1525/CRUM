@@ -32,7 +32,7 @@ import {
   saveBundleTool,
   stageBundleTool,
 } from '../../src/mastra/tools/marketing-writes'
-import { setImageAdapter, type ImageAdapter } from '../../src/marketing/image-provider'
+import { registerImageAdapter, __imageProviderRegistry, setSelectedImageProvider, type ImageAdapter } from '../../src/marketing/image-provider'
 import { commitBundleApproval, registerActionAdapter } from '../../src/marketing/outbox'
 import {
   makePromotePageAdapter,
@@ -240,7 +240,7 @@ describe.skipIf(!url)('a generated picture, approved and drained to a local page
   })
 
   afterAll(async () => {
-    setImageAdapter(null)
+    __imageProviderRegistry.clear()
     await new Promise<void>((resolve) => fake.close(() => resolve()))
     await pool.end()
     await closeDbClient()
@@ -251,7 +251,8 @@ describe.skipIf(!url)('a generated picture, approved and drained to a local page
     const unregisterPublish = registerActionAdapter(makePublishPageAdapter(config))
     const unregisterPromote = registerActionAdapter(makePromotePageAdapter(config))
     try {
-      setImageAdapter(stubAdapter())
+      registerImageAdapter(stubAdapter())
+      setSelectedImageProvider('stub')
       // A page that names the picture the designer has not generated yet: this is
       // the order the tools actually run in, and the reason the handle is a title.
       const saved = (await saveBundleTool.execute!(
