@@ -1547,14 +1547,30 @@ it('publishes the generated picture inside the hash the approval signed', async 
     setImageAdapter(stubAdapter())
     // A page that names the picture the designer has not generated yet: this is
     // the order the tools actually run in, and the reason the handle is a title.
+    // Two artifacts, not one. `marketing.generate_assets` takes no prompts: it
+    // reads the bundle's `creative-designer` / `script` artifact through
+    // `getDesignerArtifactText` (`src/db/marketing-assets.ts:271-281`) and parses it
+    // with `parseAssetPrompts` (`src/marketing/asset-prompts.ts:24`), so a bundle
+    // holding only a page buys nothing, produces no `hero`, and the stage refusal
+    // this case is supposed to outrun fires first.
     const saved = await saveBundleTool.execute({
       ...bundleInput(),
       funnelPlan: { page: { slug: 'physio-picture' } },
-      artifacts: [{ role: 'funnel-builder', kind: 'page_html', textContent: '<h1>Book in</h1><img src="{{ASSET:hero}}" alt="Clinic">' }],
+      artifacts: [
+        { role: 'creative-designer', kind: 'script', documentId: null, textContent: ASSET_TEXT },
+        { role: 'funnel-builder', kind: 'page_html', textContent: '<h1>Book in</h1><img src="{{ASSET:hero}}" alt="Clinic">' },
+      ],
     }, context)
     const bundleId = saved.bundleId as string
 
-    await generateAssetsTool.execute({ bundleId, briefOnly: false }, context)
+    const generated = await generateAssetsTool.execute({ bundleId }, context)
+    // `refused` is asserted empty because it is the difference between this case
+    // proving the picture reached the wire and proving nothing at all: a spend
+    // ceiling, an unconfigured adapter or an unparsable artifact all leave the
+    // bundle without a picture, and every assertion after this one would then be
+    // reading a stage refusal.
+    expect(generated.refused).toEqual([])
+    expect(generated.assets.map((asset) => asset.name)).toEqual(['hero'])
     // The generator writes the document as `needs_review`, and stage refuses on
     // that, so the human flip is part of this path rather than a fixture.
     await db.query(`UPDATE documents SET status = 'ready' WHERE tenant_id = $1 AND kind = 'marketing_asset'`, [TENANT])
@@ -1602,7 +1618,65 @@ it('publishes the generated picture inside the hash the approval signed', async 
 })
 ```
 
-`bundleInput`, `context`, `TENANT` and the uuid literals come from the two files named above; use a fresh tenant uuid that no other integration file claims, the way `marketing-publish.test.ts:29` reserves `…028` and `marketing-generate-assets.test.ts:24` reserves `…021`. The stub adapter returns one PNG per prompt, so this bundle's single asset is `PNG_A`.
+`bundleInput`, `context`, `TENANT` and the uuid literals come from the two files named above, and
+one of them does not: `bundleInput` is a local function in `tests/mastra/marketing-write-tools.test.ts:111`,
+a unit file that exports nothing, so this file writes its own copy of that shape (`brief`, `objective`,
+`audienceNote`, `strategy`, `copy`, `mediaPlan: null`, `funnelPlan`, `analysis: null`, `promptVersion`,
+`artifacts`) rather than importing one. Use a fresh tenant uuid that no other integration file claims,
+the way `marketing-publish.test.ts:29` reserves `…028` and `marketing-generate-assets.test.ts:24`
+reserves `…021`; `a1000000-0000-4000-8000-000000000041` for the picture case and `…042` for the ghost
+case below are free (the family is taken through `…038`). `fieldOf` (`marketing-publish.test.ts:61`) is a
+local function in that file, not an export, so copy it. `PNG_A` and `PNG_B`
+(`marketing-generate-assets.test.ts:33-34`) are plain `Uint8Array`s, which is what makes
+`expect(asset?.content).toEqual(PNG_A)` meaningful after a real `bytea` round trip.
+
+The snippets above call the tools bare for legibility. The file calls them the way
+`marketing-generate-assets.test.ts:101-108` and `:118-126` do: `execute!(… as never, context)`, with the
+result cast, because `createTool` does not surface its schema types through `execute` and a bare
+`saved.bundleId` is a typecheck error rather than a string. Every tool call in this file needs that cast.
+
+The `beforeAll` reset is the whole sequence from `marketing-generate-assets.test.ts:146-163`, not just
+the bundle delete the harness note above names. This file writes documents, artifacts, a human task, a
+pending write, an approval receipt and spend rows, and only the bundle and its artifacts cascade, so a
+second run reads the first run's committed draft through `commitAutoWrite`'s content address and fails
+for the leftover rather than for the code. `marketing_image_spend` has no foreign key at all (0021:35),
+so only its own tenant filter clears it.
+
+`ASSET_TEXT` is this file's own, and two of its values are load-bearing rather than stylistic. The
+asset `name` must be `hero`, because that is the title the page's `{{ASSET:hero}}` placeholder resolves
+against and `marketing.generate_assets` stores the prompt name as the document title
+(`src/mastra/tools/marketing-writes.ts:1433`, `title: entry.name`). The prompt
+must contain the word `reception`, because `stubAdapter` derives the bytes from the prompt text
+(`marketing-generate-assets.test.ts:47-54`: `request.prompt.includes('reception') ? PNG_A : PNG_B`)
+and a prompt without it hands back `PNG_B`, which makes the `toEqual(PNG_A)` assertion below a
+fixture accident rather than a proof. Keep one asset only, and give the bundle a `brief` no other
+case saves: `saveBundleTool` is content-addressed on the `brief` column, so an identical payload is
+the same bundle, and a second run of this file would then find its own picture already attached and
+pay for nothing.
+
+- [ ] **Step 1b: Cover the null answer a page with no picture gives**
+
+`siteHashInTransaction` returns null rather than throwing when `siteProblem` has an answer
+(`src/db/marketing.ts:325-331`), and that branch is what turns Task 5's asset lane into a refusal on
+the retry and promote paths (`currentSiteHash` is their only window on the page). No unit test
+reaches it with an asset problem: the mocked reads there never carry a `document_files` row, so the
+byte question is never asked. This file is the cheapest place to ask it for real. Add a second case
+that saves a bundle whose page names `{{ASSET:ghost}}` with no designer artifact and no image, then
+asserts
+
+```ts
+    expect(await currentSiteHash(TENANT_GHOST, bundleId)).toBeNull()
+    expect(siteProblem(await loadSiteArtifacts(TENANT_GHOST, bundleId))).toContain('asset_name_missing')
+```
+
+The second line is not decoration. `siteHashInTransaction` returns null for a bundle with no page slug
+as well as for a bundle whose page cannot resolve (`src/db/marketing.ts:323-330`), so a lone `toBeNull`
+passes for the wrong reason, and this case would then be evidence for nothing. It runs on
+`TENANT_GHOST` (`a1000000-0000-4000-8000-000000000042`) with its own `context` object and its own
+`brief`, because the first case's tenant carries that case's spend, human task and committed draft, and
+a second save on the same tenant reads the same ledger. The null line has its positive control already:
+the first case asserts `currentSiteHash` returns the staged hash, so these two cases are one reader
+answering a page that has its picture and a page that does not.
 
 - [ ] **Step 2: Run it**
 
