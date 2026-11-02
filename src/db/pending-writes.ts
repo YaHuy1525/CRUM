@@ -883,6 +883,62 @@ export async function rejectPendingWrite(
   }
 }
 
+/**
+ * Kill the approval that is waiting on a bundle whose proposal just moved.
+ *
+ * This is not `rejectPendingWrite`. A rejection is a human decision and it signs a
+ * receipt (`:860-874`); an invalidation records that the proposal the human was
+ * shown no longer exists, which is a fact about the bundle rather than a verdict
+ * from a person. So there is no receipt here, and `rejection_reason` carries the
+ * token a reviewer and the queue both read.
+ *
+ * Every open stage draft for the bundle is rejected, not the newest one. A bundle
+ * can hold an expired draft nobody clicked and a fresh one beside it
+ * (`getOpenStageDraft` reads `created_at DESC LIMIT 1`), and leaving the expired row
+ * open is how a stale proposal stays nominally decidable.
+ *
+ * Self-contained transaction, and both writes in it: the draft and the bundle
+ * status are one fact, and a run that died between them would leave a `staged`
+ * bundle with no approval waiting on it. None of the three callers has a transaction
+ * of its own to join, which is what spec section 6.2's "inside the same transaction
+ * where one exists" resolves to here.
+ */
+export async function invalidateOpenStageDraft(
+  tenantId: string,
+  bundleId: string,
+  reason: string,
+): Promise<string | null> {
+  const db = getDbClient()
+  const client = await db.connect()
+  try {
+    await client.query('BEGIN')
+    const mark = await client.query<{ id: string }>(
+      `UPDATE pending_writes
+          SET rejected_at = now(), rejection_reason = $3
+        WHERE tenant_id = $1
+          AND object_type = 'marketing_stage'
+          AND target_id = $2
+          AND receipt_id IS NULL
+          AND rejected_at IS NULL
+        RETURNING id`,
+      [tenantId, bundleId, reason],
+    )
+    await client.query(
+      `UPDATE marketing_bundles
+          SET status = 'draft', updated_at = now()
+        WHERE tenant_id = $1 AND id = $2 AND status = 'staged'`,
+      [tenantId, bundleId],
+    )
+    await client.query('COMMIT')
+    return mark.rows[0]?.id ?? null
+  } catch (err) {
+    await client.query('ROLLBACK')
+    throw err
+  } finally {
+    client.release()
+  }
+}
+
 export interface HumanTaskParams {
   tenantId: string
   runId: string

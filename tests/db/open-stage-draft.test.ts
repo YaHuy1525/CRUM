@@ -2,7 +2,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockQuery = vi.fn()
-const mockPool = { query: mockQuery, end: vi.fn() }
+const mockClient = { query: mockQuery, release: vi.fn() }
+const mockPool = { query: mockQuery, connect: vi.fn(() => Promise.resolve(mockClient)), end: vi.fn() }
 
 vi.mock('pg', () => ({ Pool: vi.fn(() => mockPool) }))
 vi.mock('../../src/config/env', () => ({
@@ -95,5 +96,68 @@ describe('getOpenStageDraft', () => {
     // One draft, newest first: `LIMIT 1` is what stops a re-staged bundle making
     // the caller guess which row the predicate meant.
     expect(sql).toContain('LIMIT 1')
+  })
+})
+
+describe('invalidateOpenStageDraft', () => {
+  it('rejects the open stage draft for this bundle and nothing else', async () => {
+    mockQuery.mockImplementation((sql: string) =>
+      Promise.resolve({ rows: String(sql).includes('UPDATE pending_writes') ? [{ id: DRAFT }] : [], rowCount: 1 }),
+    )
+    const { invalidateOpenStageDraft } = await load()
+    expect(await invalidateOpenStageDraft(TENANT, BUNDLE, 'assets_changed_after_staging')).toBe(DRAFT)
+
+    const sql = String(mockQuery.mock.calls.find((c) => String(c[0]).includes('UPDATE pending_writes'))![0])
+    expect(sql).toContain("object_type = 'marketing_stage'")
+    expect(sql).toContain('target_id = $2')
+    // The two nulls are the whole definition of an open draft, the same ones
+    // getOpenStageDraft reads (`:782-785`). A committed approval has a receipt and
+    // a refused one already has a reason: neither is this function's to overwrite.
+    expect(sql).toContain('receipt_id IS NULL')
+    expect(sql).toContain('rejected_at IS NULL')
+    expect(sql).toContain('RETURNING id')
+    const params = mockQuery.mock.calls.find((c) => String(c[0]).includes('UPDATE pending_writes'))![1] as unknown[]
+    expect(params).toEqual([TENANT, BUNDLE, 'assets_changed_after_staging'])
+  })
+
+  it('returns the bundle to draft, and only from staged', async () => {
+    mockQuery.mockResolvedValue({ rows: [{ id: DRAFT }], rowCount: 1 })
+    const { invalidateOpenStageDraft } = await load()
+    await invalidateOpenStageDraft(TENANT, BUNDLE, 'assets_changed_after_staging')
+    const sql = String(mockQuery.mock.calls.find((c) => String(c[0]).includes('UPDATE marketing_bundles'))![0])
+    // `staged` means an approval is waiting. An `approved` or `live` bundle is not
+    // walked backwards: its bytes are already published, and the drain-time
+    // `site_hash_moved` refusal in page-host.ts is what guards that path.
+    expect(sql).toContain("status = 'staged'")
+  })
+
+  it('is idempotent: a second invalidation finds no open draft and reports null', async () => {
+    mockQuery.mockImplementation((sql: string) =>
+      Promise.resolve(String(sql).includes('UPDATE pending_writes') && mockQuery.mock.calls.length === 1
+        ? { rows: [{ id: DRAFT }], rowCount: 1 }
+        : { rows: [], rowCount: 0 }),
+    )
+    const { invalidateOpenStageDraft } = await load()
+    await invalidateOpenStageDraft(TENANT, BUNDLE, 'assets_changed_after_staging')
+    mockQuery.mockResolvedValue({ rows: [], rowCount: 0 })
+    expect(await invalidateOpenStageDraft(TENANT, BUNDLE, 'assets_changed_after_staging')).toBeNull()
+  })
+
+  it('opens and closes one transaction, and rolls back on a failed write', async () => {
+    const release = vi.fn()
+    mockClient.release = release
+    mockQuery.mockResolvedValue({ rows: [{ id: DRAFT }], rowCount: 1 })
+    const { invalidateOpenStageDraft } = await load()
+    await invalidateOpenStageDraft(TENANT, BUNDLE, 'reason')
+    const verbs = mockQuery.mock.calls.map((c) => String(c[0]).trim())
+    expect(verbs[0]).toBe('BEGIN')
+    expect(verbs).toContain('COMMIT')
+    expect(release).toHaveBeenCalledTimes(1)
+
+    mockQuery.mockReset()
+    mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 })
+    mockQuery.mockRejectedValueOnce(new Error('boom'))
+    await expect(invalidateOpenStageDraft(TENANT, BUNDLE, 'reason')).rejects.toThrow('boom')
+    expect(mockQuery.mock.calls.map((c) => String(c[0]).trim())).toContain('ROLLBACK')
   })
 })
