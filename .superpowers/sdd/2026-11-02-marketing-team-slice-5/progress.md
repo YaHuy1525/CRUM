@@ -1,0 +1,581 @@
+# SDD ledger — plan: docs/superpowers/plans/2026-11-02-marketing-team-slice-5.md
+
+## Pre-flight scan (run before Task 1)
+
+Plan read in full at authoring time; scaffolding (Global constraints, six refinements,
+Integration cluster, File structure, Task index) re-read now. All 19 briefs extracted
+to this directory. Branch `feat/marketing-slice-5`, BASE at start `b7dc5cf`, clean tree,
+single worktree. Spec `976a7e9` is the binding authority.
+
+### Rows: task pairs sharing a file or an interface
+
+| Pair | One produces | The other consumes | Found |
+|---|---|---|---|
+| 1 / 2 / 3 | `SiteFile` bytes + `contentType`, placeholder grammar | `resolveSite` builds image files with Task 1's helpers | Consistent. Task 3 does not call the loader, it takes `artifacts` as a parameter, so it can land before Task 4. |
+| 3 / 4 | `siteProblem`, `AssetProblemError`, enriched `SiteArtifact` | `loadSiteArtifacts` returns the enriched artifact | Consistent. Task 5 consumes both, in that order. |
+| 4 / 5 / 6 / 7 | `loadSiteArtifacts(tenantId, bundleId, client?)` | Four hash sites (Task 5), stage refusal (Task 6), integration proof (Task 7) | Consistent, and refinement 5 already corrected the spec's arg count. |
+| 8 / 9 | `recordImageSpend(+bundleId)`, `committedBundleSpendMinor` | Task 9 spends the attribution at the two ceiling blocks | Consistent. Task 8 updates all three call sites itself. |
+| 9 / 10 | `ImageAdapter.bundleCeilingMinor` | Task 10's registry stores adapters that already carry it | Consistent, and 9 before 10 is required. |
+| 9 / 15 | both insert into `src/config/env.ts` after `CRUM_IMAGE_COST_MINOR_PER_IMAGE` | same file, same anchor | COLLISION. See Ruling R-1. |
+| 10 / 15 | `CRUM_IMAGE_PROVIDER` (Replicate block) vs `CRUM_ANALYST_USER_ID` (slice-4 settings block) | same file, different blocks | No collision. |
+| 11 / 12 | `invalidateOpenStageDraft(tenantId, bundleId, reason)` | three call sites in `marketing-writes.ts` + review route | Consistent. |
+| 12 / 13 | `{documentId, status, invalidatedBundles}` on the review route 200 | `AssetManager` reads the count and says it out loud | Consistent, and the plan states the field exists for Task 13. |
+| 12 / 13 | `src/api/documents.ts` (review route `:250-259` vs `?kind=` whitelist `:187-190`) | same file, disjoint regions | Anchor drift only, covered by the plan's line-number constraint. |
+| 14 / 16 | `src/db/pending-writes.ts` (`:86/:91/:92/:833` type truth vs new branch before `:632`) | same file, disjoint | Also touched by Task 11. Three appends, ordered 11, 14, 16. |
+| 15 / 16 / 17 | `stageCampaignStatusChange`: signature (15), payload the branch reads (16), return type (17) | 16 needs 15's payload, 17 needs 15's signature and 16's branch | Consistent chain. Task 15 does not assert the return shape, so 17's change is additive. See Ruling R-4. |
+| 17 / 18 | `crumToolRegistry` 42nd key (17) vs `export` of the same object (18) | Task 18's derivation must see 42 keys | Consistent, and 17 before 18 is required by the plan's own ordering note. |
+
+### Rows: each task's own text agreeing with itself
+
+Test-vs-code: Tasks 1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 14, 15, 16, 17, 18 each write the
+failing test first in Step 1 and name the run command and the commit paths. Task 13 is a
+console component plus one REST whitelist line, tested with the console's own Vitest and
+`tests/api/documents.test.ts`. Task 19 runs and reports, it adds no assertions.
+Files-created-vs-files-touched: every `git add` list matches its task's Files section, and
+the three new files (`migrations/0022` in Task 8, `src/db/timestamps.ts` in Task 14,
+`console/components/AssetManager.tsx` in Task 13) each appear in exactly one task.
+Nineteen tasks, nineteen briefs, no task text is empty.
+
+### Rulings
+
+R-1. Task 15's env anchor collides with Task 9's. Both say "after
+`CRUM_IMAGE_COST_MINOR_PER_IMAGE`", and S5b runs first, so by Task 15 that key is followed
+by `CRUM_IMAGE_SPEND_CEILING_MINOR_PER_BUNDLE`. Ruling: Task 15 appends
+`CRUM_ANALYST_USER_ID` at the END of the slice-4 settings block (after whatever keys the
+block holds when the task starts), not immediately after the cost-per-image key. Why: the
+block is grouped by what it configures, and an analyst actor id is not an image-spend
+setting. Cost if wrong: one reordered key in `env.ts`, cosmetic, caught by
+`tests/config/env.test.ts` naming its position.
+
+R-2. The word "ceilings" means two different things in this plan. `site.ts` (File structure
+row, Task 3) holds BYTE ceilings: per-asset, per-image-on-a-page, and whole-site
+(`MAX_SITE_BYTES`). R3's MONEY ceilings (spec section 7.2, Tasks 8 and 9) are minor-units
+spend. Ruling: no change, recorded so a reviewer does not hunt a missing feature in Task 3
+or an out-of-place one in Task 9. Cost if wrong: none, this is a naming note.
+
+R-3. Task 9 mandates two near-identical ceiling blocks (bundle, then day) in one tool
+function, and the rubric treats verbatim duplication as a defect. Ruling: the duplication is
+required and stays. Spec section 7.2 fixes the check order, each block carries its own token
+and its own sentence, and collapsing them into a loop hides which ceiling fired. A reviewer
+flagging it gets this ruling, not a refactor. Cost if wrong: one unreadable refusal path.
+
+R-4. `stageCampaignStatusChange` return type is changed by Task 17, not Task 15, even though
+Task 15 rewrites the same function body. Ruling: keep it that way. Task 17 owns the
+`{pendingWriteId, riskScore}` shape because `StageOutputSchema` is what forces it, and Task
+17 updates the unit assertions Task 15 left as bare draft ids. Cost if wrong: a second
+signature change and a re-run of the cron call site.
+
+R-5. Three tasks append to `src/db/pending-writes.ts` and nine touch
+`src/mastra/tools/marketing-writes.ts`. Ruling: the plan's own constraint (line numbers are
+hints, the quoted line is the requirement, report a disagreement) governs, and dispatches
+repeat it. Tasks are strictly sequential, never parallel implementers. Cost if wrong: an
+insert into the wrong branch, which typecheck plus the named test file catches.
+
+R-6. S5b (Tasks 8-10) is independent of S5a, and S5c needs S5a. Ruling: execute 1-19 in
+order anyway; reordering to interleave chunks would put two implementers into
+`marketing-writes.ts` and `env.ts` at once for no gain. If an S5a task parks, S5b still runs,
+and the plan's task index says so. Cost if wrong: none.
+
+No task contradicts a Global Constraint. No task mandates a test that asserts nothing. The
+plan's six refinements already carry the spec-vs-code corrections, so rulings R-1 to R-6 are
+the whole delta.
+
+## Environment
+
+Model selection is NOT available: this session's `Agent` tool schema exposes no `model`
+parameter (only description, prompt, subagent_type, mode, isolation, name,
+run_in_background, team_name). Every dispatch therefore inherits the session model.
+Recorded once here rather than per dispatch. Upstream resume is likewise unavailable,
+so a fix round starts a fresh agent carrying the brief, the prior report and the open
+findings; that fallback is recorded per round.
+
+Integration cluster verified running: Postgres 17 on port 5455, data dir
+`D:/pgdata-crum-slice1`, and `crum_slice5` created empty for this plan (it did not exist;
+slice 2 and 4 databases were there). `CRUM_INTEGRATION_DATABASE_URL` still has to be
+exported per shell by any task that runs integration tests.
+
+## Task 1: SiteFile carries bytes, a content type, and a true hash
+
+- Brief: task-1-brief.md (regenerated after the plan correction; the implementer worked
+  from the pre-correction text and reported the two defects it contained)
+- Implementer: DONE_WITH_CONCERNS, commit `3812792`, plan fix `064b791`
+- Report: task-1-report.md
+- Review package: review-b7dc5cf..064b791.diff
+- Reviewer verdict: spec ❌ one Important (plan-mandated), task quality Needs fixes
+- Fix round 1: fresh agent (resume unavailable), findings 1 + minors 2,3,4,5,6 + evidence 8
+
+### Rulings
+
+R-7. The plan's Task 1 pinned `sha256('<h1>hi</h1>')` as `1ff1d773…`, which is not that
+hash; the true UTF-8 value is `e7fbb6fbbf4ce294913eb62b53ff03a7546649cfdc0d824d9e3a2b4541502f7f`,
+independently confirmed here with `printf '<h1>hi</h1>' | sha256sum`. Ruling: the code is
+authority over the plan's constant, the plan text is corrected in `064b791`, and every later
+brief reads the corrected value. Cost if wrong: a false oracle in Tasks 3, 5 and 7, which is
+exactly why the fix went into the plan and not only into the test.
+
+R-8. Task 1's Step 1 snippet destructured `const [file]` beside the test file's own `file()`
+fixture helper, a guaranteed TDZ ReferenceError. Ruling: renamed to `page`, plan text
+corrected. Cost if wrong: one broken test file.
+
+R-9. The reviewer flagged that only `sha256OfText` exists today and a PNG must not be pushed
+through it. Checked: Task 3's brief line 341 hashes bytes with
+`createHash('sha256').update(bytes).digest('hex')` directly and its test asserts exactly that
+at brief line 42. Ruling: no extra helper is required by this plan; Task 3's dispatch carries
+the note that `sha256OfText` is text-only. Cost if wrong: a byte lane whose PNG hash is a
+string hash, which Task 3's own test would catch.
+
+Task 1: complete. Fix round 1 (fresh agent, resume unavailable) closed finding 1 plus minors
+2-6 and the finding-8 evidence; scoped re-review returned all findings addressed, no new
+Critical/Important breakage. Commits: 3812792 (implement), 064b791 (plan text fix),
+f6348b7 (fix round 1). Named tests: site 45, pixel-injection 12, page-host 15 = 72 passing;
+outbox cross-check 32; typecheck and lint clean; npm run verify never run.
+
+Carried forward:
+- To Task 3/5 dispatch: the `.html` path-suffix guard at `src/marketing/pixel-injection.ts:80`
+  should be reconciled with `TEXT_HTML_CONTENT_TYPE` once assets exist (finding 7, deferred by
+  ruling). Task 3's dispatch also carries that `sha256OfText` is text-only and a PNG is hashed
+  with `createHash('sha256').update(bytes)` per its own brief.
+- To the final whole-branch review: `pixel-injection.test.ts:142-147` keeps the `png` fixture
+  untyped while `page-host.test.ts:92` annotates `: SiteFile`; an annotation in both would make
+  a future `SiteFile` field addition fail at compile time. Cosmetic.
+
+## Task 2: The placeholder grammar and the name scan
+
+- Brief: task-2-brief.md (regenerated twice: once for the Task 1 plan fix, once for the
+  Task 2 plan fix)
+- Implementer: DONE_WITH_CONCERNS, commit `50f54e1`. Its self-declared deviation (an eighth
+  test beyond the brief's seven) was verified by the reviewer as a genuine surviving-mutant
+  catch and is kept.
+- Reviewer: spec ✅, quality Approved, one Important labeled plan-mandated (the
+  `unterminatedAssetReferences` page prefix contradicting its own doc comment, its own first
+  test, and Task 3's message) plus six minors.
+- Controller: corrected the plan text FIRST (`39281b4`), verified the replacement algorithm in
+  node against ten expected outputs before writing it into the plan, then ran fix round 1
+  (fresh agent). Commit `1433092`.
+- Scoped re-review: all findings addressed, no new breakage. site.test.ts 63 passing
+  (45 Task 1 + 18 asset), 59 across the other consumers, typecheck and lint clean.
+
+Ruling R-10: where a plan text is wrong, correct the plan and regenerate the brief before
+resuming the implementer, rather than letting the implementer work around a defect the plan
+mandates. Applied twice now (R-7's hash constant, the Task 2 fragments). Cost: one extra
+docs commit per correction; the gain is that no later task inherits a false oracle or a
+message that quotes the wrong thing.
+
+## Task 3: Assets inside resolveSite (problem list, error, paths, byte ceilings)
+
+- Implementer: DONE_WITH_CONCERNS, commit `aa2c776`. It reported five defects in its own brief,
+  and the reviewer verified all five as real with the right workarounds (unreachable
+  site-ceiling fixture, `padEnd(12)` vs a 14-char literal, vitest 3.2.7 `toThrow` cannot take a
+  predicate, `it.each` printing `[object Object]`, an unclosed parenthesis).
+- Reviewer: spec ❌, quality Needs fixes. Four Important (sentence arithmetic, the
+  `{{ASSET: }}` predicate/throw divergence, UTF-16 vs byte units in the site total, three
+  ceilings on one token) plus a long minor list.
+- Controller: corrected the plan first (`c067f88`), regenerated briefs 3, 5 and 6, then fix
+  round 1 (fresh agent). Commit `27b47e5`.
+- Scoped re-review: all findings addressed, no new breakage. site.test.ts 88 passing, the
+  brief's three-file gate 115, cross-check 85, typecheck and lint clean.
+
+Ruling R-11: `AssetProblemError` carries an optional `readonly ceiling?: 'image' | 'count' |
+'site'` discriminator on the three byte-ceiling lanes, and the token union stays at its six
+members. Chosen over three new tokens because spec section 12 fixes the token set and Tasks 5
+and 12 must branch on which ceiling fired without parsing English.
+
+Ruling R-12 (residual, carried to Task 19 and the final review): the site total measures the
+page AS AUTHORED, before `{{ASSET:hero}}` becomes a ~55-character hosted URL, so the sentence's
+`total` understates the bytes actually uploaded by about 41 characters per placeholder, at most
+a few hundred bytes against a 24 MiB ceiling. Ruling: accepted as immaterial to the bound, but
+the sentence must not claim to describe the published payload. Whoever next edits the ceiling
+sentence adds "as authored". Cost if wrong: an owner reads a number slightly below the real
+upload size; the ceiling still cannot be missed, only late.
+
+Carried to Task 5: it must widen `src/marketing/outbox.ts:276-281`, which still catches only
+`SlugProblemError`, so an `AssetProblemError` today escapes the approval as a raw throw. Task 3
+left the discriminator readable only by catching, because `siteProblem` flattens it to text.
+Carried to Task 5: reconcile `src/marketing/pixel-injection.ts:80`'s `.html` suffix guard with
+`TEXT_HTML_CONTENT_TYPE` (Task 1 finding 7).
+
+## Task 4: `loadSiteArtifacts`, the one loader that reads bytes
+
+- Implementer: DONE, commit `7554426` (4 files, +279/−3). `tests/db/marketing-assets.test.ts`
+  17 passed (RED 6 failed / 11 passed), typecheck and lint exit 0, regressions 215 across the
+  db/marketing files and 153 across 7 files because `src/db/client.ts` and `src/db/marketing.ts`
+  changed. No integration run owned. `src/api/marketing.ts` and `listMarketingArtifacts` untouched,
+  as the plan requires.
+- Reviewer: spec ✅, quality Approved, 0 Critical, 1 Important (the batched-read invariant had no
+  regression lock, because every case referenced at most one image), 6 Minor, and all five
+  self-declared deviations ACCEPTED after verification — including the true report that the
+  brief's Step 3 snippet does not typecheck as written (`documentId?: string | null` makes
+  `!== null` leave `undefined`, TS2345), and an empirically reproduced lint claim (re-injecting
+  `client as never` produced exactly 6 `no-unnecessary-type-assertion` errors).
+- Controller: fix round 1 (fresh agent, resume unavailable). Findings file `task-4-review-1.md`
+  fixes the Important plus one comment, rules out the other six Minors. Commit `6ac6d51`
+  (+45/−3, `src/` edit is comment-only). Mutation evidence: the N+1 mutant was caught by the new
+  case alone (`expected "spy" to be called 2 times, but got 3 times`) with all 17 pre-existing
+  cases still green, which is precisely the gap the reviewer named.
+- Scoped re-review: both findings ADDRESSED, no new breakage, no ruled-out item touched.
+  18/18 passing.
+
+Ruling R-13: `loadSiteArtifacts` does not dedupe its `want` id list, so two image artifacts
+sharing one `document_id` send that uuid twice. Left as written because the plan's snippet is
+verbatim on the point, `document_files.document_id` is the PRIMARY KEY (`migrations/0011:28`) and
+the byte Map is keyed by it, so the mapping is duplicate-insensitive. Cost if wrong: one
+redundant element in an `= ANY($2::uuid[])` array. Nothing else.
+
+Ruling R-14: the reviewer's Minor "every referenced image is allocated and copied before any
+ceiling fires" is plan-mandated placement — the byte ceilings live in `resolveAssets`
+(`site.ts:364,374,388`), the money ceilings are Task 9's, and the loader is not the guard.
+Ruled out for Task 4, carried as a known limit to Tasks 5 and 9.
+
+Task 4: complete.
+
+Carried to Task 5: four things.
+1. The loader's single-batch byte read is now locked by `toHaveBeenCalledTimes(2)`
+   (`tests/db/marketing-assets.test.ts:419`). If Task 5 legitimately needs a third read, that is
+   a deliberate edit to this lock, not an incidental one.
+2. `siteHashInTransaction` still performs its own inline artifact read
+   (`src/db/marketing.ts:324-335`) and no production caller uses `loadSiteArtifacts` yet — converging
+   those is Task 5's whole job, and it must prove the hash is byte-for-byte the old one, since the
+   loader's rows carry more columns than the inline read's three.
+3. Four spellings of the same structural `Queryable` exist (`src/db/client.ts:13` new arrow-form,
+   `src/db/pending-writes.ts:131-133` private method-form, `src/db/prospect-merge.ts:31-34`,
+   `src/marketing/outbox.ts:200`). The exported name is shadowed by the same-named private
+   interface in `pending-writes.ts`, and arrow-form params are contravariant where method-form is
+   bivariant, so a re-point can fail to compile in the direction that looks safest.
+4. `tests/mastra/marketing-write-tools.test.ts:61-92` is a first-match-wins stub that throws on an
+   unexpected query, so once the loader is wired, its `FROM document_files` read needs a fixture
+   handler. The failure will be loud, not silent.
+
+Out-of-scope observation for the final review: the sibling single-document `getAssetBytes`
+(`src/db/marketing-assets.ts:139`) still returns node-pg's `Buffer` without the `plainBytesOf`
+copy, while the batched reader converts. Pre-existing, and the brief kept it unchanged.
+
+## Task 5: All four hash sites go through the loader
+
+- Implementer: DONE_WITH_CONCERNS, commit `123668d`. RED 9 failed / 41 passed on the two touched
+  test files, GREEN 75 passed across the brief's five files (outbox 34, page-host 16,
+  marketing-commit 7, marketing.test 14, publish-drain 4), plus write-tools 37 and the loader
+  lock's 18. Typecheck and lint clean. Three self-declared concerns.
+- Reviewer: spec ✅, quality **Approved**, 0 Critical, 0 Important, 6 Minor. All three concerns
+  ACCEPTED, one of them as "correct outcome plus a Minor for untested-ness". Named-risk checks it
+  ran and passed: no fifth site-hash computation exists anywhere in `src/` (so convergence is
+  complete), `src/api/marketing.ts` has no hunk and `listMarketingArtifacts` is unconverted, the
+  loader's three-way `bytes` contract and two-query shape are intact, the runtime import graph has
+  no cycle (the back edge `site.ts:2` is type-only), and `tests/db/marketing-commit.test.ts` is a
+  legitimate no-hunk because it holds no `{{ASSET:` fixture so `want` is empty and the byte read
+  never fires.
+- The adapter-scaffold deviation was proven harmless rather than accepted on trust: refusal order
+  in production is the hash comparison at `outbox.ts:283` BEFORE `blockedActions` at `:291`, so
+  `resolves.toBe(BUNDLE)` is unreachable unless the picture-inclusive hash matches, and the
+  text-only mutant still fails.
+
+Ruling R-15: Task 5's six Minors get no fix round. Three are one-clause comment truths in files
+this task owns and Task 6 edits the same regions for its own reason, so they are carried into
+Task 6's dispatch: `src/marketing/outbox.ts:257-262`'s comment still says only Slug is translated
+while `:270` now translates `AssetProblemError` too, and the null inventories at
+`src/mastra/tools/marketing-writes.ts:661-663` and `:771-774` omit "a page whose picture cannot
+resolve". The other three are parked: the untested null branch at `src/db/marketing.ts:330`
+(owned next by Task 7's integration proof), the fact that `tests/marketing/outbox.test.ts:324-338`
+pins the outcome but not the pre-check-vs-catch ordering (brief-verbatim, plan-authorship note for
+the final review), and the pre-existing `Meta pixel ID not configured` stderr line the new
+page-host case adds one more instance of.
+
+Carried to Task 6 (the reviewer's own flag, and Task 6's stated job): site 4 still surfaces an
+unresolvable picture as a raw throw inside the agent turn — `marketing-writes.ts:428` feeds
+`deriveActions` (`:434`) → `resolveSite`, which can crash before the stage tool reaches its own
+refusal chain at `:457-472`. Pre-existing on the same inputs, deferred by brief line 147 ("Task 6
+adds the refusals on top of this read"). Task 6 must also supply what Task 4's loader deliberately
+does not carry: a review status, via `listImageAssetStatuses`.
+
+Task 5: complete.
+
+## Pre-flight on Task 6 (plan amended before dispatch, `d425fd7`)
+
+Three defects found by reading the code the brief touches, all in the plan text first, per R-10.
+
+Ruling R-16: the brief's Step 2 computed `assetIssue` "beside `:436`" and left the `deriveActions`
+call at `:435` alone, so its own first two test cases could never reach a refusal. `deriveActions`
+(`src/marketing/outbox.ts:124-133`) guards the slot with `slotProblem` and then calls
+`resolveSite`, which THROWS `AssetProblemError` on exactly the fixtures those cases stage, so
+`await stage(…)` rejects instead of returning `{ proceed: false }`. This is the residual the Task 5
+review named ("site 4 still surfaces an unresolvable picture as a raw throw inside the agent
+turn"). Amended: `slotIssue` and `assetIssue` move ABOVE the derive call and the guard becomes
+`slugIssue === null && assetIssue === null ? deriveActions(…) : []`, with the comment that already
+says this about `SlugProblemError` extended to name both errors. No `try`/`catch`, because the
+predicate is the answer and the chain's rule is cheapest-question-first. The brief also re-declared
+`const slotIssue`, which already exists at `:437`; the amendment says move, not duplicate.
+
+Ruling R-17: the brief required `assetsUnreferenced: z.array(z.string())` on `StageOutputSchema`,
+which `marketing.stage_bundle` (`:330`), `marketing.promote_bundle` (`:917`) and
+`marketing.retry_publish` (`:990`) all share, the latter two with `outputValidation: 'warn'`. A
+required field would warn on every promote and retry output for the rest of the branch, and the
+stage refusal path does not answer it either. Amended to `.optional()`, matching `proceed` and
+`reason` in the same object and the brief's own `StageResult` interface (`assetsUnreferenced?:
+string[]`).
+
+Third defect, also amended: Step 1's fixtures could not run as written. `stubQueries`
+(`tests/mastra/marketing-write-tools.test.ts:61-92`) answers from the first fragment in INSERTION
+ORDER and THROWS `unexpected query` on anything unmatched, and `listImageAssetStatuses`
+(`src/db/marketing-assets.ts:311-315`) contains both `FROM marketing_artifacts` and
+`JOIN documents d`. So (a) the last case's `'JOIN documents d'` key has to be first, not third as
+the brief's prose claimed while its code placed it third; (b) the two-image case and the resolving
+case both need it because those bundles contain images, and the status read fires; (c) the
+ambiguity case needs a `FROM document_files` handler, because the page references `hero` and the
+loader asks for both candidates' bytes before `resolveAssets` refuses the choice; (d) the file does
+not import `resolveSite`/`siteHashOf` yet. Cases two and three now carry both pictures as `ready`
+so the asset arm is provably the arm that fires — which is the ordering the brief claims is
+deliberate and had no way to show.
+
+## Task 6: `stage_bundle` refuses an unresolvable page and reports the dead pictures
+
+- Implementer: DONE_WITH_CONCERNS, commit `87fcc9b` (3 files, outbox included as the authorized
+  comment-only R-15 third file). RED 4 failed / 37 passed → GREEN 41 focused, 145 across the named
+  set, mutation of `assetIssue !== null` → 2 failed / 39 passed. Typecheck and lint clean. Six
+  self-declared concerns, one of them an environment claim.
+- Reviewer: spec ✅, quality Approved, 0 Critical, 2 Important, 2 Minor. R-16 verified as a real
+  ordering fix (single `const slotIssue` at `:436`, `assetIssue` at `:442`, guard `slugIssue ===
+  null && assetIssue === null` at `:450`, no `try`/`catch` laundering), and it confirmed by grep
+  that `deriveActions`' only other caller is `outbox.ts:266`, whose catch already translates both
+  error classes. R-17 verified across all three `StageOutputSchema` consumers, and both
+  `currentSiteHash` comment inventories confirmed landed.
+- Ruling R-18: the added slug sentence is plan-blessed rather than a deviation. The brief's Step 3
+  message snippet and its own case-three `toContain('free-scan')` contradict each other, and the
+  existing `'3 asset(s)'` and ceiling assertions are pinned to the skeleton, so keeping the skeleton
+  and inserting the verbatim unreferenced clause is the only reading under which both hold. Written
+  into the plan so no later task "restores" it.
+- Controller amended the plan again (`2f17791`) for both Importants. Ruling R-19: the second was the
+  implementer being boxed in by a verbatim-binding `toMatchObject({ proceed: undefined })` — Vitest
+  requires the key to exist, so production grew a test-shaped key. The amendment moves the ASSERTION
+  (`toBeUndefined()` + `toEqual(['hero'])`) and adds the message assertion for the sentence case four
+  already stages, closing the mandated-message-zero-coverage gap in the same line.
+- Fix round 1 (fresh agent, resume unavailable): commit `9fc5834` (+3/−7). Scoped re-review: both
+  findings ADDRESSED, no new breakage, nothing on the accepted-as-is list touched, and it verified
+  the matcher semantics from `node_modules/@vitest/expect` (`toBeUndefined` compares the property
+  access, `not.toBe(false)` passes on an absent key) instead of trusting the report. 145 passing,
+  typecheck and lint exit 0.
+
+Task 6: complete.
+
+Environment note for the remaining dispatches: one implementer reported `npx` unavailable and low
+memory and ran `node node_modules/vitest/vitest.mjs run --pool=forks --max-workers=1` on explicit
+file paths. The controller's own `npx --no-install vitest --version` at the repo root afterwards
+returned `vitest/3.2.7 win32-x64 node-v22.23.2`, so `npx` works, and the reviewer ruled the fallback
+methodologically valid (same files, concurrency only). Prefer `npx vitest run <explicit paths>`, then
+the `C:/Program Files/nodejs/npx.cmd` shim, then the direct `.mjs` form.
+
+Carried to Task 7, and to the whole-branch integration pass: `tests/integration/marketing-bundle.test.ts:126-128`
+already documents the contract Task 6 restored, that `proceed` exists only on the refusal path, with
+`:264` asserting `refused.proceed === false`. It is integration-gated and was not run, so run that
+file in Task 7's pass against `crum_slice5` rather than leaving the contract asserted only in the
+unit lane. Task 7 also still owes the null branch `src/db/marketing.ts:330` added in Task 5: an
+unresolvable asset now returns null instead of throwing on the retry path, and no test reaches it
+with an asset problem. The Task 5 review parked that here deliberately.
+
+## Pre-flight on Task 7 (plan amended before dispatch, `6bf99b1`)
+
+Four defects in the brief, found by reading the tools it calls, all fixed in the plan text first,
+per R-10.
+
+Ruling R-20: the brief's `generateAssetsTool.execute({ bundleId, briefOnly: false }, context)` carried
+a parameter the tool does not declare (`inputSchema` is `z.object({ bundleId })`), and its fixture saved
+a bundle with only a page artifact. `marketing.generate_assets` takes no prompts: it reads the bundle's
+`creative-designer` / `script` artifact through `getDesignerArtifactText`
+(`src/db/marketing-assets.ts:271-281`) and parses it with `parseAssetPrompts`
+(`src/marketing/asset-prompts.ts:24`). A page-only bundle therefore buys nothing, produces no `hero`,
+and the stage refusal the case exists to outrun fires first, so the case could not have passed as
+written. Amended: two artifacts, the `expect(generated.refused).toEqual([])` and asset-name guards that
+make a silent no-purchase impossible to miss, and an `ASSET_TEXT` whose name is `hero` and whose prompt
+contains `reception`, because `stubAdapter` derives the bytes from the prompt text
+(`marketing-generate-assets.test.ts:47-54`) and any other prompt returns `PNG_B`, which would turn
+`toEqual(PNG_A)` into a fixture accident.
+
+Three more, also amended: `bundleInput` is local to `tests/mastra/marketing-write-tools.test.ts:111` and
+that unit file exports nothing, so the brief's "comes from the two files named above" was false and the
+new file writes its own copy; the reset list was only `DELETE FROM marketing_bundles`, which is not
+re-runnable once the file also writes documents, artifacts, a human task, a pending write, a receipt and
+spend rows, so it takes the whole sequence at `marketing-generate-assets.test.ts:146-163`; and the tool
+calls need the `execute!(… as never, context)` casts the sibling file uses, because `createTool` does not
+surface schema types through `execute`. Tenant uuids `…041` and `…042` are free (the marketing family is
+taken through `…038`).
+
+Step 1b is new, not an amendment: the brief only asserted `currentSiteHash` returns the staged hash, and
+the parked Task 5 null branch needed a second case. The first draft of that case asserted a lone
+`toBeNull`, which is also what a bundle with no page slug returns (`src/db/marketing.ts:323-330`), so it
+would have been evidence for nothing. It now asserts `siteProblem(loadSiteArtifacts(…))` contains
+`asset_name_missing` beside the null, on its own tenant and its own brief.
+
+## Task 7: Integration proof 1, the picture is on the page the host received
+
+- Implementer: DONE_WITH_CONCERNS, commit `175f4da` (one new file, 380 lines, `src/` untouched).
+  Integration lane ran, did not skip: `marketing-asset-page.test.ts` 2 passed, `marketing-bundle.test.ts`
+  4 passed (the ledger's carried obligation, satisfied), three source mutations proven to redden their
+  target assertions and restored.
+- Reviewer: spec PASS, quality **Request Changes**, 0 Critical, 1 Important, 3 Minor. It re-ran the file
+  three times against a filled database, proved the runs rebuild rather than reuse (row timestamps land
+  in the later run's window and the counts are one, not two), scanned every `tenant_id` table to show the
+  reset covers exactly what the file writes, and generated four fresh mutations beyond the report's three.
+- Fix round: DONE, commit `38b7610` (one code line plus comment truth). Re-review: **I1 CLOSED**,
+  0 Critical, 0 Important, 2 new Minor both labelled out of scope, and it independently reproduced the
+  decoy mutation to show line 335 red while 317-328 stayed green. It also confirmed all twelve committed
+  anchors in the report's Task 19 table.
+
+Ruling R-21: Vitest 3.2.7 compares a `Buffer` against a plain `Uint8Array` by constructor under
+`toEqual`, so a raw `body.subarray(…).toEqual(PNG_A)` fails on identical bytes. The controller verified
+this with its own scratch case (`expected Buffer[ 137, 80, … ] to deeply equal Uint8Array[ 137, 80, … ]`),
+which corrects the working belief earlier in this effort that `toEqual` ignores class while
+`toStrictEqual` checks it. Copy through `Uint8Array.from`, the way `plainBytesOf`
+(`src/db/marketing-assets.ts:153-155`) does, and the assertion stays byte-for-byte: the reviewer's M-A
+shift of the picture's bytes alone makes `indexOf` return `-1`, the slice come out empty, and the line
+fail. Plan corrected at `53d8ae3`. Every later byte assertion in this slice (Tasks 12 and 19) follows the
+same spelling.
+
+Ruling R-22: an integration file that sends a manifest and a page in one multipart body must not assert
+`toContain(asset.path)` against the whole body. The manifest part carries the identical host key, so the
+bare form passes while the page points at a decoy that was never uploaded. Assert the root-relative
+`'/' + asset.path`, which only the substituted markup contains. This is a stronger rule than it looks:
+the same shadowing will bite any future case that greps a whole request body for a string the manifest
+also carries. Recorded in the plan at `53d8ae3`.
+
+Ruling R-23: the working tree is shared with another effort mid-write (its untracked
+`src/temporal/`, `src/transforms/`, `src/queue/`, `src/api/batch.ts` made repo-wide `typecheck` and `lint`
+red at the implementer's run and green again by the re-review's, because `src/api/batch.ts` was truncated
+in transit). The gate therefore reports both halves, and always will from here: the repo-wide command and
+its real status, and a lane-scoped `npx eslint <marketing paths> <test paths>` plus a filtered `tsc`, so a
+red from outside this slice is named and not absorbed. Nobody staged another effort's file; both commits
+contain exactly one named path.
+
+Parked for the final whole-branch review (no fix round, per R-15): the comment at
+`tests/integration/marketing-asset-page.test.ts:333-343` attributes the substitution to `assetPathOf` when
+the substituted string is produced by the `resolveSite` callback near `src/marketing/site.ts:477-481`, and
+the report's fix-round prose calls lines 336 and 347 "green under M-B2" when Vitest aborts the case at 335.
+Also standing: the `Meta pixel ID not configured; page published without tracking` stderr line, one per
+publish, which is source behaviour through the adapter's default console and would need a logger parameter
+in `src/` to silence.
+
+Closed here: the null branch at `src/db/marketing.ts:330` that the Task 5 review parked, by the ghost case
+on tenant `…042` with its `siteProblem` companion so the null cannot come from the missing-slug branch
+instead. Task 19 quotes the committed line numbers in the report's "Fix round 1" table (317, 319, 323,
+327, 328, 335, 336, 347, 348, 349, 381, 382), not the draft anchors.
+
+Carried to Task 8: nothing depends on Task 7's file. One habit, though: Task 8 writes migration 0022 and
+`scripts/db-migrate.ts:20` picks up `^(\d{4})_crum_[a-z0-9_]+\.sql$` with no registration, and this file is
+now a live consumer of the schema on `crum_slice5`, so a migration that changes a column Task 7 reads will
+show up there as well as in its own tests.
+
+## Task 8 preflight (controller, before dispatch)
+
+Plan BASE for this task is `30c9664` "docs(marketing): Task 8 names every caller of the spend ledger and
+uses the test file's real stubs", on top of `53d8ae3`. Brief regenerated from the committed plan at
+`.superpowers/sdd/2026-11-02-marketing-team-slice-5/task-8-brief.md` (187 lines).
+
+Ruling R-24: the Task 8 brief was wrong in four ways that would each have cost a round, all found by
+reading the exact files it touches before dispatching. First, Step 2's snippets were written in a
+vocabulary the target file does not have. `tests/marketing/image-spend.test.ts` has no `lastQuery`, no
+`respondWith` and no `BUNDLE` constant, it stubs `pg` with one shared `mockQuery` (`:11`), pulls calls out
+with `calls(fragment)` (`:19`) and re-imports the module with `load()` (`:25`), so the snippets were
+rewritten to those helpers and given the `mockResolvedValueOnce` each assertion needs. Second, that file is
+itself a caller of `recordImageSpend`, at `:102`, `:123`, `:134` and twice inside the `cost_minor` refusal
+case at `:156-157`, and its three `params` arrays at `:111-117`, `:128` and `:145-151` must gain the bundle
+value in the second position or they fail for the new column order rather than for anything the task
+broke. The brief had said nothing about either. Third, the integration file has six calls, not the four
+the first reading found (`:52`, `:91`, `:107`, `:108`, `:109`, `:125`), because the multi-tenant case at
+`:107-109` makes three. Fourth, `tests/marketing/generate-assets-tool.test.ts` is a consumer the plan's
+Files list omitted entirely: its three exact `toHaveBeenCalledWith` assertions at `:296`, `:390` and `:420`
+spell out the whole params object, and `toHaveBeenCalledWith` compares exactly, so that file moves from
+optional to required, with `bundleId: BUNDLE` using the constant already at `:49`.
+
+The same pass corrected the tool anchors, which had drifted with Task 6's edits. The three
+`recordImageSpend` calls are at `src/mastra/tools/marketing-writes.ts:1379`, `:1450` and `:1481`, inside
+the guard at `:1343` (`refused.length === 0 && bundle !== null && adapter !== null`) around the `const
+bundle` declared at `:1220`, so the narrowing reaches all three and no new guard is wanted. Two more
+facts were verified rather than assumed: `migrations/` stops at `0021`, so `0022` is free, and the string
+`the ceiling read answered` exists only at `src/marketing/image-spend.ts:55` with nothing asserting it, so
+relabelling the daily read is free (the unit file's fail-closed cases match `/marketing_image_spend/`).
+Step 5's run set gained `tests/marketing/generate-assets-tool.test.ts` and
+`tests/integration/marketing-generate-assets.test.ts`, the latter because it is the only place the tool
+writes a real spend row and the only thing that would catch an attribution that quietly narrowed the day
+ceiling.
+
+Carried to Task 9: it consumes `committedBundleSpendMinor(tenantId, bundleId)` and passes `bundleId` at
+all three call sites, and the day read must keep its `spent_on = CURRENT_DATE` window untouched, which
+Task 8's second unit case pins.
+
+## Task 8 review (controller self-review, after independent dispatch crashed)
+
+Task 8 delivered at `b40304c` "feat(marketing): the image ledger records the bundle each prediction cost"
+(7 files, +151/−31). The independent reviewer dispatch crashed with a credit limit error before it could run,
+so I performed a self-review, labelled as such. Verdict: **DONE**, 0 Critical, 0 Important, 2 Minor.
+
+The two Minor findings are parked for the final whole-branch review, not a fix round: (1) the two new
+integration cases at `tests/integration/marketing-image-spend.test.ts:142` and `:158` lack `finally` cleanup,
+unlike their neighbours, but each mints a fresh tenant uuid so re-runnability is not threatened; (2) the
+out-of-brief edit to `tests/integration/marketing-assets-migration.test.ts:123` adds `'bundle_id'` to an exact
+column-list assertion for the 0021 table shape, which is the mechanically correct consequence of adding a
+column but moves a 0022 assertion into a file titled "migration 0021". Both are labelling issues, not
+weakenings.
+
+Every requirement in the brief is met: migration 0022 adds `bundle_id uuid` nullable with no FK and no backfill,
+`recordImageSpend` requires `bundleId: string | null`, `committedBundleSpendMinor` reads over every day with no
+`spent_on`, the fail-closed guard is hoisted into `totalMinorOrThrow`, all three tool call sites pass
+`bundle.id` inside the narrowing guard, and the gates are green (unit 37 passed, integration 18 passed,
+typecheck clean, lint clean). The two `migrations.test.ts` failures are pre-existing baseline conditions of
+this shared database, not caused by this task.
+
+Carried to Task 9: it consumes `committedBundleSpendMinor(tenantId, bundleId)` and passes `bundleId` at all
+three call sites, and the day read must keep its `spent_on = CURRENT_DATE` window untouched, which Task 8's
+second unit case pins. Task 9 is the enforcement; Task 8 is the attribution and the read.
+
+## Task 9 preflight (controller, before dispatch)
+
+Plan BASE for this task is `7ebb604` "docs(marketing): Task 9 fixes the ledger helper design and corrects five
+line anchors", on top of `b40304c`. Brief regenerated from the committed plan at
+`.superpowers/sdd/2026-11-02-marketing-team-slice-5/task-9-brief.md` (235 lines).
+
+Ruling R-25: the Task 9 brief had five defects that would each have cost a round, all found by reading
+the exact files it touches before dispatching. First, the plan's test helper design was wrong: it said to
+rename `ledger` to `dayLedger` and add `bundleLedger`, but both would mock `recordImageSpend`, and the
+second overwrites the first, so the day total wouldn't increment when `recordImageSpend` is called,
+breaking the arithmetic. Fixed: one helper `ledger(dayStart = 0, bundleStart = 0)` that tracks both totals
+and increments both when `recordImageSpend` is called (the test uses one bundle, `BUNDLE`, throughout).
+Second, the plan's integration test case had a confusing UPDATE that overwrote the attribution Task 8 just
+added; rewritten to be clearer: create two bundles, generate assets for each, check both have spent > 0.
+Third, the plan said `failedPrediction(costMinor)` exists, but the file has `failImage(code, detail,
+charge, deadToken)` at `:89`; the plan now says to build `failedPrediction` from `failImage`. Fourth, five
+line anchors were wrong: `src/config/env.ts:206-209` → `:215-218`, `src/mastra/tools/marketing-writes.ts:1279-1336`
+→ `:1310-1340` (pre-flight) and `:1346-1367` (mid-loop), `:1496` → `:1530` (title). Fifth, the Files list
+cited the wrong anchors for the tool's ceiling blocks. All corrected.
+
+The same pre-flight verified: `ImageAdapter` and `ReplicateAdapterParams` interfaces exist at `:23-30` and
+`:32-39` in `src/marketing/image-provider.ts`, `makeReplicateAdapter` at `:41-60`, the adapter registration
+in `src/mastra/index.ts` at `:191-203`, `CRUM_IMAGE_SPEND_CEILING_MINOR` at `:208` and
+`CRUM_IMAGE_COST_MINOR_PER_IMAGE` at `:215` in `src/config/env.ts`, the `ledger` helper at
+`tests/marketing/generate-assets-tool.test.ts:97-107`, the `failImage` helper at `:89`, and `stubAdapter` at
+`tests/integration/marketing-generate-assets.test.ts:38`. All anchors verified or corrected.
+
+Carried to Task 10: it consumes the adapter registry and stores adapters that already carry `bundleCeilingMinor`.
+
+## Task 10 preflight (controller, before dispatch)
+
+Plan BASE for this task is `3bfa8c3` "feat(marketing): a per-bundle lifetime ceiling, checked before the tenant day", on top of `b40304c` and `7ebb604`. Brief regenerated from the committed plan at `.superpowers/sdd/2026-11-02-marketing-team-slice-5/task-10-brief.md`.
+
+Ruling R-26: the Task 10 brief has eight anchor drifts from plan-writing time to current tree state, all found by reading the exact files it touches before dispatching. None are design defects; all are cosmetic line-number shifts that would have cost a round if the implementer trusted the numbers instead of grepping.
+
+First, `src/marketing/image-provider.ts:62-78` is cited as "the slot becomes the registry", but the actual slot is at `:70-86` (the `current` variable and `setImageAdapter`/`getImageAdapter` functions). The anchor is off by 8 lines because Task 9 added the `bundleCeilingMinor` field to the interface at `:28-32` and the `ReplicateAdapterParams` at `:42`, pushing the slot down.
+
+Second, `src/config/env.ts:195` is cited as "after `CRUM_REPLICATE_MODEL`", but `CRUM_REPLICATE_MODEL` is at `:201-204`, so the anchor should be `:204` or thereabouts. The anchor is off by 9 lines because Task 9 added `CRUM_IMAGE_SPEND_CEILING_MINOR_PER_BUNDLE` at `:216-224`, but that's after the target, not before; the drift is from earlier tasks adding keys.
+
+Third, `src/mastra/index.ts:186-207` is cited as the registration block, but the actual block is at `:184-207`. Close enough; the comment at `:184` says "Slice 4: the image adapter registers only when the token is present."
+
+Fourth, `src/mastra/tools/marketing-writes.ts:1200-1207` is cited as "the pick", but the actual pick is at `:1231` (`const adapter = refused.length === 0 ? getImageAdapter() : null`). The anchor is off by 31 lines because the execute function has grown since the plan was written.
+
+Fifth, `tests/marketing/generate-assets-tool.test.ts:45` is cited as the provider mock, but the actual mock is at `:46` (`vi.mock('../../src/marketing/image-provider', () => ({ getImageAdapter: h.getImageAdapter }))`). Off by one line.
+
+Sixth, `tests/marketing/generate-assets-tool.test.ts:14` is cited as the harness object, but the actual harness is at `:4-17` (the `vi.hoisted(() => ({...}))` block). The anchor is completely wrong; it points to the middle of the harness, not the start.
+
+Seventh, `src/mastra/tools/marketing-writes.ts:1068` is cited as the doc comment that names `getImageAdapter()`, but the actual doc comment is at `:1099` (`* The adapter check (\`getImageAdapter()\`) comes before the artifact read`). Off by 31 lines.
+
+Eighth, `tests/integration/marketing-generate-assets.test.ts:169-173,250,282` are cited as the `setImageAdapter` call sites, but the actual lines are `:170,174,251,283,288`. Close but not exact; the file has grown since the plan was written.
+
+All eight are anchor drifts, not design defects. The plan's instructions are still clear; the implementer must grep for the actual lines rather than trust the numbers. The brief is amended to note the drifts, and the implementer is instructed to verify each anchor against the current tree before editing.
+
+Carried to Task 11: it consumes `pending_writes` and `marketing_bundles` as they exist, and produces `invalidateOpenStageDraft(tenantId, bundleId, reason)`.
+Task 9's deliverable is the ceiling check; Task 10's is the registry that holds the number.
