@@ -74,6 +74,7 @@ const DOC_IDS: Record<string, string> = {
   a1: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaaa1',
   a2: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaaa2',
   a3: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaaa3',
+  a4: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaaa4',
 }
 
 function docId(artifactId: string): string {
@@ -392,6 +393,46 @@ describe('loadSiteArtifacts', () => {
     expect(second[1]).toEqual([TENANT, [docId('a2')]])
     expect(artifacts.find((a) => a.id === 'a2')?.bytes).toEqual(new Uint8Array([1]))
     expect(artifacts.find((a) => a.id === 'a3')?.bytes).toBeUndefined()
+  })
+
+  it('reads the bytes of two referenced images in ONE call, not one call per artifact', async () => {
+    const { loadSiteArtifacts } = await load()
+    // Three image rows over two documents. `hero` and `card` are the two names the
+    // page asks for; `unused` is a third artifact row pointing at the SAME document
+    // `hero` does. That third row is the reason this case exists: an id list built
+    // one artifact at a time would repeat `docId('a2')` in it, and a loader that
+    // reached the byte read inside the fill loop would fire it twice — and no
+    // single-image case in this file can see either shape, because with one image
+    // the loop and the batch answer the same two queries with the same parameters.
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [artifactRow({ kind: 'page_html', textContent: '<img src="{{ASSET:hero}}"><img src="{{ASSET:card}}">' }), artifactRow({ id: 'a2', kind: 'image', text_content: null, title: 'hero', mime: 'image/png' }), artifactRow({ id: 'a3', kind: 'image', text_content: null, title: 'card', mime: 'image/png' }), artifactRow({ id: 'a4', kind: 'image', text_content: null, title: 'unused', mime: 'image/png', document_id: docId('a2') })] })
+        // `mockResolvedValue` and not `…Once`: the mutant this case exists to catch
+        // asks for bytes twice, and a fixture that ran dry would fail with a
+        // `TypeError` over a missing `rows` instead of with the call-count
+        // assertion below — which is the finding Task 5 is not allowed to re-introduce.
+        .mockResolvedValue({ rows: [{ document_id: docId('a3'), data: new Uint8Array([9, 8, 7]) }, { document_id: docId('a2'), data: new Uint8Array([1, 2, 3]) }] }),
+    }
+    const artifacts = await loadSiteArtifacts(TENANT, BUNDLE, client)
+    // One artifact read plus one byte read, whatever the bundle's image count is.
+    // The single-read property is what Task 12's hard invalidation is built on.
+    expect(client.query).toHaveBeenCalledTimes(2)
+    const second = client.query.mock.calls[1]!
+    // And the second call is the byte read, so the count above counts byte reads and
+    // not some other statement the loader grew.
+    expect(String(second[0])).toContain('FROM document_files')
+    // Exactly the two referenced documents, in the `created_at ASC` order their
+    // artifact rows came back in, with the unreferenced reuse of `docId('a2')` left
+    // out — the id list is the question the loader asks, so it is worth pinning.
+    expect(second[1]).toEqual([TENANT, [docId('a2'), docId('a3')]])
+    // Each artifact carries the bytes of ITS OWN document: the batch answers in the
+    // opposite order to the artifacts, so a mapping made by position rather than by
+    // `document_id` fails here while the call count stays at two.
+    expect(artifacts.find((a) => a.id === 'a2')?.bytes).toEqual(new Uint8Array([1, 2, 3]))
+    expect(artifacts.find((a) => a.id === 'a3')?.bytes).toEqual(new Uint8Array([9, 8, 7]))
+    // The unreferenced artifact that shares `hero`'s document stays untouched, the
+    // same absent key the sibling case reads for an unreferenced image.
+    expect(artifacts.find((a) => a.id === 'a4')?.bytes).toBeUndefined()
   })
 
   it('asks for no bytes at all when no page has a placeholder', async () => {

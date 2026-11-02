@@ -145,9 +145,10 @@ export async function getAssetBytes(
  * view of the driver's shared allocation pool instead of a copy, and the pool is
  * the memory the next small read on that connection writes over. The byte reads
  * hand their value straight to a `sha256` and then to an upload, so the conversion
- * is made here, once, and it copies. Only the images a page references reach this
- * function, so the copy is bounded by the placeholders on the page rather than by
- * everything a bundle ever paid for.
+ * is made here, once, and it copies. What reaches it is the caller's business and
+ * not this function's promise: it copies every value it is handed, one per row, and
+ * `loadSiteArtifacts` is the caller that keeps the list to the images a page
+ * references. `getAssetBytesByIds` itself will copy whatever id list it is given.
  */
 function plainBytesOf(value: Uint8Array): Uint8Array {
   return Uint8Array.from(value)
