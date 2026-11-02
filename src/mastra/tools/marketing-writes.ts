@@ -574,12 +574,6 @@ export const stageBundleTool = createTool({
         pendingWriteId: draft.id,
         riskScore: draft.riskScore,
         gate: draft.gate === 'auto' ? ('auto' as const) : ('approval' as const),
-        // The refusal answer lives on the refusal branch; on success the key is
-        // held present-and-undefined rather than dropped, so a reader of the
-        // output can tell "this stage was not refused" from "this tool forgot
-        // to answer the question" — vitest's `toMatchObject` makes the two
-        // observable states distinct, and the stage test reads them that way.
-        proceed: undefined,
         // Paid for, reviewed, and placed nowhere. Publishing it would put bytes on
         // a public host that no reviewer positioned, so `resolveSite` leaves it out
         // and this is the sentence that tells the funnel builder to place it.

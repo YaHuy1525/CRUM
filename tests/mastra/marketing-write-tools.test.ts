@@ -875,7 +875,9 @@ describe('marketing.stage_bundle', () => {
         'UPDATE marketing_bundles': [{ id: BUNDLE_ID }],
       })
       const result = await stage({ bundleId: BUNDLE_ID, requestedCeilingMinor: 2500 })
-      expect(result).toMatchObject({ proceed: undefined, assetsUnreferenced: ['hero'] })
+      expect(result.proceed).toBeUndefined()
+      expect(result.assetsUnreferenced).toEqual(['hero'])
+      expect(result.message).toContain('1 image(s) are not referenced by any page and will not be published: hero')
     } finally {
       unregister()
     }
