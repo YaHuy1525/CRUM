@@ -1261,7 +1261,7 @@ Spec section 5.5's table only means something if the stage tool asks the questio
 
 **Interfaces:**
 - Consumes: Task 3's `siteProblem` and `unreferencedAssetNames`, Task 5's loader-backed `artifacts`.
-- Produces: `StageOutputSchema` gains `assetsUnreferenced: z.array(z.string())`. Task 13 does not read it; the funnel builder and the walkthrough report do.
+- Produces: `StageOutputSchema` gains `assetsUnreferenced: z.array(z.string()).optional()` (optional because the schema is shared with two tools that never produce it). Task 13 does not read it; the funnel builder and the walkthrough report do. It also produces the guard that keeps `deriveActions` from throwing an `AssetProblemError` inside the agent turn.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1283,11 +1283,27 @@ it('refuses a page that names a picture the bundle does not have', async () => {
 
 it('refuses two pictures that answer one placeholder', async () => {
   stubQueries({
+    // First, because `listImageAssetStatuses`'s SQL contains both fragments below
+    // and `stubQueries` answers from the first match in insertion order and throws
+    // on a query nothing matches. Both pictures are `ready` so the only thing that
+    // can refuse this bundle is the ambiguity: with the statuses left out of the
+    // fixture the unreviewed arm has an answer too, and the case no longer shows
+    // which arm the chain reached first.
+    'JOIN documents d': [
+      { document_id: DOCUMENT_ID, title: 'hero', status: 'ready', kind: 'marketing_asset' },
+      { document_id: '88888888-8888-4888-8888-888888888888', title: 'hero', status: 'ready', kind: 'marketing_asset' },
+    ],
     'FROM marketing_bundles': [bundleRow({ funnel_plan: { page: { slug: 'free-scan' } }, objective: 'inbound_leads' })],
     'FROM marketing_artifacts': [
       artifactRow({ text_content: '<img src="{{ASSET:hero}}">' }),
       artifactRow({ id: 'a2', kind: 'image', text_content: null, document_id: DOCUMENT_ID, title: 'hero', mime: 'image/png' }),
-      artifactRow({ id: 'a3', kind: 'image', text_content: null, document_id: DOCUMENT_ID, title: 'hero', mime: 'image/png' }),
+      artifactRow({ id: 'a3', kind: 'image', text_content: null, document_id: '88888888-8888-4888-8888-888888888888', title: 'hero', mime: 'image/png' }),
+    ],
+    // The page references `hero`, so the loader asks for the bytes of both
+    // candidates before `resolveAssets` gets to refuse the choice.
+    'FROM document_files': [
+      { document_id: DOCUMENT_ID, data: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x09]) },
+      { document_id: '88888888-8888-4888-8888-888888888888', data: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0a]) },
     ],
     'INSERT INTO human_tasks': [{ id: '66666466-6666-4666-8666-666666666666' }],
   })
@@ -1302,6 +1318,10 @@ it('stages a page whose picture resolves, and records the picture in the hash', 
     { id: 'a2', kind: 'image', text_content: null, document_id: DOCUMENT_ID, title: 'hero', mime: 'image/png' },
   ]
   stubQueries({
+    // First, for the same reason as the case above, and `ready` because this bundle
+    // is meant to stage: the unreviewed arm is the one thing standing between a
+    // fixture and the hash assertion below.
+    'JOIN documents d': [{ document_id: DOCUMENT_ID, title: 'hero', status: 'ready', kind: 'marketing_asset' }],
     'FROM marketing_bundles': [bundleRow({ funnel_plan: { page: { slug: 'free-scan' } }, objective: 'inbound_leads' })],
     'FROM marketing_artifacts': stored,
     'FROM document_files': [{ document_id: DOCUMENT_ID, data: png }],
@@ -1319,14 +1339,15 @@ it('stages a page whose picture resolves, and records the picture in the hash', 
 
 it('reports a picture no page references without refusing the stage', async () => {
   stubQueries({
+    // `listImageAssetStatuses` is reached because the bundle has an image, and the
+    // picture has to be reviewed or the unreviewed arm refuses first. It sits first
+    // because its SQL also contains the artifacts fragment below.
+    'JOIN documents d': [{ document_id: DOCUMENT_ID, title: 'hero', status: 'ready', kind: 'marketing_asset' }],
     'FROM marketing_bundles': [bundleRow({ funnel_plan: { page: { slug: 'free-scan' } }, objective: 'inbound_leads' })],
     'FROM marketing_artifacts': [
       artifactRow(),
       artifactRow({ id: 'a2', kind: 'image', text_content: null, document_id: DOCUMENT_ID, title: 'hero', mime: 'image/png', status: 'active' }),
     ],
-    // listImageAssetStatuses is reached because the bundle has an image, and the
-    // picture has to be reviewed or the unreviewed arm refuses first.
-    'JOIN documents d': [{ document_id: DOCUMENT_ID, title: 'hero', status: 'ready', kind: 'marketing_asset' }],
     'INSERT INTO pending_writes': [pendingWriteRow()],
     'UPDATE marketing_bundles': [{ id: BUNDLE_ID }],
   })
@@ -1335,13 +1356,27 @@ it('reports a picture no page references without refusing the stage', async () =
 })
 ```
 
-The last case's `'JOIN documents d'` handler sits first in that object on purpose, the way the file's existing fixtures do it at `:774-777`: `stubQueries` answers from the first fragment that appears in the SQL, and `listImageAssetStatuses` is the only query the loader does not issue that contains it. This is also the reason Task 4 gave the loader's join the alias `k`.
+The last case's `'JOIN documents d'` handler sits first in its object on purpose, the way the
+file's existing fixtures do it at `:774-777`: `stubQueries` answers from the first fragment, in
+insertion order, that appears in the SQL, and `listImageAssetStatuses` is the only query the
+loader does not issue that contains it. That is also the reason Task 4 gave the loader's join the
+alias `k`. A fixture that puts the artifacts fragment first answers the status read with artifact
+rows, and `stubQueries` throws on a query nothing matches, so a missing `FROM document_files`
+entry on a page that references a picture is a thrown `unexpected query`, not a quiet empty.
+Cases two and three above therefore carry both reads.
+
+`tests/mastra/marketing-write-tools.test.ts` does not yet import the resolver, so add
+`import { resolveSite, siteHashOf } from '@/marketing/site'` to its import block for case three.
 
 `StageResult` (`:188-195`) gains `assetsUnreferenced?: string[]`.
 
-- [ ] **Step 2: Ask the asset question in the refusal chain**
+- [ ] **Step 2: Ask the asset question before anything derives from the page**
 
-`src/mastra/tools/marketing-writes.ts:42` gains `siteProblem` and `unreferencedAssetNames` to the existing `SlugProblemError, slugProblem` import. Beside `:436`:
+`src/mastra/tools/marketing-writes.ts:42` gains `siteProblem` and `unreferencedAssetNames` to the existing `SlugProblemError, slugProblem` import.
+
+`slotIssue` is already declared at `:437`, so do not write a second `const slotIssue`. What this
+step does is move that declaration, and add the asset question beside it, to ABOVE the
+`deriveActions` call now at `:435`, and widen that call's guard:
 
 ```ts
       const slotIssue = slotProblemCheck(artifacts)
@@ -1351,7 +1386,24 @@ The last case's `'JOIN documents d'` handler sits first in that object on purpos
       // a ceiling. Stage is the cheapest place any of them can be answered, and a
       // human task is how the answer reaches the person who can change the page.
       const assetIssue = slotIssue === null ? siteProblem(artifacts) : null
+      // Nothing is derived for a bundle whose page cannot be placed. `deriveActions`
+      // calls `resolveSite`, which throws `SlugProblemError` on an unusable slug and
+      // `AssetProblemError` on a placeholder that resolves to nothing or to two
+      // pictures, and a throw inside an agent turn is not a refusal a human can act
+      // on — the queue entry below is. Both questions are answered above, before this
+      // call, precisely so that neither throw has to be caught.
+      const actions =
+        slugIssue === null && assetIssue === null ? deriveActions(bundle, artifacts) : []
+      const blocked = blockedActions(actions)
 ```
+
+The ordering matters more than the wording. Without it the first two cases in Step 1 never reach
+a refusal at all: `deriveActions` at `:435` runs before any asset predicate exists, and
+`resolveSite` inside it throws `AssetProblemError` (`src/marketing/outbox.ts:124-133` guards the
+slot with `slotProblem` and then calls `resolveSite`), so `await stage(…)` rejects instead of
+returning `{ proceed: false }`. That is the residual the Task 5 review named, and this task owns
+it. Do not solve it with a `try`/`catch` around `deriveActions`; the predicate is the answer, and
+the chain's stated rule is that each arm is a cheaper question than the next.
 
 Insert one arm after the slot arm in the chain at `:457-472`, before `blocked`:
 
@@ -1360,15 +1412,28 @@ Insert one arm after the slot arm in the chain at `:457-472`, before `blocked`:
             ? `unresolvable page asset: ${assetIssue}`
 ```
 
-The arm goes there because the chain's stated rule is "each is a cheaper question than the next", and this one is in-memory on rows already loaded. It also goes before the `unreviewedTitles` arm deliberately: an unreviewed picture that the page cannot even resolve is a page problem first, and the reviewer should be told the placeholder is wrong before being told to look at the picture.
+The arm goes there because the chain's stated rule is "each is a cheaper question than the next", and this one is in-memory on rows already loaded. It also goes before the `unreviewedTitles` arm deliberately: an unreviewed picture that the page cannot even resolve is a page problem first, and the reviewer should be told the placeholder is wrong before being told to look at the picture. Case two in Step 1 is written with both pictures `ready` so that assertion is the one that holds.
+
+Step 1's first case also updates the comment it passes: the four-refusals paragraph above
+`unreadPlanColumns` and the "one read, three uses" paragraph both describe the old order, and the
+sentence beginning "Nothing is derived" moves with the code it documents.
 
 - [ ] **Step 3: Report the unreferenced pictures**
 
 `StageOutputSchema` (`:305-312`) gains:
 
 ```ts
-  assetsUnreferenced: z.array(z.string()),
+  assetsUnreferenced: z.array(z.string()).optional(),
 ```
+
+Optional, not required, and for a reason the schema itself states: `StageOutputSchema` is shared
+by three tools — `marketing.stage_bundle` (`:330`), `marketing.promote_bundle` (`:917`) and
+`marketing.retry_publish` (`:990`) — and the latter two run with `outputValidation: 'warn'`. A
+required field the stage refusal path does not answer, and that the other two tools never produce,
+would put a validation warning on every promote and retry output for the rest of this branch's
+life. `proceed` and `reason` are already `.optional()` in this same object for exactly this
+reason, and Step 1's `StageResult` declares `assetsUnreferenced?: string[]`. The stage tool's
+success return always populates it, which is what the case above asserts.
 
 and the success return (`:498` onward, beside `artifactCount`) gains:
 
