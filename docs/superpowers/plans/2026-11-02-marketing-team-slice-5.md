@@ -1723,8 +1723,8 @@ The ledger already knows the tenant and the day. It does not know which bundle t
 **Files:**
 - Create: `migrations/0022_crum_marketing_assets_reachable.sql`
 - Modify: `src/marketing/image-spend.ts:45-59` (`committedSpendMinor`), `:72-104` (`recordImageSpend`)
-- Modify: `src/mastra/tools/marketing-writes.ts:1348-1363`, `:1419-1429`, `:1450-1460` (the three `recordImageSpend` calls)
-- Test: `tests/marketing/image-spend.test.ts`, `tests/integration/marketing-image-spend.test.ts`
+- Modify: `src/mastra/tools/marketing-writes.ts:1379`, `:1450`, `:1481` (the three `recordImageSpend` calls)
+- Test: `tests/marketing/image-spend.test.ts`, `tests/integration/marketing-image-spend.test.ts`, `tests/marketing/generate-assets-tool.test.ts` (the three exact call assertions the new parameter breaks)
 
 **Interfaces:**
 - Consumes: nothing from S5a.
@@ -1758,30 +1758,39 @@ No `FOREIGN KEY`, and say why in the file: `tenant_id` and `document_id` on this
 
 - [ ] **Step 2: Write the failing tests**
 
-In `tests/marketing/image-spend.test.ts`, follow that file's existing `getDbClient` stub shape:
+In `tests/marketing/image-spend.test.ts`, use that file's own vocabulary, because it has no `lastQuery`, no `respondWith` and no bundle constant: `mockQuery` behind a `vi.mock('pg')`, `calls(fragment)` (`:19`) to pull a query out of the recorded calls, `load()` (`:25`) to re-import the module after each `vi.resetModules()`, and the constants `TENANT`, `DOC` and `SPEND_ID` at `:15-17`. `beforeEach` answers every query with `{ rows: [] }`, which is a fail-closed answer for a total read, so a test that wants a number has to `mockResolvedValueOnce` before it calls. Add `const BUNDLE = '55555555-5555-4555-8555-555555555555'` beside the others. Both ceiling reads match the `FROM marketing_image_spend` fragment, so the second read in a test is read with `calls(...).at(-1)`.
 
 ```ts
 it('writes the bundle the money was spent on, as a named parameter', async () => {
+  mockQuery.mockResolvedValueOnce({ rows: [{ id: SPEND_ID }] })
+  const { recordImageSpend } = await load()
   await recordImageSpend({ tenantId: TENANT, bundleId: BUNDLE, documentId: DOC, costMinor: 4 })
-  const [sql, params] = lastQuery()
-  expect(sql).toContain('bundle_id')
-  expect(params).toEqual([TENANT, BUNDLE, DOC, 'replicate', 4, null])
+  const [call] = calls('INSERT INTO marketing_image_spend')
+  expect(call!.sql).toContain('bundle_id')
+  expect(call!.params).toEqual([TENANT, BUNDLE, DOC, 'replicate', 4, null])
 })
 
 it('sums one bundle over every day, and does not touch the day window', async () => {
-  await committedBundleSpendMinor(TENANT, BUNDLE)
-  const [sql, params] = lastQuery()
-  expect(sql).not.toContain('spent_on')
-  expect(params).toEqual([TENANT, BUNDLE])
+  mockQuery.mockResolvedValueOnce({ rows: [{ total: '12' }] })
+  const { committedBundleSpendMinor, committedSpendMinor } = await load()
+  expect(await committedBundleSpendMinor(TENANT, BUNDLE)).toBe(12)
+  const [bundleRead] = calls('FROM marketing_image_spend')
+  expect(bundleRead!.sql).not.toContain('spent_on')
+  expect(bundleRead!.params).toEqual([TENANT, BUNDLE])
   // The sibling read keeps its own window, because a ceiling that quietly changes
   // the window it was tested against stops being the tenant's day ceiling.
-  await committedSpendMinor(TENANT)
-  expect(lastQuery()[0]).toContain('spent_on = CURRENT_DATE')
+  mockQuery.mockResolvedValueOnce({ rows: [{ total: '5' }] })
+  expect(await committedSpendMinor(TENANT)).toBe(5)
+  expect(calls('FROM marketing_image_spend').at(-1)!.sql).toContain('spent_on = CURRENT_DATE')
 })
 
-it('fails closed on an unreadable bundle total, the same way the day total does', async () => {
-  respondWith({ rows: [{ total: null }] })
+it('fails closed on an unreadable bundle total, and says which read failed', async () => {
+  mockQuery.mockResolvedValueOnce({ rows: [{ total: null }] })
+  const { committedBundleSpendMinor } = await load()
   await expect(committedBundleSpendMinor(TENANT, BUNDLE)).rejects.toThrow(/instead of one non-negative integer total/)
+  // The label is the half of the message an owner acts on: two ceilings now answer
+  // through one function, and "the bundle spend read" is what tells them which one.
+  await expect(committedBundleSpendMinor(TENANT, BUNDLE)).rejects.toThrow(/bundle spend read answered/)
 })
 ```
 
@@ -1817,7 +1826,7 @@ That file's existing `uniqueTenant()` and `unique()` helpers (`:28`, `:33`) hand
 
 `recordImageSpend` gains a required `bundleId: string | null` as the second key of its params object, and the INSERT becomes `INSERT INTO marketing_image_spend (tenant_id, bundle_id, document_id, provider, cost_minor, raw_extract) VALUES ($1, $2, $3, $4, $5, $6::jsonb)` with `params.bundleId` in the `$2` position. Required rather than optional, on the same principle as the `documentId: string | null` beside it: a caller that has not answered "which bundle" is a caller that should have to write `bundleId: null` and mean it.
 
-Two mechanical consequences, both in this task: the `$5::jsonb` comment at `:83-86` moves to `$6::jsonb` (the naming rule it records is unchanged), and every existing `recordImageSpend` call in `tests/integration/marketing-image-spend.test.ts` (`:52`, `:89`, `:107`, `:125`, and any the file grows after that) gains `bundleId: null` unless the case is about attribution.
+Two mechanical consequences, both in this task: the `$5::jsonb` comment at `:83-86` moves to `$6::jsonb` (the naming rule it records is unchanged), and every existing `recordImageSpend` call gains a `bundleId`. There are more of those calls than the four in `tests/integration/marketing-image-spend.test.ts` at `:52`, `:91`, `:107`, `:108`, `:109` and `:125` (six, not the four a first reading finds, and the multi-tenant case has three of them), and the unit file is a caller too: `tests/marketing/image-spend.test.ts:102`, `:123`, `:134` and the two inside the `cost_minor` refusal case at `:156-157` all need `bundleId`, and the three `params` arrays the append cases assert at `:111-117`, `:128` and `:145-151` gain the bundle value in the second position or they fail for the new column order rather than for anything the task broke. `bundleId: null` everywhere unless the case is about attribution.
 
 Then hoist the fail-closed numeric guard out of `committedSpendMinor` so both reads share one rule:
 
@@ -1866,29 +1875,31 @@ export async function committedBundleSpendMinor(tenantId: string, bundleId: stri
 }
 ```
 
-The `label` in the message is what tells an owner which ceiling is misbehaving, and it is why the guard moved into a function instead of being copied.
+The `label` in the message is what tells an owner which ceiling is misbehaving, and it is why the guard moved into a function instead of being copied. Relabelling the daily read from `the ceiling read answered` is free: the string exists only at `src/marketing/image-spend.ts:55` and no assertion pins it, because the unit file's two fail-closed cases match on `/marketing_image_spend/` (`tests/marketing/image-spend.test.ts:93,95`).
 
 - [ ] **Step 4: Attribute the three writes in the tool**
 
-Every `recordImageSpend` call in `marketing.generate_assets` names the bundle it was spent on: `bundleId: bundle.id` at `:1348` (a prediction that produced nothing usable), `:1419` (a document lane that refused), and `:1450` (the ordinary booking). All three already sit inside a branch where `bundle !== null`, so no new guard is needed; if `npm run typecheck` says otherwise, the branch narrowing moved and the fix is to read the surrounding `if`, not to add `bundle?.id ?? null`.
+Every `recordImageSpend` call in `marketing.generate_assets` names the bundle it was spent on: `bundleId: bundle.id` at `src/mastra/tools/marketing-writes.ts:1379` (a prediction that produced nothing usable), `:1450` (a document lane that refused) and `:1481` (the ordinary booking). All three sit inside the guard at `:1343` (`refused.length === 0 && bundle !== null && adapter !== null`) around a `const bundle` declared at `:1220`, so the narrowing reaches them and no new guard is needed; if `npm run typecheck` says otherwise, the branch moved and the fix is to read the surrounding `if`, not to add `bundle?.id ?? null`.
+
+`tests/marketing/generate-assets-tool.test.ts` is the fourth file this changes, and the plan's Files list names it: its three exact `toHaveBeenCalledWith` assertions at `:296`, `:390` and `:420` spell out the whole params object the tool passes, so each gains `bundleId: BUNDLE` — the same uuid the case already runs the tool with (`const BUNDLE`, `:49`). This is not busywork. Those three assertions are the only place the unit lane can see that the tool attributes the money to the bundle it was called for, and `toHaveBeenCalledWith` compares the object exactly, so leaving them alone is a red run rather than a free pass. `:351` (`not.toHaveBeenCalled`) needs nothing.
 
 - [ ] **Step 5: Run**
 
 ```bash
 cd D:/Code/CRUM
-npx vitest run tests/marketing/image-spend.test.ts
-npx vitest run tests/integration/marketing-image-spend.test.ts tests/integration/marketing-assets-migration.test.ts tests/integration/migrations.test.ts
+npx vitest run tests/marketing/image-spend.test.ts tests/marketing/generate-assets-tool.test.ts
+npx vitest run tests/integration/marketing-image-spend.test.ts tests/integration/marketing-generate-assets.test.ts tests/integration/marketing-assets-migration.test.ts tests/integration/migrations.test.ts
 npm run typecheck
 npm run lint
 ```
 
-Expected: the unit run passes, and the integration run passes only with `CRUM_INTEGRATION_DATABASE_URL` exported (see the Integration cluster above). `tests/integration/migrations.test.ts` is the file that proves a fresh database reaches the same shape through `0001…0022` in order, so it must run in this task and be named in your report.
+Expected: the unit run passes, and the integration run passes only with `CRUM_INTEGRATION_DATABASE_URL` exported (see the Integration cluster above). `tests/integration/migrations.test.ts` is the file that proves a fresh database reaches the same shape through `0001…0022` in order, so it must run in this task and be named in your report. `tests/integration/marketing-generate-assets.test.ts` must also be named: it is the only place the tool writes a real spend row, so it is what proves the new column accepts the id the tool passes, and its `committedSpendMinor` totals must stay unchanged — the day read does not filter on `bundle_id`, so an attribution that quietly narrowed the day ceiling shows up there as a wrong total.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 cd D:/Code/CRUM
-git add migrations/0022_crum_marketing_assets_reachable.sql src/marketing/image-spend.ts src/mastra/tools/marketing-writes.ts tests/marketing/image-spend.test.ts tests/integration/marketing-image-spend.test.ts
+git add migrations/0022_crum_marketing_assets_reachable.sql src/marketing/image-spend.ts src/mastra/tools/marketing-writes.ts tests/marketing/image-spend.test.ts tests/marketing/generate-assets-tool.test.ts tests/integration/marketing-image-spend.test.ts
 git commit -m "feat(marketing): the image ledger records the bundle each prediction cost"
 ```
 
