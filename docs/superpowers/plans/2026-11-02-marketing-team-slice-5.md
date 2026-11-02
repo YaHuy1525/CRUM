@@ -158,14 +158,14 @@ Append to `tests/marketing/site.test.ts`. The pinned hash is the point: it is co
 describe('the byte lane (slice 5 R1)', () => {
   // Computed with `node -e "console.log(require('crypto').createHash('sha256').update('<h1>hi</h1>').digest('hex'))"`,
   // so this is the UTF-8 hash of the page, not the hash of whatever the code under test happens to produce.
-  const INDEX_HASH = '1ff1d773c5bac6b5a925895b53c396029aad06004e722fcbfb72c98a7b2f3b0c'
+  const INDEX_HASH = 'e7fbb6fbbf4ce294913eb62b53ff03a7546649cfdc0d824d9e3a2b4541502f7f'
 
   it('hashes the same bytes a text page had before it carried a Uint8Array', () => {
-    const [file] = resolveSite('physio', [file('a1', 'page_html', '<h1>hi</h1>')])
-    expect(file?.sha256).toBe(INDEX_HASH)
-    expect(file?.contentType).toBe('text/html')
-    expect(siteTextOf(file!)).toBe('<h1>hi</h1>')
-    expect(file?.content).toBeInstanceOf(Uint8Array)
+    const [page] = resolveSite('physio', [file('a1', 'page_html', '<h1>hi</h1>')])
+    expect(page?.sha256).toBe(INDEX_HASH)
+    expect(page?.contentType).toBe('text/html')
+    expect(siteTextOf(page!)).toBe('<h1>hi</h1>')
+    expect(page?.content).toBeInstanceOf(Uint8Array)
   })
 
   it('leaves a multi-file site hash unchanged across the string to bytes move', () => {
