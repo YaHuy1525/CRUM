@@ -1608,7 +1608,14 @@ it('publishes the generated picture inside the hash the approval signed', async 
     // The bytes on the wire are the bytes the hash names, and the part is labelled
     // as a picture. A page whose manifest lied about its picture is the failure
     // this slice exists to remove.
-    expect(upload.body.subarray(upload.body.indexOf(PNG_A), upload.body.indexOf(PNG_A) + PNG_A.length)).toEqual(PNG_A)
+    // `Uint8Array.from`, not the raw `subarray`: Vitest 3.2.7 compares a `Buffer`
+    // and a plain `Uint8Array` by constructor, so `toEqual` fails on identical
+    // bytes with `expected Buffer[…] to deeply equal Uint8Array[…]`. Copying the
+    // slice is what the byte lane itself does in `plainBytesOf`.
+    const wire = Uint8Array.from(
+      upload.body.subarray(upload.body.indexOf(PNG_A), upload.body.indexOf(PNG_A) + PNG_A.length),
+    )
+    expect(wire).toEqual(PNG_A)
     expect(upload.body.toString('latin1')).toContain('Content-Type: image/png')
     expect(upload.branch).toBe('crum-preview/physio-picture')
   } finally {
@@ -1617,6 +1624,15 @@ it('publishes the generated picture inside the hash the approval signed', async 
   }
 })
 ```
+
+The test also has to say that the *page* the host received asks for the picture, not merely that the
+deployment contains it. Assert the root-relative URL the resolver puts in the markup,
+`expect(upload.body.toString('latin1')).toContain('/' + asset!.path)`, and not the bare `asset!.path`:
+the manifest part in the same body carries the identical string as its key, written without the leading
+slash, so the bare form is satisfied by the manifest whether or not the page was substituted. Proof:
+substituting a decoy path in `src/marketing/site.ts` leaves the whole file green under the bare spelling
+and red under the slashed one. That difference is the whole claim, and the comment beside the line names
+the slash so the next reader does not "tidy" it away.
 
 `bundleInput`, `context`, `TENANT` and the uuid literals come from the two files named above, and
 one of them does not: `bundleInput` is a local function in `tests/mastra/marketing-write-tools.test.ts:111`,
