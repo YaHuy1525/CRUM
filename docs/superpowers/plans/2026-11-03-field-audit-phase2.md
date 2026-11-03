@@ -549,7 +549,7 @@ The first two lines of `evaluate` are spec 5.2's "drops rules whose subject row 
 
 Create `tests/validation/evaluate.test.ts`. It builds rules inline rather than importing the catalogue, so the engine contract stays independent of which rules exist.
 
-The `rule()` helper takes `out: Violation[]` and returns `run: () => out` with no cast, measured clean under both `tsc --noEmit` and eslint in this worktree. The earlier shape, `out: never[] | Array<Record<string, unknown>>` with `run: () => out as never`, threw away `Violation` shape checking on every fixture: a typo like `severity: 'warn'` compiled, made `SEVERITY_RANK[a.severity]` read `undefined`, returned `NaN` from the comparator, and silently degraded the total order this file exists to prove. Typing the parameter lets the compiler check each fixture, and 19 rules' worth of fixtures inherit that.
+The `rule()` helper takes `out: Violation[]` and returns `run: () => out` with no cast, measured clean under both `tsc --noEmit` and eslint in this worktree. The earlier shape, `out: never[] | Array<Record<string, unknown>>` with `run: () => out as never`, threw away `Violation` shape checking on every fixture: a typo like `severity: 'warn'` compiled, made `SEVERITY_RANK[a.severity]` read `undefined`, returned `NaN` from the comparator, and silently degraded the total order this file exists to prove. Typing the parameter lets the compiler check each fixture, and 19 rules' worth of fixtures inherit that. One consequence, measured: a fixture the test extracts into `const dup = { ... }` before passing it loses its contextual type, `severity` widens to `string`, and `tsc` fails with TS2322. That is the typing working, so annotate the extraction (`const dup: Violation = { ... }`) rather than casting it. Fixtures written inline in an argument position keep the contextual type and need nothing.
 
 ```ts
 import { describe, it, expect } from 'vitest'
@@ -607,7 +607,7 @@ describe('evaluate', () => {
   })
 
   it('drops an exact ruleId and field duplicate a second rule produces', () => {
-    const dup = { ruleId: 'd', field: 'total', severity: 'error', message: 'm' }
+    const dup: Violation = { ruleId: 'd', field: 'total', severity: 'error', message: 'm' }
     expect(evaluate(invoice, CTX, [rule({ id: 'd' }, [dup]), rule({ id: 'd2' }, [dup])]).length).toBe(1)
   })
 
