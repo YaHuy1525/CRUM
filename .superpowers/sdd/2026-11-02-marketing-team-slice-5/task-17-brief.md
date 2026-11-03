@@ -16,7 +16,7 @@ The registry holds 41 tools and the admin's active list holds 42, because `resol
 - `src/mastra/tools/marketing-writes.ts` (the new tool, the two payload sites, the return type, `REFUSAL_PROSE`, `tokenOf`)
 - `src/mastra/agent.ts` (import at `:36`, registry key after `:89`)
 - `src/mastra/instructions.ts` (the marketing section, before the closing `</section>` at `:100`)
-- `scripts/analyst-cron.ts` (the stage call site only, `:372` and `:381`)
+- `scripts/analyst-cron.ts` (the stage call site only, `:328` and `:337`)
 - `tests/mastra/marketing-campaign-status-tool.test.ts`
 - `tests/mastra/agent.test.ts`
 - `tests/mastra/marketing-publish-tools.test.ts` only if the return-shape change reaches it
@@ -24,7 +24,7 @@ The registry holds 41 tools and the admin's active list holds 42, because `resol
 ## Files you must not touch
 
 - `src/db/pending-writes.ts`, `tests/db/marketing-commit.test.ts`, `tests/integration/marketing-campaign-status.test.ts`. They belong to Task 16, and an independent review is reading them right now. If you think the branch Task 16 landed needs a change, report it and stop.
-- `scripts/publish-drain.ts` and `tests/scripts/analyst-cron-config.test.ts`. They belong to Task 16's addendum A1 round.
+- `scripts/publish-drain.ts`, `src/marketing/meta-ads-config.ts`, `tests/marketing/publish-drain.test.ts` and `tests/marketing/meta-ads-config.test.ts`. They belong to Task 16's addendum A1 round, landed at `a573a1f`, and an independent review is reading them now. The last two are the moved config test: it was `tests/scripts/analyst-cron-config.test.ts` when this brief was drafted and the rename is in history.
 - Anything belonging to the other effort working in this tree: `src/api/documents.ts`, `src/api/index.ts`, `src/api/serve.ts`, `src/mastra/docling.ts`, `src/mastra/identity.ts`, `src/mastra/workflows/ingest.ts`, `console/**`, `services/ocr/**`, `src/queue/**`, `src/temporal/**`, `src/transforms/**`, and their tests. Never stage them, never "fix" them.
 
 ## Addendum A1. Anchor corrections
@@ -44,7 +44,7 @@ The plan's `marketing-writes.ts` line numbers are stale because Task 15 grew tha
 
 Anchors that are exact and need no re-finding: `src/mastra/agent.ts:36` and `:89`, 41 keys in `crumToolRegistry`, `tests/mastra/agent.test.ts:50-53` whose title reads `has 41 tools configured (22 read + 7 auto + 12 approval)`, `tests/mastra/active-tools.test.ts:12` `:38` `:49` `:72` with `ADMIN_EXPECTED // 42`, `policy/tools.yaml:281` with `class: approval` `scope: marketing:status` `idempotency_key: draftHash`, `tests/governance/conformance.test.ts:56` with `['marketing.set_campaign_status', 'approval', 'draftHash']`, and `tests/mastra/marketing-publish-tools.test.ts:33` for the `context` object Step 5 copies.
 
-`scripts/analyst-cron.ts` has drifted too: the plan's `:314` call site is `const draftId = await stageStatus({ ... })` at `:372` and `stagedDrafts.push({ campaignId: rec.campaignId, status, draftId })` at `:381`, and the element type `Array<{ campaignId: string; status: string; draftId: string }>` is declared twice, at `:246` (the return type) and at `:350` (the local). Keep the element type as it is, per the plan.
+`scripts/analyst-cron.ts` has drifted twice: once when Task 15 grew it, and once when A1 deleted its private Meta config read, which took 43 lines out of the middle of the file. Re-measured at `a573a1f`: the plan's `:314` call site is `const draftId = await stageStatus({ ... })` at `:328` and `stagedDrafts.push({ campaignId: rec.campaignId, status, draftId })` at `:337`, and the element type `Array<{ campaignId: string; status: string; draftId: string }>` is declared twice, at `:202` (the return type) and at `:306` (the local). Keep the element type as it is, per the plan. The registration block at `:408` is now `registerMetaLane(env, 'analyst-cron')`; it belongs to A1, is under review, and is not yours to change.
 
 ## Addendum A2. R-40, the return shape is a third convention and it stays
 
@@ -77,7 +77,7 @@ Work test-first. The plan's Step 5 cases and the count change in `tests/mastra/a
 ```bash
 cd D:/Code/CRUM
 npx vitest run tests/mastra/marketing-campaign-status-tool.test.ts tests/mastra/agent.test.ts tests/mastra/active-tools.test.ts tests/mastra/marketing-publish-tools.test.ts tests/governance/conformance.test.ts
-npx vitest run tests/scripts/analyst-cron-config.test.ts tests/mastra/marketing-boot.test.ts
+npx vitest run tests/marketing/meta-ads-config.test.ts tests/mastra/marketing-boot.test.ts
 export CRUM_INTEGRATION_DATABASE_URL="postgres://crum_test@localhost:5455/crum_slice5"
 npx vitest run --project integration tests/integration/analyst-cron.test.ts tests/integration/marketing-campaign-status.test.ts
 npm run typecheck
@@ -86,7 +86,9 @@ npm run lint
 
 Report collected and passed counts per integration file and say in words whether anything was skipped. A skipped test is never a pass, and if the URL was not exported the file skips silently.
 
-Expect `npm run typecheck` to show the other effort's error at `src/api/documents.ts(372,33)`. It is not yours, it is not a reason to stop, and you must not touch it. Quote it in your report as a named foreign red with its blame attribution. `npm run lint` must be clean for your files.
+`npm run typecheck` was clean at `a573a1f`, including the other effort's `src/api/documents.ts`: the error this brief used to predict there was fixed by their `f283490` while Task 16 was in review. If typecheck goes red while you work, attribute it by file (`git log -1 -- <path>`, `git blame -L`) before you act on it, report a foreign red by name, and do not touch another effort's file. `npm run lint` must be clean for your files.
+
+One more thing about the two repo-wide gates: a reviewer for A1 is running them in this same window, and a third effort is committing to this branch. A red you cannot reproduce after re-running is a sign of a concurrent edit, not of your own defect; say so in the report rather than chasing it.
 
 Never run `npm run test`, `npm run verify`, a bare `npx vitest run`, `npx vitest run --project unit` without file paths, or anything under `tests/evals`. Do not start, stop or reconfigure the Postgres cluster on 5455. No test may call Replicate, a model, a real ad account or a real domain, and `CRUM_REPLICATE_API_TOKEN` must never appear in a file, log or report.
 
