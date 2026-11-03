@@ -531,7 +531,7 @@ function rule(partial: Partial<ValidationRule> & { id: string }, out: never[] | 
     fields: ['total'],
     run: () => out as never,
     ...partial,
-  } as ValidationRule
+  }
 }
 
 describe('evaluate', () => {
