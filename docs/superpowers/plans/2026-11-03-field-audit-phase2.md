@@ -473,9 +473,17 @@ export function buildBundle(
   lines: Array<Record<string, unknown>>,
   terms: Array<Record<string, unknown>>,
 ): DocumentRecordBundle {
+  const toRow = (row: Record<string, unknown>): Record<string, string | null> =>
+    Object.fromEntries(
+      Object.entries(row).map(([key, value]) => [
+        key,
+        value === null || value === undefined ? null : String(value),
+      ]),
+    )
+  const head = header === null ? null : toRow(header)
   return kind === 'invoice'
-    ? { kind, invoice: header ?? undefined, lines, terms: [] }
-    : { kind, contract: header ?? undefined, terms, lines: [] }
+    ? { kind, invoice: head ?? undefined, lines: lines.map(toRow), terms: [] }
+    : { kind, contract: head ?? undefined, terms: terms.map(toRow), lines: [] }
 }
 
 export function evaluate(
@@ -568,6 +576,12 @@ describe('evaluate', () => {
     expect(buildBundle('invoice', {}, lines, terms)).toMatchObject({ kind: 'invoice', lines, terms: [] })
     expect(buildBundle('contract', {}, lines, terms)).toMatchObject({ kind: 'contract', terms, lines: [] })
     expect(buildBundle('invoice', null, [], []).invoice).toBeUndefined()
+  })
+
+  it('coerces row values at the bundle boundary so pg numbers and booleans arrive as strings', () => {
+    const b = buildBundle('invoice', { total: 12, auto_renewal: true, blank: null }, [{ qty: 3 }], [])
+    expect(b.invoice).toEqual({ total: '12', auto_renewal: 'true', blank: null })
+    expect(b.lines).toEqual([{ qty: '3' }])
   })
 })
 ```
