@@ -14,11 +14,13 @@ describe.skipIf(!url)('reviewer_predictions on Postgres', () => {
   beforeAll(async () => {
     pool = new Pool({ connectionString: url, max: 2 })
     await migrate(pool)
-    await pool.query('BEGIN')
   })
 
   afterAll(async () => {
-    await pool.query('ROLLBACK')
+    // Clean up rows created by this test, scoped to the test's tenant to avoid
+    // affecting other tests or production data.
+    await pool.query('DELETE FROM reviewer_predictions WHERE tenant_id = $1', [TENANT])
+    await pool.query('DELETE FROM pending_writes WHERE tenant_id = $1', [TENANT])
     await pool.end()
   })
 
@@ -91,7 +93,9 @@ describe.skipIf(!url)('reviewer_predictions on Postgres', () => {
     const live = await openDraft()
     const found = await getOpenStageDraft(TENANT, BUNDLE)
     expect(found?.id).toBe(live)
-    await pool.query(`UPDATE pending_writes SET expires_at = now() - interval '1 minute'`)
+    // Scope the expiry update to this test's tenant to avoid expiring other
+    // tests' rows in the shared database.
+    await pool.query(`UPDATE pending_writes SET expires_at = now() - interval '1 minute' WHERE tenant_id = $1`, [TENANT])
     expect(await getOpenStageDraft(TENANT, BUNDLE)).toBeNull()
   })
 })
