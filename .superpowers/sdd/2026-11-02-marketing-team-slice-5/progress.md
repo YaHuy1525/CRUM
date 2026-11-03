@@ -979,3 +979,34 @@ Deferred to the A1 round, deliberately, with the reason recorded so nothing is l
 `npx vitest run tests/mastra/marketing-campaign-status-tool.test.ts tests/scripts/analyst-cron-config.test.ts tests/mastra/marketing-boot.test.ts` gives 12 plus 5 plus 8, `Tests 25 passed (25)`, three files passed, and the only stderr is boot's own `MCP_REQUEST_STATE_KEY` warning, which is the message under test rather than a failure. `npx eslint` on the two changed files exits 0. No integration run was needed for a comment and a regex, and the round-2 reviewer's own gate record stands as the integration evidence for `45a0f75`.
 
 Task 15 is closed at `253ce21`. Tracker #104 can move to done once this round's docs are committed.
+
+## Task 18 pre-flight (controller, before briefing)
+
+Task 18 derives `MUTATING_TOOL_IDS` from the policy and the registry instead of a hand-written array, and its whole claim is an arithmetic one: that the derived set equals the guarded list plus exactly four ids. That claim was checked by computing it, not by reading the plan.
+
+### R-42. The derivation closes exactly, and the numbers are the plan's, not my grep's
+
+`grep -c "class: approval" policy/tools.yaml` answers 17, and that number is a trap. Three of those lines belong to a separate top-level `connectors:` list at `policy/tools.yaml:302`, smtp, calendar and slack, and `loadPolicy().tools.tools` does not read that section, so a `DECLARED_MUTATING` built from the loader sees 14 approval tools. Counting the 44 entries under `tools:` by class gives 22 read-only, 14 approval, 7 auto and 1 refuse, which is exactly what plan line 4220 claims, so the plan is right and the naive grep is wrong.
+
+Computing the assertion itself, with the registry taken at 42 keys because Task 17 runs first: declared mutating is 22 names, the two backlog ids `crm.bulk_import` and `run.side-effect` are declared and not callable, the intersection with the registry is 20, the guard list today is 16, and 16 plus the four Step 3 ids is 20. Missing from the guard after Step 3: none. Extra in the guard after Step 3: none. Every registered tool has a policy class. So the first derived case goes green precisely when Step 3 lands and not before, which is the behaviour the task is built to prove.
+
+The brief must tell the implementer that connectors carry `class: approval` and are deliberately out of scope, because otherwise a careful reader spends the round hunting for a missing smtp tool.
+
+### Anchors are all exact, for once
+
+| Plan anchor | Tree |
+| --- | --- |
+| `write-claim-guard.ts:8-25` `MUTATING_TOOL_IDS` | exact, 16 entries from `:9` to `:24`, `marketing.set_campaign_status` already listed at `:24` |
+| `:17` `'crm.transfer_owner'` | exact, and `'mail.send'` is `:18`, so Step 3 inserts between them as written |
+| `:27` `MUTATING_TOOLS` | exact, derived from the array, so it needs no edit |
+| `:80` `ranMutatingTool` | exact |
+| `write-claim-guard.test.ts:36` case, `:58` `toHaveLength(16)` | exact |
+| `:106-124` hand-built args driving `processOutputStep` | exact, the two calls are at `:109` and `:124` |
+| `agent.ts:48` registry const | exact, `const crumToolRegistry = {`, not exported |
+| `agent.ts:80-84` the four prospect-lane writes | exact: `:80` `crm.draft_outreach`, `:81` `crm.send_outreach`, `:82` `crm.save_prospect_snapshot`, `:84` `crm.resolve_merge_candidate` |
+
+`providerToolName` is already imported in the test at `:8`, so Step 4's case needs no new import, and the guard file imports it at `:7`.
+
+### The dependency to respect
+
+Step 2 predicts the third case passes because Task 17 already put `marketing.set_campaign_status` in the registry. That is the only forward reference in the task, and it means Task 18 must not be dispatched before Task 17's commit is verified: with 41 registry keys the third case still passes (the backlog filter does not name the tool), but the first case fails with five missing ids instead of four, which would read like a new defect rather than an unfinished predecessor.
