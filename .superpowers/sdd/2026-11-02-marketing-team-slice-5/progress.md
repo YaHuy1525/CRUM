@@ -642,3 +642,47 @@ Consequence for the slice: the "picture that lands after staging kills the appro
 
 Carried to Task 13: it reads `invalidatedBundles` from the review route and says it out loud on the console.
 
+## Task 13 preflight (controller, before dispatch)
+
+Plan BASE for this task is `a2b913f` "docs(marketing): Task 12 review records the split commit and names the integration gap", on top of `8fd7b07` and `017c693`. Brief extracted from the committed plan at `.superpowers/sdd/2026-11-02-marketing-team-slice-5/task-13-brief.md` (425 lines).
+
+Ruling R-29: the Task 13 brief has five anchor drifts and one semantic conflict.
+
+First, `src/api/documents.ts:187-190` is cited as the `?kind=` whitelist, but the actual block is at `:208-211` in HEAD's file. Off by 21 lines from the intervening Task 12 additions to the review route.
+
+Second, `src/api/documents.ts:30` is cited as `IntakeResult.kind`, but the actual line is `:32` in HEAD. Off by 2 lines.
+
+Third, `tests/api/documents.test.ts:166, :176` are cited as the existing kind cases, but in HEAD they are at `:183, :193`. Off by 17-20 lines.
+
+Fourth, `console/middleware.ts:22` is cited as the identity header rewrite, but the file is only 18 lines. The actual line is `:12` (`NextResponse.next({ request: { headers: identity.headers } })`). Off by 10 lines and past the file's end.
+
+Fifth, `src/api/marketing.ts:186`, `src/db/documents.ts:389`, `MarketingBundleView.tsx:324`, `console/lib/types.ts:139`, and `console/tests/DocumentManager.test.tsx:1-67, :88` are all verified correct in the current tree. No drift.
+
+The semantic conflict is more consequential than the anchors. The plan says "the console gains a fourth tab" and shows `<TabsTrigger value="assets">Campaign images</TabsTrigger>` after Contracts. In HEAD's tree, another concurrent effort already inserted a fourth tab "Processing" (backed by `DocumentProcessingDashboard`) after Contracts. So Task 13's tab is the fifth, not the fourth. Ruling: insert Campaign images immediately after Contracts and before Processing. The plan's intent is that the four document-kind tabs (knowledge, invoices, contracts, campaign images) sit adjacent and Processing goes last because it is queue monitoring, not a document type. The `PageHeader` description still names all three document lanes because "campaign images" is the fourth kind tab, not a fourth lane.
+
+The mixed-file constraint applies again, harder than Task 12. Four of Task 13's seven target files are already modified by the other concurrent queue refactor: `src/api/documents.ts` (upload route rewritten), `tests/api/documents.test.ts` (upload tests rewritten, status tests added), `console/app/knowledge/page.tsx` (processing tab added), `console/tests/KnowledgePage.test.tsx` (processing tab test added). The split-commit approach from Task 12 applies: back up the mixed working files, reset to HEAD, apply only Task 13's edits, stage, run gates against the reconstructed tree, commit, then restore the backups. The other effort's changes return as unstaged, and if they ship later they must rebase over Task 13's changes without touching the assets tab.
+
+None of the five conflicts are between the two efforts' own edits. Task 13's `?kind=` whitelist and the other effort's upload route rewrite live in different halves of the same file. The KnowledgePage test's asset cases and its processing cases occupy different `it` bodies. The two efforts are additive.
+
+Carried to Task 14: it consumes nothing from Task 13 directly, but the console tab is a caller of `get<CrmDocument>`, so `CrmDocument['kind']` widening has to stay in the type file.
+
+## Task 13 review (self-review, independent dispatch not attempted)
+
+Commit `d756fcb` "feat(marketing): generated images become browsable through the prediction gate" (7 files, +365/−4). Verdict: **DONE**, 0 Critical, 0 Important, 2 Minor.
+
+All twelve requirements in the brief are met. Backend 19 tests pass (17 + 2 new kind cases), console 11 pass on HEAD-only tree and 12 pass on the merged tree (the extra is another effort's queue case). Typecheck clean backend and console. Lint clean.
+
+The five changes are: `?kind=` whitelist admits `marketing_asset` with a four-name refusal sentence (`src/api/documents.ts:189-201`); `CrmDocument['kind']` widens (`console/lib/types.ts:139`); `AssetManager.tsx` lists that kind and shows the gated thumbnail from `/api/marketing/assets/:id/bytes`, saying how many approvals the confirm cost; a fourth tab `Campaign images` is mounted after Contracts and before Processing; four new AssetManager cases plus one new KnowledgePage case prove the whole thing.
+
+**Deviation summary.** Two of the plan's Step 5 snippets would fail as written because they use `getByRole('img')` and `getByText('image/png')` against a list of two assets, both of which throw on multiple matches. The first was replaced with `getByAltText('Generated image: <title>')` per row (stricter than the plan's assertion because it checks both thumbnails, not just the first), the second with `getAllByText('image/png')` and `toHaveLength(2)`. The plan's "fourth tab" is the fifth on the merged tree because another effort inserted a Processing tab in that slot first; R-29's ruling placed Campaign images after Contracts and before Processing, which is what shipped. All three named in the review file.
+
+**Mixed-file split (Minor).** Same shape as Task 12 but harder: four of the seven target files arrived with another effort's edits interleaved. Same backup / reset / reapply / stage / commit / restore dance. Then a second pass merged the two efforts' additions into the working tree so that neither effort's commit reverts the other. Backend and console unit runs were repeated against the merged tree before closing. This is the correct posture for a slice-5 branch that runs alongside an independent queue refactor and should be inherited by Tasks 14 through 19 whenever they touch `src/api/documents.ts`, `tests/api/documents.test.ts`, `console/app/knowledge/page.tsx`, `console/tests/KnowledgePage.test.tsx`, or the corresponding component files.
+
+**Postgres integration gate.** Not touched by Task 13. The `marketing-asset-invalidation.test.ts` file parked from Task 12 with the crashed cluster on 5455 stays parked. Task 19 inherits the same blocker.
+
+**Independent reviewer status.** Dispatch not attempted. Prior session's reviewer crashed with a credit-limit error and the standing ruling is to declare the loss rather than hide it. Self-review followed the same checklist the independent reviewer would have used.
+
+Carried to Task 14: `toIsoString` does not consume Task 13 directly, but it inherits the widened `CrmDocument['kind']` shape so asset rows are typed correctly before the timestamp fix.
+
+
+
