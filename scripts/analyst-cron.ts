@@ -333,6 +333,7 @@ export async function runAnalystCron(args: {
         status,
         reason: rec.reason,
         userRole: 'campaign-analyst',
+        origin: 'cron',
       })
       // The element type stays { campaignId, status, draftId }: a report that
       // renames the field would move the shape for nobody's benefit. The score

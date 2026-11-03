@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { TenantRequestContextSchema } from '../tenant-context'
 import { loadPolicy } from '../../governance/policy'
 import { scoreRisk } from '../../governance/risk'
+import type { Gate } from '../../governance/schema'
 import { commitAutoWrite, createHumanTask, getOrCreateDraft, invalidateOpenStageDraft } from '../../db/pending-writes'
 import { getDbClient } from '../../db/client'
 import {
@@ -853,13 +854,14 @@ export async function stageRetry(params: {
  * discriminated envelope (`StagePromotionResult`, `StageRetryResult`) because
  * their refusals are values the tool renders, while this one refuses by
  * throwing tokens — a shape Task 15 fixed and its unit cases pin — and returns
- * the bare `{ pendingWriteId, riskScore }` pair `StageOutputSchema` forces on
- * the tool. Converting the throws to an envelope would rewrite four throw sites
- * and the cron's error handling to move a value that already travels honestly
- * as an exception. Callers: the analyst cron logs a thrown refusal and moves on;
- * `setCampaignStatusTool` below catches one and turns it into a refusal human
- * task, so the sentence a chat turn reads is rendered through `readableReason`
- * and never the bare token.
+ * the `{ pendingWriteId, riskScore, gate }` triple the tool reports: the gate is
+ * the one `gateFor` computed and the draft was created with, so a chat answer
+ * cannot name a gate the queue does not carry. Converting the throws to an
+ * envelope would rewrite four throw sites and the cron's error handling to move a
+ * value that already travels honestly as an exception. Callers: the analyst cron
+ * logs a thrown refusal and moves on; `setCampaignStatusTool` below catches one
+ * and turns it into a refusal human task, so the sentence a chat turn reads is
+ * rendered through `readableReason` and never the bare token.
  */
 export async function stageCampaignStatusChange(args: {
   tenantId: string
@@ -869,7 +871,14 @@ export async function stageCampaignStatusChange(args: {
   status: 'ACTIVE' | 'PAUSED'
   reason: string
   userRole: string
-}): Promise<{ pendingWriteId: string; riskScore: number }> {
+  // Which lane asked is a fact the approver reads, not a detail of the caller:
+  // `run_id` goes out on the approval queue verbatim (src/api/approvals.ts:74)
+  // and is what `matchSuspension` (:172) looks a draft's origin up with. It is
+  // required rather than defaulted to 'cron' because the lane that forgot to say
+  // would otherwise be the lane the draft claims, which is exactly the bug this
+  // field exists to stop; the type error at every call site is the point.
+  origin: 'cron' | 'chat'
+}): Promise<{ pendingWriteId: string; riskScore: number; gate: Gate }> {
   const db = getDbClient()
 
   // requested_by is `uuid NOT NULL` (migrations/0002_crum_spine.sql:158) and the
@@ -979,7 +988,12 @@ export async function stageCampaignStatusChange(args: {
   // lands on the existing draft rather than a second one.
   const draft = await getOrCreateDraft({
     tenantId: args.tenantId,
-    runId: 'analyst-cron',
+    // The cron keeps the label it has always carried, and a chat draft takes
+    // 'pending' — the value the other marketing staging drafts already use for a
+    // row no run can be resumed from (:549, :717, :826) and a member of
+    // UNMATCHABLE_RUN_IDS (src/api/approvals.ts:95). Either way the queue says
+    // which lane staged it and promises no link neither lane has.
+    runId: args.origin === 'cron' ? 'analyst-cron' : 'pending',
     objectType: 'marketing_set_campaign_status',
     operation: 'update',
     // Meta's campaign id is not a uuid and target_id is one
@@ -999,7 +1013,7 @@ export async function stageCampaignStatusChange(args: {
     requestedBy: args.userId,
     idempotencyKey: `campaign_status:${args.campaignExternalId}:${args.status}`,
   })
-  return { pendingWriteId: draft.id, riskScore: draft.riskScore }
+  return { pendingWriteId: draft.id, riskScore: draft.riskScore, gate }
 }
 
 /**
@@ -1020,7 +1034,14 @@ const REFUSAL_PROSE: Record<string, string> = {
   // through setCampaignStatusTool. campaign_already_active and
   // campaign_status_actor_required read honestly after the underscore
   // replacement below, so they deliberately have no entry here.
-  campaign_not_found: 'no campaign with that id was created by a publish this tenant completed',
+  //
+  // One raise site produces campaign_not_found, but its query answers to four
+  // conditions — this tenant, a create_campaign action, that action succeeded,
+  // and that action's bundle — so the sentence names the bundle rather than
+  // claiming only that nothing ever published this id. A campaign created under
+  // a different bundle is the common half of the failure, and a refusal that
+  // describes only the other half sends the owner looking in the wrong place.
+  campaign_not_found: 'no campaign with that id was created by a completed publish on the bundle named in the request',
   provider_not_configured: 'this process has no campaign status adapter, so the change could not be run',
 }
 
@@ -1029,10 +1050,18 @@ function readableReason(reason: string): string {
 }
 
 // Every refusal this function raises opens with its token and a colon, so the
-// prose map can be consulted without a second registry of error classes.
+// prose map can be consulted without a second registry of error classes. The
+// shape is checked rather than assumed: a message this file did not raise can
+// carry a colon anywhere — a driver error naming a Windows path has one two
+// characters in — and a refusal that tells an owner the reason was "D" is worse
+// than one that repeats the message they have to act on.
+const TOKEN_SHAPE = /^[a-z][a-z0-9_]*$/
+
 function tokenOf(message: string): string {
   const colon = message.indexOf(':')
-  return colon > 0 ? message.slice(0, colon) : message
+  if (colon <= 0) return message
+  const leading = message.slice(0, colon)
+  return TOKEN_SHAPE.test(leading) ? leading : message
 }
 
 export const promoteBundleTool = createTool({
@@ -1131,9 +1160,13 @@ export const setCampaignStatusTool = createTool({
   requireApproval: (input, { requestContext } = {}) => {
     const policy = loadPolicy()
     // The campaign id is not knowable here without a read, and this hook must
-    // stay synchronous and side-effect free, so it scores an empty one. The
-    // payload is identifiers and a status, so the declared class decides the gate
-    // whatever the placeholder holds; execute recomputes on the real payload.
+    // stay synchronous and side-effect free, so it scores an empty one. "The
+    // declared class decides the gate" is a claim about THIS hook only: the
+    // payload is an empty id and an enum, which can only ever score benign, so
+    // for a tool declared `approval` the answer is approval. It is not a claim
+    // about `execute`, which scores the id the model wrote: that string is free
+    // text up to 64 characters and can carry an irreversible term and a
+    // high-blast term together, which reaches 90 and raises the gate to `refuse`.
     const assessment = scoreRisk(
       campaignStatusPayload({ campaignId: '', status: input.status }),
       policy.risk,
@@ -1157,11 +1190,21 @@ export const setCampaignStatusTool = createTool({
           status: input.status,
           reason: input.reason,
           userRole: rc.userRole,
+          // A turn of this tool is by definition the chat lane: the cron calls the
+          // staging function directly and names itself there.
+          origin: 'chat',
         })
         return {
           pendingWriteId: staged.pendingWriteId,
           riskScore: staged.riskScore,
-          gate: 'approval' as const,
+          // The gate the draft was created with, not a literal. StageOutputSchema
+          // names only `auto | approval`, so the one stored gate it cannot hold
+          // is reported at the floor the schema can express — the narrowing
+          // crm.create_customer (src/mastra/tools/customer-writes.ts:92) and the
+          // prospect tools already make. A draft stored as `refuse` is more
+          // locked than the answer, never less: nothing commits it without a
+          // human, and no human can approve it.
+          gate: staged.gate === 'refuse' ? ('approval' as const) : staged.gate,
           // The reason is deliberately absent from the payload, so this is where
           // the analyst's argument reaches a human. The draft the owner reviews
           // names the campaign and the status; the conversation carries the why.

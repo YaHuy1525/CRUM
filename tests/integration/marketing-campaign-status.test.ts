@@ -123,6 +123,9 @@ describe.skipIf(!url)('approving a campaign status draft queues the work order',
         status: 'ACTIVE',
         reason: 'cost_per_lead_below_5',
         userRole: 'admin',
+        // The analyst lane, which is what this proof stages from: the cron calls
+        // the same function directly, and the chat lane is the tool above it.
+        origin: 'cron',
       })
 
       const draft = await getPendingWrite(draftId, TENANT)
