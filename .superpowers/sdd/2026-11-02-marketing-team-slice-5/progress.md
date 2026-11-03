@@ -1190,3 +1190,25 @@ actually computed. Also in: `tokenOf` truncates a Windows path at the drive-lett
 `D:` is treated as a token. Parked, because both are wider than a nit round: `campaignExternalId`
 carries no shape validation at all, and the instructions paragraph names an admin-only tool to
 roles that cannot reach it.
+
+## Task 17 round 2 landed at `a345ab8`, and the implementer ran out of turns on the way
+
+The dispatched implementer wrote all of A8.1 to A8.5 and then hit the harness limit of 150 turns
+while starting the full gate, with no report and no commit. Its tree was complete and clean: four
+files, 269 insertions, no mutant left in place, nothing outside the A8 file list. I kept the work
+rather than restarting the agent, ran the gate myself, read the whole diff, and performed the four
+mutation experiments it never demonstrated. All four die now, including both I1 mutants that
+survived 17 of 17 before this round. `npx vitest run tests/mastra tests/db tests/api` is
+`Tests 1026 passed (1026)`, because a required argument reached eleven call sites and a focused
+run would not have proved that.
+
+The one decision in this round that was not in A8 is the implementer's, and it is recorded here
+because a later reader will ask. `StageOutputSchema` names only `auto | approval`, so a draft
+stored with gate `refuse` cannot be reported truthfully through the declared output. It clamps the
+answer to `approval` and returns the computed gate everywhere else, with a comment saying the
+error runs in the safe direction: a `refuse` draft is more locked than the chat answer claims,
+never less, because nothing commits it without a human and no human can approve it. The alternative
+was widening `StageOutputSchema`, which is not this round's file.
+
+Two parked findings survive the round unchanged: `campaignExternalId` has no shape validation, and
+the instructions paragraph names an admin-only tool to roles that cannot reach it.
