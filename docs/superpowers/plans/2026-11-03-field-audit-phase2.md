@@ -353,6 +353,10 @@ describe('parseDate', () => {
     expect(parseDate('2026-03-01')).toBe('2026-03-01')
     expect(parseDate('2026-03-01T00:00:00.000Z')).toBe('2026-03-01')
   })
+  it('rejects trailing junk instead of reading the date out of its prefix', () => {
+    expect(parseDate('2026-03-011')).toBeNull()
+    expect(parseDate('2026-03-01xyz')).toBeNull()
+  })
   it('rejects an ambiguous locale string', () => {
     expect(parseDate('01/03/2026')).toBeNull()
   })
@@ -429,9 +433,11 @@ export function isCurrencyShape(v: unknown): boolean {
   return typeof v === 'string' && /^[A-Za-z]{3}$/.test(v.trim())
 }
 
+const DATE_OR_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?Z?)?$/
+
 export function parseDate(v: unknown): string | null {
   if (isAbsent(v)) return null
-  const m = String(v).trim().match(/^(\d{4})-(\d{2})-(\d{2})/)
+  const m = String(v).trim().match(DATE_OR_TIMESTAMP)
   if (!m) return null
   const [, y, mo, d] = m
   const ms = Date.UTC(Number(y), Number(mo) - 1, Number(d))
@@ -441,7 +447,7 @@ export function parseDate(v: unknown): string | null {
 }
 ```
 
-`parseDate` rebuilds the instant from the three numeric components and re-reads them out of the ISO string. That is how `2026-02-30` is rejected rather than rolled to March. It never consults the clock.
+`parseDate` rebuilds the instant from the three numeric components and re-reads them out of the ISO string. That is how `2026-02-30` is rejected rather than rolled to March. It never consults the clock. The pattern is anchored at both ends and spells out the optional time part, because a start-anchored `^\d{4}-\d{2}-\d{2}` would read `2026-03-01xyz` and `2026-03-011` as a valid `2026-03-01`; a truncated day is exactly the shape an OCR slip produces, and a rule that then compares that date against `ctx.today` would be judging a value the reader invented. The `T…` branch stays permissive because `pg` renders a `timestamp` as `2026-03-01T00:00:00` and the values test pins that an ISO timestamp normalises to its date.
 
 - [ ] **Step 4: Implement `src/validation/rules.ts` as an empty catalogue**
 
@@ -467,6 +473,22 @@ export function todayInUtc(now: Date): string {
   return now.toISOString().slice(0, 10)
 }
 
+/**
+ * pg parses a `date` column into a JS Date at local midnight, so the stored calendar day
+ * has to be read back in local time. `toISOString().slice(0, 10)` would move 2026-11-03 to
+ * 2026-11-02 on any machine east of UTC, which is where this project runs and is where the
+ * findings get stored. This is a wall-clock-free read: it consults the value's fields and
+ * the process timezone, never `Date.now()`, and it is correct precisely because the process
+ * that built the Date from the `date` column is the one reading it back. A Postgres `date`
+ * has no zone of its own, so a worker running in a different TZ would disagree.
+ */
+function localDay(value: Date): string {
+  const y = String(value.getFullYear())
+  const mo = String(value.getMonth() + 1).padStart(2, '0')
+  const d = String(value.getDate()).padStart(2, '0')
+  return `${y}-${mo}-${d}`
+}
+
 export function buildBundle(
   kind: 'invoice' | 'contract',
   header: Record<string, unknown> | null,
@@ -478,6 +500,7 @@ export function buildBundle(
     if (typeof value === 'string') return value
     if (typeof value === 'number') return Number.isFinite(value) ? String(value) : null
     if (typeof value === 'boolean' || typeof value === 'bigint') return String(value)
+    if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : localDay(value)
     return null
   }
   const toRow = (row: Record<string, unknown>): Record<string, string | null> =>
@@ -520,25 +543,27 @@ Close the code block. `todayInUtc` takes `now` as a required argument and is the
 
 The first two lines of `evaluate` are spec 5.2's "drops rules whose subject row is absent" clause read at the one level where it is decidable without knowing any rule: a bundle with no header and no rows at all is not a record with missing fields, it is no record. Per-field absence stays each rule's business, because only a rule knows which of its fields it is judging, and Task 8's `normalized` precondition is what keeps a header-less bundle from reaching here in the first place. The comparator uses codepoint rather than `String.prototype.localeCompare` so the stored order of findings does not shift with the machine's locale; the two disagree on `'a'` versus `'B'`, which is why Step 6 has a case for it.
 
-`coerce` narrows with `typeof` before it calls `String`, rather than applying `String(value)` to a value it has already checked for null. Two reasons, both measured. First, `@typescript-eslint/no-base-to-string` is enabled in this repo's config, and after `if (value === null || value === undefined) return null` the residual type is `{}`, which the rule errors on: a scratch file with `String(v)` on an unchecked `unknown` lints clean, while the same call after that null check fails at the `String` line. Narrowing first leaves no residual to complain about, so neither a lint suppression in production code nor a cast that lies about the value's type is needed. Second, an object reaching this boundary would stringify to `[object Object]`, which every rule then reads as a present value, and a finding on it is worse than no finding; returning `null` makes an unexpected object read as absent, which constraint 5 already defines as the safe state. No row type at the two planned call sites holds an object (`src/db/documents.ts:71-110`, `InvoiceHeaderWrite`, `InvoiceLineWrite`, `ContractHeaderWrite`, `ContractTermWrite`), so this branch is a guard, not a behaviour anyone should depend on.
+`coerce` narrows with `typeof` before it calls `String`, rather than applying `String(value)` to a value it has already checked for null. Two reasons, both measured. First, `@typescript-eslint/no-base-to-string` is enabled in this repo's config, and after `if (value === null || value === undefined) return null` the residual type is `{}`, which the rule errors on: a scratch file with `String(v)` on an unchecked `unknown` lints clean, while the same call after that null check fails at the `String` line. Narrowing first leaves no residual to complain about, so neither a lint suppression in production code nor a cast that lies about the value's type is needed. Second, a plain object reaching this boundary would stringify to `[object Object]`, which every rule then reads as a present value, and a finding on it is worse than no finding; returning `null` makes an unexpected object read as absent, which constraint 5 already defines as the safe state. One object type is not a guard, and this paragraph said otherwise until it was measured: `getInvoice` and `getContract` do `SELECT *` (`src/db/documents.ts:492,508`) and their row types declare `invoice_date: string | null`, but nothing in `src/` or `scripts/` calls `setTypeParser`, so `pg`'s default applies and a `date` column arrives as a `Date`. Measured against the project's live pooler, `SELECT '2026-11-03'::date` returns a `Date` whose `String()` is `Tue Nov 03 2026 00:00:00 GMT+1100` and whose `toISOString()` is `2026-11-02T13:00:00.000Z`; the same query returns `numeric` as a string and `boolean` as a boolean. Task 9's brief says those rows feed `buildBundle`, so without the `instanceof Date` branch every date rule would read `invoice_date` as absent, and with a `toISOString()` version it would judge the day before the one stored.
 
 - [ ] **Step 6: Write the failing evaluate tests**
 
 Create `tests/validation/evaluate.test.ts`. It builds rules inline rather than importing the catalogue, so the engine contract stays independent of which rules exist.
 
+The `rule()` helper takes `out: Violation[]` and returns `run: () => out` with no cast, measured clean under both `tsc --noEmit` and eslint in this worktree. The earlier shape, `out: never[] | Array<Record<string, unknown>>` with `run: () => out as never`, threw away `Violation` shape checking on every fixture: a typo like `severity: 'warn'` compiled, made `SEVERITY_RANK[a.severity]` read `undefined`, returned `NaN` from the comparator, and silently degraded the total order this file exists to prove. Typing the parameter lets the compiler check each fixture, and 19 rules' worth of fixtures inherit that.
+
 ```ts
 import { describe, it, expect } from 'vitest'
 import { buildBundle, evaluate, RULESET_VERSION, todayInUtc } from '../../src/validation/index.js'
-import type { ValidationContext, ValidationRule } from '../../src/validation/types.js'
+import type { ValidationContext, ValidationRule, Violation } from '../../src/validation/types.js'
 
 const CTX: ValidationContext = { today: '2026-11-03' }
 const invoice = buildBundle('invoice', { total: '10' }, [], [])
 
-function rule(partial: Partial<ValidationRule> & { id: string }, out: never[] | Array<Record<string, unknown>> = []): ValidationRule {
+function rule(partial: Partial<ValidationRule> & { id: string }, out: Violation[] = []): ValidationRule {
   return {
     appliesTo: 'invoice',
     fields: ['total'],
-    run: () => out as never,
+    run: () => out,
     ...partial,
   }
 }
@@ -611,6 +636,16 @@ describe('evaluate', () => {
 
   it('reads an object-valued column as absent rather than as [object Object]', () => {
     expect(buildBundle('invoice', { meta: { a: 1 } }, [], []).invoice).toEqual({ meta: null })
+  })
+
+  it('renders a pg date Date as the stored calendar day, not the UTC-shifted one', () => {
+    // pg builds a `date` column as a Date at local midnight. A toISOString() read here would
+    // turn 2026-11-03 into 2026-11-02 on any machine east of UTC, which is where this project
+    // writes and reads. Built in local time on purpose so the case holds in any zone.
+    expect(buildBundle('invoice', { invoice_date: new Date(2026, 10, 3) }, [], []).invoice)
+      .toEqual({ invoice_date: '2026-11-03' })
+    expect(buildBundle('invoice', { invoice_date: new Date('not a date') }, [], []).invoice)
+      .toEqual({ invoice_date: null })
   })
 
   it('reads a NaN or infinite amount as absent rather than as a number', () => {
