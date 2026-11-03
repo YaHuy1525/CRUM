@@ -473,13 +473,16 @@ export function buildBundle(
   lines: Array<Record<string, unknown>>,
   terms: Array<Record<string, unknown>>,
 ): DocumentRecordBundle {
+  const coerce = (value: unknown): string | null => {
+    if (value === null || value === undefined) return null
+    if (typeof value === 'string') return value
+    if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+      return String(value)
+    }
+    return null
+  }
   const toRow = (row: Record<string, unknown>): Record<string, string | null> =>
-    Object.fromEntries(
-      Object.entries(row).map(([key, value]) => [
-        key,
-        value === null || value === undefined ? null : String(value),
-      ]),
-    )
+    Object.fromEntries(Object.entries(row).map(([key, value]) => [key, coerce(value)]))
   const head = header === null ? null : toRow(header)
   return kind === 'invoice'
     ? { kind, invoice: head ?? undefined, lines: lines.map(toRow), terms: [] }
@@ -512,6 +515,8 @@ export function evaluate(
 ```
 
 Close the code block. `todayInUtc` is the only place in `src/validation/` that may accept a `Date`, and its default argument reads the clock only when a caller omits it, which production code does and tests never do.
+
+`coerce` narrows with `typeof` before it calls `String`, rather than applying `String(value)` to an `unknown`. Two reasons, both measured. First, `@typescript-eslint/no-base-to-string` is enabled in this repo's config and errors on `String(unknown)`, so the one-line version forces either a lint suppression in production code or a cast that lies about the value's type. Second, an object reaching this boundary would stringify to `[object Object]`, which every rule then reads as a present value, and a finding on it is worse than no finding; returning `null` makes an unexpected object read as absent, which constraint 5 already defines as the safe state. No row type at the two planned call sites holds an object (`src/db/documents.ts:71-110`, `InvoiceHeaderWrite`, `InvoiceLineWrite`, `ContractHeaderWrite`, `ContractTermWrite`), so this branch is a guard, not a behaviour anyone should depend on.
 
 - [ ] **Step 6: Write the failing evaluate tests**
 
@@ -582,6 +587,10 @@ describe('evaluate', () => {
     const b = buildBundle('invoice', { total: 12, auto_renewal: true, blank: null }, [{ qty: 3 }], [])
     expect(b.invoice).toEqual({ total: '12', auto_renewal: 'true', blank: null })
     expect(b.lines).toEqual([{ qty: '3' }])
+  })
+
+  it('reads an object-valued column as absent rather than as [object Object]', () => {
+    expect(buildBundle('invoice', { meta: { a: 1 } }, [], []).invoice).toEqual({ meta: null })
   })
 })
 ```
