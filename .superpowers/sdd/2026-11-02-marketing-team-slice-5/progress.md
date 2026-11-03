@@ -724,3 +724,64 @@ Minor items parked for the final review: `committedAt` (`src/db/pending-writes.t
 Both R-30 deviations (the `:112` citation, the row-builder reuse) were verified against the tree by the reviewer. No split commit was needed: none of Task 14's files were in the concurrent queue refactor's set, and that effort's unstaged edits are still unstaged after `24a6da2`.
 
 Carried to Task 15: it reads `expires_at` and writes receipts, so any timestamp it formats should call `toIsoString` instead of adding a fifth cast. Postgres 5455 is still down and Task 12's integration file is still parked for Task 19.
+
+## R-31: the Postgres lane is up, and the reason it was down was not the one written down
+
+The cluster on 5455 was never blocked by Windows. Task 12's review recorded "the OS refuses the bind" and concluded the controller could not fix it. That conclusion was wrong and is corrected here.
+
+The real cause is configuration. `D:/pgdata-crum-slice1` has `#port = 5432` commented out in `postgresql.conf` and an empty `postgresql.auto.conf`, so the data directory has no port of its own and Postgres falls back to the compiled default of 5432, which the machine's PG17 service already holds. A bare start therefore collides on 5432 or, when forced to `listen_addresses=*`, reports `HINT: Is another postmaster already running on port 5432?`. The port has to be passed on the command line:
+
+```
+"/c/Program Files/PostgreSQL/17/bin/pg_ctl.exe" start -D "D:/pgdata-crum-slice1" -l "D:/pgdata-crum-slice1/restart-attempt3.log" -w -t 60 -o "-p 5455"
+```
+
+It came up after roughly forty seconds of WAL crash recovery and now listens on `127.0.0.1:5455` and `[::1]:5455` as PID 8096. Nothing was reconfigured. The cluster's config files were only read, and the port arrived as a start argument, which is the same shape the slice has always used.
+
+The parked Task 12 proof then ran and needed three fixture corrections before it passed (`6f1e643`). It refused to stage because the page named `{{ASSET:hero-image}}` and Task 6's guard will not stage a page whose asset is still missing, which is the exact collision the guard was written for, so the fixture's page now carries prose and the picture still arrives from the designer's prompt list. It then refused for `no adapter for publish_page`, fixed by the same named stub registration `tests/mastra/marketing-publish-tools.test.ts:71` uses, unregistered in `afterAll`. The re-stage at the end would have been refused as an unreviewed image, so the fixture calls `reviewDocument` before asking again. Final state: 2 passed, and the "Critical verification gap" line in Task 12's review is closed.
+
+Carried to Task 19: the cluster survives this session but a machine restart takes it down again, so Task 19 starts from the command above rather than assuming 5455 answers.
+
+
+## Task 15 preflight (controller, before implementation)
+
+Plan BASE is `6f1e643` "test(marketing): the invalidation proof stages a bundle its own guards admit". Brief extracted from the committed plan at `.superpowers/sdd/2026-11-02-marketing-team-slice-5/task-15-brief.md` (252 lines, plan `:3492-3743`).
+
+Ruling R-32: eight anchor drifts, two plan contradictions that must be overruled to finish the task, one plan gap, and one unanticipated red the task now owns.
+
+**Anchor drifts, all cosmetic and none changing scope.** In `src/mastra/tools/marketing-writes.ts` the function is at `:851-926` (plan `:811-887`), the hash import at `:24` (plan `:30`), the `isExecutable` import at `:34` (plan `:35`), `stagePromotion`'s guard at `:674` (plan `:635`), `stageRetry`'s at `:789` (plan `:749`), the existence check at `:861-873` (plan `:823-833`), `targetId: args.campaignExternalId` at `:920` (plan `:880`), and `requestedBy: 'analyst-cron'` at `:924` (plan `:884`). The drift is Tasks 11 through 13 growing the file. In `src/config/env.ts` the plan's `CRUM_IMAGE_COST_MINOR_PER_IMAGE` is at `:219-225` rather than `:204-208`, and the schema closes at `:235`.
+
+The premise itself is confirmed against the migration, not the plan: `migrations/0002_crum_spine.sql:149` is `target_id uuid` and `:158` is `requested_by uuid NOT NULL`.
+
+**First contradiction, and it is a hard one.** Step 5 says "Do not touch `.env.example`" because it carries another effort's edits. It does not, today: `git status` shows `.env.compose.example` modified and `.env.example` clean. More decisive, `tests/config/env.test.ts:254` fails on any schema key missing from `.env.example`, so a new setting that skips the example file turns the env case red, and Step 9 runs that file. Ruling: Task 15 writes one documented line for its own variable and stages only `.env.example`. The precedent is `309d9d6 fix(config): document the nine marketing variables the env contract case was missing`, which the same contract test forced.
+
+**Placement deviation, chosen deliberately.** The brief puts `CRUM_ANALYST_USER_ID` after `CRUM_IMAGE_COST_MINOR_PER_IMAGE`, which is between two image-spend settings. It is an analyst actor setting, so it goes at the end of the block, immediately before the closing `})` at `:235`. Same block, same contract, and the image ceiling pair stays readable as a pair.
+
+**Second gap.** Step 2 makes the function ask `isExecutable('set_campaign_status')`, and `tests/integration/analyst-cron.test.ts` registers no adapter at all, so Step 8's two staging cases would come back `provider_not_configured` for a reason that has nothing to do with what they test. Ruling: register a stub `set_campaign_status` adapter in `beforeAll` and unregister in `afterAll`, the pattern already at `tests/integration/marketing-asset-page.test.ts:251`.
+
+**Step 1, run for real, and it says the lane is dead.**
+
+```
+export CRUM_INTEGRATION_DATABASE_URL="postgres://crum_test@localhost:5455/crum_slice5"
+npx vitest run --project integration tests/integration/analyst-cron.test.ts
+```
+
+Result: 3 failed, 7 passed, 10 collected. This is the first output anyone has seen from the file.
+
+Both staging cases fail in exactly the first place the brief predicted. `tests/integration/analyst-cron.test.ts:216` and `:235` throw `error: invalid input syntax for type uuid: "camp-ext-20-a"` and `..."camp-ext-20-b"`, which is the test's own `DELETE FROM pending_writes ... AND target_id = $2` hitting the `uuid` column with a Meta-shaped string before `runAnalystCron` is even called. The second predicted place, a `stagedDrafts: []` back from the rejected insert, is therefore never reached in this file. The honest report is that the fixture cannot express the assertion the production bug makes untrue. The insert bug itself is proven by the schema plus the unit file, which records `targetId` as `'23842653876'` and `requestedBy` as `'analyst-cron'` (`tests/mastra/marketing-campaign-status-tool.test.ts:83-84`, `:197`, `:199`), so the tests document the fiction rather than the crash.
+
+The third failure was not predicted, and Task 15 owns the file it lives in, so it is ruled here rather than left red. `aggregates metrics correctly from multiple snapshots` expects 800 impressions and gets 0. `insertSnapshot` (`:68-88`) builds a full seven-day window and then shifts both ends backwards by `daysAgo` with the comment "so the snapshot falls within the 7-day lookback". It does the opposite. `src/db/marketing-metrics.ts:124` filters `window_start >= now() - 7 days`, so a window_start of `now - 8 days` or `now - 10 days` is invisible and the case asserted an aggregate over rows the query could not return.
+
+That fixture bug hides a real production defect in the same line, which is worth naming because it is outside this task. A production run inserts `window_start = end - 7 days` where `end` is captured at the top of the run, then calls `listRecentSnapshots(tenantId, 7)` seconds later, by which time `now() - 7 days` has moved past that value. Probed against the live cluster two seconds after computing the timestamp:
+
+```
+window_start_a_7day_run_inserted | lookback_threshold         | visible_to_its_own_run
+2026-10-27 14:13:00.676+11       | 2026-10-27 14:13:02.770403+11 | f
+```
+
+So the analyst never sees the snapshot its own run collected, on a first run it sees nothing at all, and every later run reads yesterday's rows. Out of Task 15's scope, which is the actor and the uuids. Carried to the final review as an open defect with a demonstrated failure rather than a hunch.
+
+Ruling for the fixture, minimal and inside the file Task 15 already owns: `insertSnapshot` gets a one-day window that ends `daysAgo` days ago, so `daysAgo: 1` and `daysAgo: 3` both sit inside the lookback and the case tests the aggregation its name claims. The assertions are untouched. Widening `listRecentSnapshots` would be the production fix and belongs to the final review, not to a residual about uuids.
+
+The `describe.skipIf(!url)` note is confirmed and goes in the Task 19 report: the cases have skipped silently since slice 3 shipped, and a slice that reported green was reporting a lane that never executed.
+
+Carried to Task 16: it writes the `applyDraft` branch that hands the adapter `payload.campaignId`, which is why Step 4 keeps the real Meta id in the payload and only the derived uuid in `target_id`.
