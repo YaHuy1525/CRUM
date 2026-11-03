@@ -38,6 +38,10 @@ describe('parseDate', () => {
     expect(parseDate('2026-03-01')).toBe('2026-03-01')
     expect(parseDate('2026-03-01T00:00:00.000Z')).toBe('2026-03-01')
   })
+  it('rejects trailing junk instead of reading the date out of its prefix', () => {
+    expect(parseDate('2026-03-011')).toBeNull()
+    expect(parseDate('2026-03-01xyz')).toBeNull()
+  })
   it('rejects an ambiguous locale string', () => {
     expect(parseDate('01/03/2026')).toBeNull()
   })

@@ -32,9 +32,11 @@ export function isCurrencyShape(v: unknown): boolean {
   return typeof v === 'string' && /^[A-Za-z]{3}$/.test(v.trim())
 }
 
+const DATE_OR_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?Z?)?$/
+
 export function parseDate(v: unknown): string | null {
   if (isAbsent(v)) return null
-  const m = String(v).trim().match(/^(\d{4})-(\d{2})-(\d{2})/)
+  const m = String(v).trim().match(DATE_OR_TIMESTAMP)
   if (!m) return null
   const [, y, mo, d] = m
   const ms = Date.UTC(Number(y), Number(mo) - 1, Number(d))
