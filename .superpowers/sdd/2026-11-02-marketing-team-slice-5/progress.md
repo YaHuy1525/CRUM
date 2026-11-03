@@ -1312,3 +1312,57 @@ gate set `Tests 315 passed | 1 todo (316)`, prospect lane 23 green, `npm run typ
 `npm run lint` exit 0. One sequencing deviation is recorded in the report and accepted: the one-word
 `export` had to be in place before the RED run, because the test reads `Object.keys` of the registry
 at module scope, and that is a property of the assertion the brief asked for rather than a mistake.
+
+## Task 19 landed at `1571f8b`, and the review round that followed it
+
+The verification report is `docs/superpowers/plans/2026-11-02-marketing-team-slice-5-verification.md`,
+461 lines at commit, one file, no code. It was authored in the main session because the dispatch could
+not start on a `C:` drive holding 1.5 GB of 297 GB. The drive later freed to 13 GB, which is what made
+the independent review below possible at all.
+
+The reviewer's verdict was **not accepted as written**, with 2 Blocking, 3 Should-fix and 5 Nits, and it
+re-measured every number it did not dispute. All eleven unit totals, both root gates, both console
+gates, the 21 applied migrations, the 65 `.env` key names, the ten-file arithmetic and the slice 4
+baseline reproduced exactly. Every finding was checked against the source before being accepted, and
+every one of them held, so all ten are closed in the tree rather than argued about.
+
+**B1 was the important one, and it was my overreach.** I wrote that nothing which decides whether a
+draft may be committed reads `gate`, and `src/db/pending-writes.ts:412` is `if (draft.gate !== 'auto')`
+inside `applyDraft`'s email branch, four lines under the citation I gave. The check arrived at `1a9c7a2`,
+which is an ancestor of this slice's base, so it is precedent rather than this slice's work. What the
+report now says is that no decision route reads the column and one branch of the commit path does, that
+the exposure is every object type except email, and that the email branch is the shape a marketing rule
+would copy. Section 7's `refuse` rationale got the same narrowing, because a recorded decision that
+rests on a false universal is worse than a hand-off that does. This is the third time in this slice that
+a claim of mine about `gate` was too broad, and the pattern is that I read the route and the dispatcher
+and never the branches below them.
+
+**B2 credited this slice with work it did not do.** The report said the golden dataset's two marketing
+items were added in Task 10. The plan's Task 10 is the image-provider registry at its line 2143, and
+`git log 6ed390d..HEAD -- src/evals tests/evals` is empty, and `2567245` and `bcc5026` are both
+ancestors of the base. Now the report says this slice added nothing there and names what the unrun gate
+leaves unproven.
+
+**Should-fix, three, all in section 4.** I had written that `user-isolation.test.ts:103` and `:119` fail
+the same way the tenant file does. Re-run here, they do not: `:88` and `:119` answer `expected undefined
+to be '55555555-...'` and `:103` answers `expected { error: true, …(2) } to be null`. I had attributed
+`aaaaaaaa-...` and `11111111-...` to both files when each literal lives only in `tenant-isolation`, and
+I had explained the rejection by the variant nibble alone, which cannot condemn `aaaaaaaa-...` because
+its variant nibble is legal. Re-measured all seven fixtures against the installed Zod 4.6.7 here, all
+INVALID, and `8f14e45f-ea2f-4b1b-9a1b-1234567890ab` VALID, so the rule is now stated as version and
+variant. Third, I had explained the migrations failure by a neighbouring file's `beforeAll`, which the
+report's own run shape contradicts, since the file fails identically alone. It is persistent database
+state.
+
+**Nits, five, all taken.** The count of missing settings was eight where the plan names nine, because it
+says both spend ceilings, and the two real key names are now in the text with their `src/config/env.ts`
+lines. The `POLICY_DIR` number was 38, true of `src/mastra/tools` and 40 across `src/`, so both numbers
+are now given with their scopes. `approval-flow.ts:39` got its directory. "The five proofs plus four
+files" became six plus four, because the plan's proof 4 spans two files, and the plan says so at its own
+line 4318. The working-tree qualification, which I had limited to typecheck and lint, now covers the
+console total, which contains an untracked file, and the `tests/mastra` total, which ran while
+`tests/mastra/identity.test.ts` carried someone else's edits.
+
+Nothing was repaired. This task owns one file and no code, so the corrections are all to prose and every
+one of them makes a claim narrower than the one it replaced. Tables re-validated, style re-grepped, no
+semicolons, no dashes used as punctuation, no divider lines.

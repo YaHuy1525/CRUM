@@ -96,17 +96,26 @@ Tests  2 failed | 49 passed (51)
 
 The whole gate, reported honestly. `npm run verify` was **not** run. It chains `npm run test`,
 which reaches the golden gate, and it exits non-zero in this repository by design.
-`tests/evals/golden-gate.test.ts` was never run in this slice, so the two marketing items added to
-the golden dataset in Task 10 are unproven against a live model here. That is a choice made to
-protect the owner's credit, recorded rather than left as an absence.
+`tests/evals/golden-gate.test.ts` was never run in this slice. This slice added nothing to the golden
+dataset either, because `git log 6ed390d..HEAD -- src/evals tests/evals` is empty and the plan's Task
+10 is the image-provider registry, so what the unrun gate leaves unproven here is the marketing eval
+items that earlier slices put in `src/evals/golden-items.ts`, at commits `2567245` and `bcc5026`, both
+of which are ancestors of this slice's base. That is a choice made to protect the owner's credit,
+recorded rather than left as an absence.
 
 Everything in this section was re-measured by hand at the commit this report was written into, whose
 code is byte-identical to `1d85f96`. The per-directory figures in section 5 come from running each
 directory alone rather than as a five-directory sum, and both forms agree. `npm run typecheck` exits
 0 and `npm run lint` exits 0 at that same commit, and the console's own `npm run lint` and
-`npx tsc --noEmit` both exit 0. One qualification about those two gates: they run over the working
-tree, and this branch's working tree also holds the concurrent document effort's uncommitted files,
-so a clean typecheck is a statement about the combined tree rather than about slice 5 alone.
+`npx tsc --noEmit` both exit 0. One qualification, and it reaches further than the two gates. Every
+number in this report was taken from the working tree, and this branch's working tree also holds the
+concurrent document effort's uncommitted files, so a clean typecheck is a statement about the combined
+tree rather than about slice 5 alone. Two counts are specifically affected. The console's 26 files and
+223 tests include `console/tests/DocumentProcessingDashboard.test.tsx`, which is a file git has never
+seen, so an untracked file sits inside that total, and the 527 in
+`tests/mastra` ran while `tests/mastra/identity.test.ts` carried uncommitted edits. Section 5
+subtracts the Dashboard file from what slice 5 claims, and states the arithmetic so a reader can
+subtract it again.
 
 No automated test in this slice called Replicate, a model, a real domain or Cloudflare. Every
 network edge in the suites above is an injected `fetchImpl` or a local stub server.
@@ -136,12 +145,14 @@ unchanged. `migrations against a real database > boots through main(), which run
 then the spine` fails at `:55` with `expected [] to include '0002_crum_spine.sql'`, and the condition
 this run produced is the second of the two causes slice 4 described: the cluster's `crum_slice5`
 already holds 21 applied migrations from `0002` to `0023`, which was read out of
-`crum_schema_migrations` for this report, so `migrate()` returns an empty `applied` list because the
-neighbouring file's `beforeAll` did the work first. `> refuses a second receipt for the same staged
+`crum_schema_migrations` for this report, so `migrate()` has nothing left to apply and returns an empty
+`applied` list. This is persistent database state rather than one file crowding another, because the
+file fails identically when run alone. `> refuses a second receipt for the same staged
 draft` fails at `:98` with `null value in column "draft_hash" of relation "pending_writes" violates
 not-null constraint`, because its raw INSERT predates `migrations/0003_crum_add_draft_hash.sql` making
-that column NOT NULL with no default. `draft_hash` is older than slice 5, so both are named and
-neither is repaired here.
+that column NOT NULL with no default, and `migrations/0003_crum_add_draft_hash.sql:21` carries the
+constraint while `:17` records that no column default was added. `draft_hash` is older than slice 5, so
+both are named and neither is repaired here.
 
 Ten files, 51 cases collected, 49 passed, 2 failed, none skipped. `describe.skipIf(!url)` skips
 silently and this slice exists partly because that silence hid a broken insert for two slices, so
@@ -150,7 +161,9 @@ cases, which is the evidence that it ran rather than evaporated.
 
 ### The fourteen files the plan did not name
 
-The plan's list is the five proofs plus four files whose behaviour this slice moved. That is a
+The plan's list is six files carrying its five proofs, because proof 4 spans
+`marketing-campaign-status.test.ts` and `analyst-cron.test.ts`, plus four files whose behaviour this
+slice moved. That is a
 reasonable list and it is not the whole directory, and a verification report that stops at a plan's
 arbitrary list inherits the plan's blind spots. So the other fourteen files under
 `tests/integration/`, which is every remaining file including the one in its `api/` subdirectory, were
@@ -189,18 +202,29 @@ suffix and the test's regular expression can never match it. Both the migration 
 from slice 3, at `27f11a2` and `aa8788a`, and neither file is touched anywhere in `6ed390d..HEAD`.
 The case has therefore never passed, and this slice is the first time anybody ran it.
 
-`tenant-isolation.test.ts:94` and `:115` fail with `expected false to be true` on
-`Array.isArray(result)`, and `user-isolation.test.ts:103` and `:119` fail the same way, one of them
-showing the object the schema refused: `issues: { id: { errors: ['Invalid UUID'] } }`. Those files
-build fixture ids out of repeated digits, `aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa` and
-`11111111-1111-1111-1111-111111111111`. Zod 4.6's `.uuid()` requires the variant nibble to be 8, 9,
-a or b, and all four of those fixtures fail it. The check itself is a live measurement in this
-session: `z.string().uuid().safeParse('11111111-1111-1111-1111-111111111111')` returns
-`INVALID "Invalid UUID"`. `src/mastra/tools/customers.ts:41`, which is where the schema sits, is not
-in this slice's diff, the two test files are not in it either, and `package.json` is not in it, so
-the dependency did not move. The failures are inherited, they were invisible only because nobody ran
-those two files, and they are the same strictness Task 15 had to satisfy when it stopped writing
-prose into `pending_writes.requested_by`.
+`tenant-isolation.test.ts:94` and `:115` are the same line twice, `expect(Array.isArray(result)).toBe(true)`,
+and both answer `expected false to be true`. `user-isolation.test.ts` fails three cases, and its
+messages are not the ones the tenant file gives, so they are named here as the runner names them.
+`owner can see their own customer` fails at `:88` with `expected undefined to be
+'55555555-5555-5555-5555-555555555555'`, `non-owner cannot see the customer` fails at `:103`, where
+`expect(result).toBeNull()` answers `expected { error: true, …(2) } to be null`, and `admin can see any
+customer in their tenant` fails at `:119` with the same undefined against the same id. The read came
+back as an error object rather than as rows or as null, and the error is the schema refusing the
+fixture.
+
+The fixtures are per file, and a reader going to look should know which file holds which.
+`tenant-isolation.test.ts` uses `aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa` at `:35`,
+`22222222-2222-2222-2222-222222222222` at `:37` and `11111111-1111-1111-1111-111111111111` at `:39`,
+while `user-isolation.test.ts` uses `55555555-5555-5555-5555-555555555555`, `66666666-6666-6666-6666-666666666666`,
+`77777777-7777-7777-7777-777777777777` and `cccccccc-cccc-cccc-cccc-cccccccccccc` across `:35` to `:38`.
+None of the seven is RFC 4122 shaped, because a repeated digit always lands in the version nibble or
+the variant nibble, and Zod 4.6.7 rejects all seven. This was measured rather than reasoned about:
+`z.string().uuid().safeParse` answers INVALID for each of them and VALID for
+`8f14e45f-ea2f-4b1b-9a1b-1234567890ab`. `src/mastra/tools/customers.ts:41`, which is where the schema
+sits, is not in this slice's diff, the two test files are not in it either, and `package.json` is not
+in it, so the dependency did not move. The failures are inherited, they were invisible only because
+nobody ran those two files, and they are the same strictness Task 15 had to satisfy when it stopped
+writing prose into `pending_writes.requested_by`.
 
 `document-audit-flow.test.ts` is the concurrent document effort's file, added at `96448af`. It was
 red on its first run in this session (`manual correction creates audit row with change_source=manual_correction`
@@ -253,9 +277,13 @@ and it goes to section 9.
 
 **Not done.** The plan lists the credentials Step 5 needs and says that if any is missing, stop and
 report the walkthrough as not done, and that this is a result rather than a delay. The owner's `.env`
-holds 65 keys and none of these is among them: `CRUM_REPLICATE_API_TOKEN`,
+holds 65 keys and none of these nine is among them: `CRUM_REPLICATE_API_TOKEN`,
 `CRUM_META_ADS_ACCESS_TOKEN`, `CRUM_CLOUDFLARE_ACCOUNT_ID`, `CRUM_CLOUDFLARE_PAGES_PROJECT`,
-`CRUM_CLOUDFLARE_API_TOKEN`, `CRUM_ANALYST_USER_ID`, `CRUM_IMAGE_PROVIDER`, and either spend ceiling.
+`CRUM_CLOUDFLARE_API_TOKEN`, `CRUM_ANALYST_USER_ID`, `CRUM_IMAGE_PROVIDER`, and both image spend
+ceilings, which the plan leaves unnamed and `src/config/env.ts:215` and `:231` name as
+`CRUM_IMAGE_SPEND_CEILING_MINOR` and `CRUM_IMAGE_SPEND_CEILING_MINOR_PER_BUNDLE`. No key in the file
+matches `SPEND`, `CEILING` or `BUDGET` at all, so neither ceiling is set by omission rather than by a
+blank value.
 Only the key names were read, never a value, and nothing in this report came out of that file.
 
 Each of the plan's nine numbered steps, reported as itself rather than summarised:
@@ -285,7 +313,7 @@ That is a real proof of the mechanism and it is not a live-environment fact. R1 
 mechanism and remains open as a live-environment fact, and the difference is the honest answer to the
 plan's instruction that no R1 claim stands without the walkthrough.
 
-To run the walkthrough later, the owner needs the eight settings above in the environment the API and
+To run the walkthrough later, the owner needs the nine settings above in the environment the API and
 the console read, a Cloudflare Pages project the drainer may write to, and one campaign whose page
 asks for a picture. Steps 1 to 7 need Replicate and Cloudflare. Steps 8 and 9 additionally need the
 Meta token and the analyst user id.
@@ -326,8 +354,10 @@ other lane's label.
 
 A policy answer of `refuse` stores no draft. Round 2 shipped a clamp that stored the draft and
 reported `refuse` as its gate. The rejected alternative was to keep storing, and the reason it was
-rejected is the finding itself: nothing that decides whether a draft may be committed reads the `gate`
-column, so a stored `refuse` was an approvable draft wearing a warning label. Round 3 throws
+rejected is the finding itself: no marketing commit path reads the `gate` column, so a stored `refuse`
+was an approvable draft wearing a warning label. The one exception in the whole codebase is the email
+branch at `src/db/pending-writes.ts:412`, which predates this slice and refuses a non-auto email
+because the Gmail connector has a draft scope only, not because policy said so. Round 3 throws
 `campaign_status_refused` before the insert.
 
 The guard list stays hand-written in the source and derived in the test, because
@@ -402,19 +432,22 @@ here.
 
 ## 9. What slice 5 left open for slice 6
 
-The largest hole is that nothing which decides whether a draft may be committed reads `gate`. The
-decision route at `src/api/approvals.ts:244` checks identity, a prior decision, `committedAt` and
-expiry, and never the column, and `applyDraft` at `src/db/pending-writes.ts:402` dispatches on
-`object_type` alone. The value is read into the queue item at `src/api/approvals.ts:72`, so a human
-can see it, and seeing it is not enforcement. One naming trap for whoever fixes this: line `:245`
+The largest hole is that no decision route reads `gate`, and only one branch of the commit path does.
+The decision route at `src/api/approvals.ts:244` checks identity, a prior decision, `committedAt` and
+expiry, and never the column. `applyDraft` at `src/db/pending-writes.ts:402` dispatches on
+`object_type`, and its single reader of the column is the email branch at `:412`, which refuses a
+non-auto email because the Gmail connector has a draft scope only. That check arrived at `1a9c7a2`, an
+ancestor of this slice's base, so it is precedent rather than this slice's work, and it is the shape a
+marketing rule would copy. The value is read into the queue item at `src/api/approvals.ts:72`, so a
+human can see it, and seeing it is not enforcement. One naming trap for whoever fixes this: line `:245`
 binds `const gate = await auth(c)`, which is the authentication gate rather than the policy gate, and
 the two will read as one thing in a diff. Slice 5 closed the consequence for one tool by refusing to
-store a refused draft, and the general exposure remains: a draft stored with `gate` equal to `refuse`
-would still be approvable. That is a governance change with its own blast radius, and it should be its
-own task rather than a side effect.
+store a refused draft, and the exposure remains for every object type except email: a marketing bundle
+or campaign-status draft stored with `gate` equal to `refuse` would still be approvable. That is a
+governance change with its own blast radius, and it should be its own task rather than a side effect.
 
-`POLICY_DIR` is decorative in production, described in section 7. A deployment that sets it gets 38
-call sites that ignore it.
+`POLICY_DIR` is decorative in production, described in section 7. A deployment that sets it gets 40
+`loadPolicy()` call sites under `src/` that ignore it, 38 of them inside `src/mastra/tools`.
 
 The guard list has a stale window. The next registered mutating tool must land in the same commit as
 its guard id, and the derived case in `tests/mastra/processors/write-claim-guard.test.ts` is the thing
@@ -436,7 +469,8 @@ boot's duplicated Meta parse at `src/mastra/index.ts:158`, the `marketing_stage`
 approval-race hardening, payload-hygiene coverage for the campaign-status payload, the four unchecked
 `requestedBy` sites, the golden dataset's seven defects that made the gate red at baseline,
 `src/api/message-mapping.ts:69`, `pending-writes.ts:97`, `tests/db/open-stage-draft.test.ts:102`,
-`approval-flow.ts:39`, the analyst cron's untested `main()`, and the analyst's own invisibility in the
+`src/mastra/workflows/approval-flow.ts:39`, the analyst cron's untested `main()`, and the analyst's own
+invisibility in the
 queue it feeds.
 
 New in this report, from the wider integration sweep: `tests/integration/migrations.test.ts` holds the
