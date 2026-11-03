@@ -20,6 +20,8 @@ const url = process.env.CRUM_INTEGRATION_DATABASE_URL ?? ''
 if (url) process.env.DATABASE_URL = url
 process.env.APPROVAL_HMAC_SECRET ??= 'crum-integration-receipt-secret-0123456789'
 
+const PROVIDER = 'stub'
+
 let pool: Pool
 
 const TENANT = 'a1000000-0000-4000-8000-000000000021'
@@ -184,7 +186,7 @@ describe.skipIf(url === '')('marketing.generate_assets against Postgres', () => 
   // `beforeAll`, not `beforeEach`, deliberately — case two reads the tenant's
   // whole day on purpose ("by now the tenant has paid for case one too"), so the
   // ledger is shared state across the file by design. The consequence is that the
-  // absolute numbers below (`spentMinor` 8, `committedSpendMinor(TENANT)` 8) are
+  // absolute numbers below (`spentMinor` 8, `committedSpendMinor(TENANT, PROVIDER)` 8) are
   // only exact because nothing had spent before them. Reorder this file, or add a
   // case above this one, and those two assertions fail for test order rather than
   // for the tool. `tests/integration/marketing-image-spend.test.ts:28-35` is the
@@ -226,7 +228,7 @@ describe.skipIf(url === '')('marketing.generate_assets against Postgres', () => 
     // no document is a row that promises a picture and points at nothing.
     expect(artifacts.every((a) => a.document_id !== null)).toBe(true)
 
-    expect(await committedSpendMinor(TENANT)).toBe(8)
+    expect(await committedSpendMinor(TENANT, PROVIDER)).toBe(8)
   })
 
   it('buys nothing on the second pass, because every title is already there', async () => {
@@ -237,14 +239,14 @@ describe.skipIf(url === '')('marketing.generate_assets against Postgres', () => 
     // call paid, and by now the tenant has paid for case one too, so comparing the
     // second pass with a per-run figure compares two different things and fails for
     // a reason that belongs to the test rather than the tool.
-    const committedAfterFirst = await committedSpendMinor(TENANT)
+    const committedAfterFirst = await committedSpendMinor(TENANT, PROVIDER)
     promptsAskedFor.length = 0
 
     const second = await generate(bundleId)
     expect(promptsAskedFor).toEqual([])
     expect(second.spentMinor).toBe(0)
     expect(second.assets.every((a) => a.deduplicated)).toBe(true)
-    expect(await committedSpendMinor(TENANT)).toBe(committedAfterFirst)
+    expect(await committedSpendMinor(TENANT, PROVIDER)).toBe(committedAfterFirst)
   })
 
   it('refuses the whole pass before paying when the day is already spent', async () => {
@@ -291,13 +293,13 @@ describe.skipIf(url === '')('marketing.generate_assets against Postgres', () => 
       const bundleId = await saveDesignerBundle('bundle ceiling first')
       const first = await generate(bundleId)
       expect(first.refused).toHaveLength(0)
-      expect(await committedBundleSpendMinor(TENANT, bundleId)).toBeGreaterThan(0)
+      expect(await committedBundleSpendMinor(TENANT, bundleId, PROVIDER)).toBeGreaterThan(0)
       // Same tenant, same day, second bundle: the day ceiling has room, so the only
       // thing that can stop this run is the bundle it belongs to.
       const otherId = await saveDesignerBundle('bundle ceiling second')
       const second = await generate(otherId)
       expect(second.refused).toHaveLength(0)
-      expect(await committedBundleSpendMinor(TENANT, otherId)).toBeGreaterThan(0)
+      expect(await committedBundleSpendMinor(TENANT, otherId, PROVIDER)).toBeGreaterThan(0)
     } finally {
       registerImageAdapter(stubAdapter())
     }

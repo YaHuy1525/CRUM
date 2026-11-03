@@ -49,12 +49,12 @@ function totalMinorOrThrow(rows: { total: string | null }[], label: string): num
   return Number(total)
 }
 
-export async function committedSpendMinor(tenantId: string): Promise<number> {
+export async function committedSpendMinor(tenantId: string, provider: string): Promise<number> {
   const result = await getDbClient().query<{ total: string | null }>(
     `SELECT COALESCE(SUM(cost_minor), 0) AS total
        FROM marketing_image_spend
-      WHERE tenant_id = $1 AND spent_on = CURRENT_DATE`,
-    [tenantId],
+      WHERE tenant_id = $1 AND spent_on = CURRENT_DATE AND provider = $2`,
+    [tenantId, provider],
   )
   return totalMinorOrThrow(result.rows, 'daily spend')
 }
@@ -65,12 +65,16 @@ export async function committedSpendMinor(tenantId: string): Promise<number> {
  * runaway loop on one bundle, and a bundle that already had forty images paid for
  * does not deserve forty more tomorrow.
  */
-export async function committedBundleSpendMinor(tenantId: string, bundleId: string): Promise<number> {
+export async function committedBundleSpendMinor(
+  tenantId: string,
+  bundleId: string,
+  provider: string,
+): Promise<number> {
   const result = await getDbClient().query<{ total: string | null }>(
     `SELECT COALESCE(SUM(cost_minor), 0) AS total
        FROM marketing_image_spend
-      WHERE tenant_id = $1 AND bundle_id = $2`,
-    [tenantId, bundleId],
+      WHERE tenant_id = $1 AND bundle_id = $2 AND provider = $3`,
+    [tenantId, bundleId, provider],
   )
   return totalMinorOrThrow(result.rows, 'bundle spend')
 }

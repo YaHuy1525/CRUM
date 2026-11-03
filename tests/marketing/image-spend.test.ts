@@ -16,6 +16,7 @@ const TENANT = '11111111-1111-4111-8111-111111111111'
 const DOC = '99999999-9999-4999-8999-999999999999'
 const SPEND_ID = '44444444-4444-4444-8444-444444444444'
 const BUNDLE = '55555555-5555-4555-8555-555555555555'
+const PROVIDER = 'replicate'
 
 function calls(fragment: string): Array<{ sql: string; params: unknown[] }> {
   return (mockQuery.mock.calls as unknown[][])
@@ -74,49 +75,50 @@ describe('the ledger', () => {
   it('sums only this tenant and only today', async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ total: '1980' }] })
     const { committedSpendMinor } = await load()
-    expect(await committedSpendMinor(TENANT)).toBe(1980)
+    expect(await committedSpendMinor(TENANT, PROVIDER)).toBe(1980)
     const [call] = calls('FROM marketing_image_spend')
     expect(call!.sql).toContain('tenant_id = $1')
     expect(call!.sql).toContain('spent_on = CURRENT_DATE')
-    expect(call!.params).toEqual([TENANT])
+    expect(call!.sql).toContain('provider = $2')
+    expect(call!.params).toEqual([TENANT, PROVIDER])
   })
 
   it('sums one bundle over every day, and does not touch the day window', async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ total: '12' }] })
     const { committedBundleSpendMinor, committedSpendMinor } = await load()
-    expect(await committedBundleSpendMinor(TENANT, BUNDLE)).toBe(12)
+    expect(await committedBundleSpendMinor(TENANT, BUNDLE, PROVIDER)).toBe(12)
     const [bundleRead] = calls('FROM marketing_image_spend')
     expect(bundleRead!.sql).not.toContain('spent_on')
-    expect(bundleRead!.params).toEqual([TENANT, BUNDLE])
+    expect(bundleRead!.params).toEqual([TENANT, BUNDLE, PROVIDER])
     // The sibling read keeps its own window, because a ceiling that quietly changes
     // the window it was tested against stops being the tenant's day ceiling.
     mockQuery.mockResolvedValueOnce({ rows: [{ total: '5' }] })
-    expect(await committedSpendMinor(TENANT)).toBe(5)
+    expect(await committedSpendMinor(TENANT, PROVIDER)).toBe(5)
     expect(calls('FROM marketing_image_spend').at(-1)!.sql).toContain('spent_on = CURRENT_DATE')
   })
 
   it('reads an empty ledger as zero and an unreadable ledger as an error', async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ total: '0' }] })
     const { committedSpendMinor } = await load()
-    expect(await committedSpendMinor(TENANT)).toBe(0)
+    expect(await committedSpendMinor(TENANT, PROVIDER)).toBe(0)
     // An aggregate without GROUP BY always returns exactly one row, and the
     // COALESCE makes that row's total a number, so zero rows is not an empty
     // ledger — it is a read that did not answer. Answering 0 there would be
     // answering "this tenant has spent nothing today", the one reading that
     // admits unlimited spend. Fail closed, and let the caller refuse.
     mockQuery.mockResolvedValueOnce({ rows: [] })
-    await expect(committedSpendMinor(TENANT)).rejects.toThrow(/marketing_image_spend/)
+    await expect(committedSpendMinor(TENANT, PROVIDER)).rejects.toThrow(/marketing_image_spend/)
     mockQuery.mockResolvedValueOnce({ rows: [{ total: 'not-a-number' }] })
-    await expect(committedSpendMinor(TENANT)).rejects.toThrow(/marketing_image_spend/)
+    await expect(committedSpendMinor(TENANT, PROVIDER)).rejects.toThrow(/marketing_image_spend/)
   })
 
   it('fails closed on an unreadable bundle total, and says which read failed', async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ total: null }] })
     const { committedBundleSpendMinor } = await load()
-    await expect(committedBundleSpendMinor(TENANT, BUNDLE)).rejects.toThrow(/instead of one non-negative integer total/)
+    await expect(committedBundleSpendMinor(TENANT, BUNDLE, PROVIDER)).rejects.toThrow(/instead of one non-negative integer total/)
     // The label is the half of the message an owner acts on: two ceilings now answer
     // through one function, and "the bundle spend read" is what tells them which one.
-    await expect(committedBundleSpendMinor(TENANT, BUNDLE)).rejects.toThrow(/bundle spend read answered/)
+    await expect(committedBundleSpendMinor(TENANT, BUNDLE, PROVIDER)).rejects.toThrow(/bundle spend read answered/)
   })
 
   it('writes the bundle the money was spent on, as a named parameter', async () => {

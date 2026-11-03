@@ -1564,8 +1564,8 @@ export const generateAssetsTool = createTool({
       let committedMinor = 0
       let bundleCommittedMinor = 0
       if (refused.length === 0 && pending.length > 0 && adapter !== null && bundle !== null) {
-        committedMinor = await committedSpendMinor(rc.tenantId)
-        bundleCommittedMinor = await committedBundleSpendMinor(rc.tenantId, bundle.id)
+        committedMinor = await committedSpendMinor(rc.tenantId, adapter.provider)
+        bundleCommittedMinor = await committedBundleSpendMinor(rc.tenantId, bundle.id, adapter.provider)
         const admission = { costMinorPerImage: adapter.costMinorPerImage, assetCount: pending.length }
         const bundleBinds = !admitsRun({
           ceilingMinor: adapter.bundleCeilingMinor,
@@ -1611,8 +1611,8 @@ export const generateAssetsTool = createTool({
       if (refused.length === 0 && bundle !== null && adapter !== null) {
         for (let index = 0; index < pending.length; index += 1) {
           const entry = pending[index]!
-          const nowCommitted = await committedSpendMinor(rc.tenantId)
-          const nowBundleCommitted = await committedBundleSpendMinor(rc.tenantId, bundle.id)
+          const nowCommitted = await committedSpendMinor(rc.tenantId, adapter.provider)
+          const nowBundleCommitted = await committedBundleSpendMinor(rc.tenantId, bundle.id, adapter.provider)
           const admission = { costMinorPerImage: adapter.costMinorPerImage, assetCount: 1 }
           const stops = (<Array<readonly [string, string]>> (
             !admitsRun({ ceilingMinor: adapter.bundleCeilingMinor, committedMinor: nowBundleCommitted, ...admission })

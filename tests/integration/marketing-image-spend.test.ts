@@ -17,6 +17,8 @@ const url = process.env.CRUM_INTEGRATION_DATABASE_URL ?? ''
 // cluster here is the standing pattern (tests/integration/marketing-bundle.test.ts).
 if (url) process.env.DATABASE_URL = url
 
+const PROVIDER = 'replicate'
+
 let pool: Pool
 
 // This file shares the database with every other integration file and Vitest
@@ -58,7 +60,7 @@ describe.skipIf(!url)('the image spend ledger against real Postgres', () => {
         rawExtract: { predictionId: 'p-int-1', model: 'flux-1.1-pro', costUsd: '0.04' },
       })
       // A single spend row for this tenant makes the arithmetic exact.
-      expect(await committedSpendMinor(tenant)).toBe(4)
+      expect(await committedSpendMinor(tenant, PROVIDER)).toBe(4)
       const { rows } = await pool.query<{
         provider: string
         cost_minor: number
@@ -91,7 +93,7 @@ describe.skipIf(!url)('the image spend ledger against real Postgres', () => {
       // arithmetic, and a row of it must still land in the append-only ledger
       // even though it moves the day's sum by nothing.
       const spendId = await recordImageSpend({ tenantId: tenant, bundleId: null, documentId: null, costMinor: 0 })
-      expect(await committedSpendMinor(tenant)).toBe(0)
+      expect(await committedSpendMinor(tenant, PROVIDER)).toBe(0)
       const { rows } = await pool.query<{ id: string }>(
         `SELECT id FROM marketing_image_spend WHERE id = $1`,
         [spendId],
@@ -109,8 +111,8 @@ describe.skipIf(!url)('the image spend ledger against real Postgres', () => {
       await recordImageSpend({ tenantId: mine, bundleId: null, documentId: null, costMinor: 600 })
       await recordImageSpend({ tenantId: mine, bundleId: null, documentId: null, costMinor: 1380 })
       await recordImageSpend({ tenantId: other, bundleId: null, documentId: null, costMinor: 500 })
-      expect(await committedSpendMinor(mine)).toBe(1980)
-      expect(await committedSpendMinor(other)).toBe(500)
+      expect(await committedSpendMinor(mine, PROVIDER)).toBe(1980)
+      expect(await committedSpendMinor(other, PROVIDER)).toBe(500)
     } finally {
       await pool.query(`DELETE FROM marketing_image_spend WHERE tenant_id = ANY($1::uuid[])`, [[mine, other]])
     }
@@ -118,7 +120,7 @@ describe.skipIf(!url)('the image spend ledger against real Postgres', () => {
 
   it('reads a tenant that has never spent as zero', async () => {
     // No row to clean up: the tenant exists only in this read.
-    expect(await committedSpendMinor(await uniqueTenant())).toBe(0)
+    expect(await committedSpendMinor(await uniqueTenant(), PROVIDER)).toBe(0)
   })
 
   it('sums only today, so a backdated spend does not eat the new day', async () => {
@@ -133,7 +135,7 @@ describe.skipIf(!url)('the image spend ledger against real Postgres', () => {
          VALUES ($1, NULL, 'replicate', 500, CURRENT_DATE - 1)`,
         [tenant],
       )
-      expect(await committedSpendMinor(tenant)).toBe(40)
+      expect(await committedSpendMinor(tenant, PROVIDER)).toBe(40)
     } finally {
       await pool.query(`DELETE FROM marketing_image_spend WHERE tenant_id = $1`, [tenant])
     }
@@ -151,13 +153,13 @@ describe.skipIf(!url)('the image spend ledger against real Postgres', () => {
     // The backdated row is invisible to the day read and unavoidable for the bundle
     // read: one runaway loop on one bundle is stopped by the bundle ceiling even
     // after the day rolls over.
-    expect(await committedBundleSpendMinor(tenant, bundle)).toBe(12)
-    expect(await committedSpendMinor(tenant)).toBe(5)
+    expect(await committedBundleSpendMinor(tenant, bundle, PROVIDER)).toBe(12)
+    expect(await committedSpendMinor(tenant, PROVIDER)).toBe(5)
   })
 
   it('leaves a NULL bundle out of every bundle total', async () => {
     const tenant = await uniqueTenant()
     await recordImageSpend({ tenantId: tenant, bundleId: null, documentId: null, costMinor: 9 })
-    expect(await committedBundleSpendMinor(tenant, await unique())).toBe(0)
+    expect(await committedBundleSpendMinor(tenant, await unique(), PROVIDER)).toBe(0)
   })
 })
