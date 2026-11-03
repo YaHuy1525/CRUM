@@ -57,4 +57,10 @@ describe('evaluate', () => {
     expect(buildBundle('contract', {}, lines, terms)).toMatchObject({ kind: 'contract', terms, lines: [] })
     expect(buildBundle('invoice', null, [], []).invoice).toBeUndefined()
   })
+
+  it('coerces row values at the bundle boundary so pg numbers and booleans arrive as strings', () => {
+    const b = buildBundle('invoice', { total: 12, auto_renewal: true, blank: null }, [{ qty: 3 }], [])
+    expect(b.invoice).toEqual({ total: '12', auto_renewal: 'true', blank: null })
+    expect(b.lines).toEqual([{ qty: '3' }])
+  })
 })

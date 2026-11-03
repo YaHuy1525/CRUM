@@ -13,13 +13,22 @@ export function todayInUtc(now: Date = new Date()): string {
 
 export function buildBundle(
   kind: 'invoice' | 'contract',
-  header: Record<string, string | null> | null,
-  lines: Array<Record<string, string | null>>,
-  terms: Array<Record<string, string | null>>,
+  header: Record<string, unknown> | null,
+  lines: Array<Record<string, unknown>>,
+  terms: Array<Record<string, unknown>>,
 ): DocumentRecordBundle {
+  const toRow = (row: Record<string, unknown>): Record<string, string | null> =>
+    Object.fromEntries(
+      Object.entries(row).map(([key, value]) => [
+        key,
+        // eslint-disable-next-line @typescript-eslint/no-base-to-string -- R38 hands this boundary `unknown`; every call site supplies scalars, never a nested row
+        value === null || value === undefined ? null : String(value),
+      ]),
+    )
+  const head = header === null ? null : toRow(header)
   return kind === 'invoice'
-    ? { kind, invoice: header ?? undefined, lines, terms: [] }
-    : { kind, contract: header ?? undefined, terms, lines: [] }
+    ? { kind, invoice: head ?? undefined, lines: lines.map(toRow), terms: [] }
+    : { kind, contract: head ?? undefined, terms: terms.map(toRow), lines: [] }
 }
 
 export function evaluate(
