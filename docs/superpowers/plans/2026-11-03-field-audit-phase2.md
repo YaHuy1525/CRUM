@@ -20,9 +20,10 @@
 6. Nothing under `src/validation/` may import `pg`, read `process.env`, or consult the wall clock. The date arrives as `ValidationContext.today`. `Date.UTC` inside `parseDate` validates fields of a supplied string and never reads today.
 7. Unit tests live under `tests/**/*.test.ts` (vitest project `unit`), integration tests under `tests/integration/**` (project `integration`). A test that touches the database loads `.env` before importing anything that reads it, copying lines 1-12 of `tests/db/field-audit.test.ts`.
 8. The gate for every task, in order: `npx tsc --noEmit`, `npx eslint .`, `npx vitest run <touched files>`, then commit.
-9. At plan start the working tree on `feat/marketing-slice-5` carries unrelated work. Task 1 checkpoints it. Until Task 1 is complete, never stage: `.env.compose.example`, `console/Dockerfile`, `console/next.config.js`, `docker-compose.yml`, `package.json`, `package-lock.json`, `src/mastra/docling.ts`, `src/api/index.ts`, `src/api/serve.ts`, `src/mastra/identity.ts`, `tests/mastra/identity.test.ts`.
+9. The primary tree at `D:\Code\CRUM` is occupied by a live `feat/marketing-slice-5` run. Phase 2 never writes there. Every command in this plan runs from `D:\Code\CRUM\.qoder\worktrees\field-audit-phase2`, and nothing outside that directory is staged or committed.
 10. `tests/evals/golden-gate.test.ts` fails on this machine for the environmental reason recorded in `DOCUMENT_PROCESSING_STATUS.md` section 7. It is a known baseline failure, not a regression, and the final report names it rather than hiding it.
-11. Console tests use the existing setup in `console/vitest.config.ts` and the patterns in `console/tests/DocumentManager.test.tsx`. `console/` is a separate npm workspace, so console commands run with `dir_path` set to `D:\Code\CRUM\console`.
+11. Console tests use the existing setup in `console/vitest.config.ts` and the patterns in `console/tests/DocumentManager.test.tsx`. `console/` is a separate npm workspace, so console commands run with `dir_path` set to `D:\Code\CRUM\.qoder\worktrees\field-audit-phase2\console`.
+12. A test that touches the database runs against the live `DATABASE_URL` from `.env`, which this worktree carries as a copy. `tests/integration/**` additionally gate on `CRUM_INTEGRATION_DATABASE_URL` and skip without it; a skip is not a pass, and a task whose deliverable is an integration test says in its report whether the file ran or skipped.
 
 ## File Structure
 
@@ -69,7 +70,7 @@ Ruling R27 — this task was a checkpoint commit of the uncommitted async-intake
 - Consumes: the primary tree as found, read-only.
 - Produces: a `HEAD` where every file Phase 2 touches carries the content the later tasks were drafted against, with an empty `git status --porcelain` for Task 2 to start from, and with the spec and plan tracked so the ledger's identity line resolves.
 
-- [ ] **Step 1: Create the worktree without disturbing the occupied tree**
+- [x] **Step 1: Create the worktree without disturbing the occupied tree**
 
 ```bash
 cd /d/Code/CRUM && git status --porcelain | wc -l
@@ -79,7 +80,7 @@ git status --porcelain | wc -l
 
 Expected: both counts equal, so the worktree changed nothing the other run can see. `.qoder` is gitignored at `.gitignore:14`, which is why the worktree may live inside the repository. `git worktree list` shows two entries.
 
-- [ ] **Step 2: Junction the dependencies instead of a second install**
+- [x] **Step 2: Junction the dependencies instead of a second install**
 
 ```powershell
 New-Item -ItemType Junction -Path 'D:\Code\CRUM\.qoder\worktrees\field-audit-phase2\node_modules' -Target 'D:\Code\CRUM\node_modules'
@@ -88,7 +89,7 @@ New-Item -ItemType Junction -Path 'D:\Code\CRUM\.qoder\worktrees\field-audit-pha
 
 Run from Bash as `powershell -NoProfile -Command "..."`; `cmd //c mklink /J` mangles the quoted path here. Then check `node_modules/.bin/vitest` resolves inside the worktree. Phase 2 adds no dependency, so a shared install stays read-only for both runs. A task that ever needs `npm install` must break the junction first.
 
-- [ ] **Step 3: Copy the async surface the plan was drafted against**
+- [x] **Step 3: Copy the async surface the plan was drafted against**
 
 ```bash
 W=/d/Code/CRUM/.qoder/worktrees/field-audit-phase2
@@ -104,12 +105,12 @@ cd $W && git status --porcelain | wc -l
 
 Expected: 29 paths copied, and the same 29 in the worktree status. Two of them are the reason the whole set is copied rather than just the console pair: `src/mastra/workflows/document-intake.ts:12` imports `../ocr`, and the already-committed `tests/integration/document-audit-flow.test.ts:7-8` imports `src/queue/document-queue.js` and `src/queue/intake-run.js`. So HEAD does not typecheck on its own, and the async surface has to arrive before Task 2 can start from a green baseline. The `analyst-cron|marketing` filter is R26: that run's in-flight files are not copied and not committed. The spec and plan are untracked in the primary tree because `docs` is gitignored at `.gitignore:16`; `git add -f` makes them tracked here, where the ledger's `plan:` path has to resolve.
 
-- [ ] **Step 4: Baseline gate**
+- [x] **Step 4: Baseline gate**
 
 Run from the worktree: `npx tsc --noEmit && npx eslint . && npx vitest run --project unit tests/api/documents.test.ts`
 Expected: exit 0 and the documents suite passing. If it does not pass, report `BLOCKED` with the failing output and do not commit.
 
-- [ ] **Step 5: Commit the isolation**
+- [x] **Step 5: Commit the isolation**
 
 ```bash
 git add -f docs/superpowers/specs/2026-11-03-field-audit-phase2-design.md \
@@ -130,7 +131,7 @@ EOF
 )"
 ```
 
-- [ ] **Step 6: Verify**
+- [x] **Step 6: Verify**
 
 Run: `git status --porcelain` (empty), `git log --oneline -1`, and `git status --porcelain | wc -l` in `D:\Code\CRUM`.
 Expected: empty here, the new commit at HEAD, and still 33 entries in the primary tree.
@@ -1132,7 +1133,8 @@ git commit -m "feat(validation): six contract rules and the nineteen-rule catalo
 
 **Files:**
 - Create: `migrations/0024_crum_field_validation.sql`
-- Modify: `tests/db/schema-parity.test.ts` if it exists and enumerates tables. Search first: `grep -rn "document_field_audit" tests/ migrations/0000* 2>/dev/null`
+
+Resolved at pre-flight: `tests/db/schema-parity.test.ts` does not exist, and the only table-enumerating test is `tests/integration/migrations.test.ts`, whose `SPINE_TABLES` list at `:34-45` names the nine spine tables and nothing added by `0018` to `0023`. Marketing's own migrations did not extend it, so neither does this one. No test file is modified by this task.
 
 **Interfaces:**
 - Consumes: `documents(id)`.
@@ -1520,10 +1522,6 @@ git commit -m "feat(db): findings persist one row per rule and field, and a waiv
 ---
 
 ### Task 8: Intake wiring
-
-**Files:**
-- Modify: `src/mastra/workflows/document-intake.ts`
-- Create: `tests/mastra/workflows/intake-validation.test.ts`
 
 **Files:**
 - Modify: `src/mastra/workflows/document-intake.ts`
