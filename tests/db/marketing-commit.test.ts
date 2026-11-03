@@ -368,7 +368,7 @@ describe('approving a campaign status draft', () => {
     expect(calls('INSERT INTO audit_receipts')).toEqual([])
   })
 
-  it('refuses a status draft whose payload status Meta would reject', async () => {
+  it('refuses a status draft whose payload asks for a status this lane does not stage', async () => {
     const { commitWithReceipt, UnsupportedCommitError } = await import('../../src/db/pending-writes')
     stubQueries({
       'SELECT receipt_id, rejected_at, committed_at FROM pending_writes': [
@@ -380,9 +380,42 @@ describe('approving a campaign status draft', () => {
       { approvedBy: APPROVER, scope: 'marketing:status' },
     )
     await expect(attempt).rejects.toThrow(UnsupportedCommitError)
-    // The value it was given is in the sentence: 'ARCHIVED' is a real Meta
-    // status, and the reader has to be able to tell it from a typo.
+    // The value it was given has to be in the sentence. ARCHIVED is a status Meta
+    // itself recognises, which is the point of the case: the refusal is about what
+    // this lane is allowed to stage, not about what the provider would accept, so
+    // a reader has to be able to see which value the draft actually carried.
     await expect(attempt).rejects.toThrow(/ARCHIVED/)
+    expect(calls('INSERT INTO marketing_actions')).toEqual([])
+    expect(calls('INSERT INTO audit_receipts')).toEqual([])
+  })
+
+  it('refuses a status draft whose payload names no campaign', async () => {
+    const { commitWithReceipt, UnsupportedCommitError } = await import('../../src/db/pending-writes')
+    stubQueries({
+      'SELECT receipt_id, rejected_at, committed_at FROM pending_writes': [
+        { receipt_id: null, rejected_at: null, committed_at: null },
+      ],
+    })
+    // No caller can produce either draft today: stageCampaignStatusChange always
+    // writes a non-empty campaignId (src/mastra/tools/marketing-writes.ts:957), and
+    // an empty one would also fail the existence read below. The guard is still
+    // pinned, because the adapter addresses Meta from this field alone, so the next
+    // caller, Task 17's tool most likely, inherits the shape of what is staged here.
+    const empty = commitWithReceipt(
+      statusDraft({ campaignId: '', status: 'ACTIVE' }),
+      { approvedBy: APPROVER, scope: 'marketing:status' },
+    )
+    await expect(empty).rejects.toThrow(UnsupportedCommitError)
+    await expect(empty).rejects.toThrow(/must name a campaign/)
+    const absent = commitWithReceipt(
+      statusDraft({ status: 'ACTIVE' }),
+      { approvedBy: APPROVER, scope: 'marketing:status' },
+    )
+    await expect(absent).rejects.toThrow(UnsupportedCommitError)
+    // Both halves of one guard: the key missing entirely, and above it the key
+    // present but empty. A wrong-type value lands on the same typeof test, so it
+    // needs no third case, and the message is the same sentence either way.
+    await expect(absent).rejects.toThrow(/must name a campaign/)
     expect(calls('INSERT INTO marketing_actions')).toEqual([])
     expect(calls('INSERT INTO audit_receipts')).toEqual([])
   })

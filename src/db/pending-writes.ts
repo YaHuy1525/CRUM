@@ -639,7 +639,9 @@ async function applyDraft(
   // own, so it is shaped exactly like marketing_promote above: one queued action
   // row, no content change, and no COMMIT_TARGETS entry, because a Meta campaign
   // is not a row in a CRM table. Without this branch the draft fell through every
-  // marketing case into requireTarget below and the owner's approval 500ed.
+  // marketing case into requireTarget below, whose UnsupportedCommitError the
+  // deciding route answers as 422 not_committable (src/api/approvals.ts:281), so
+  // the owner's click failed, nothing was signed, and the draft stayed open.
   //
   // Everything the payload asserts about another row is re-read under this
   // transaction, because the payload is a claim, and a receipt signed over a
@@ -659,7 +661,7 @@ async function applyDraft(
     }
     if (status !== 'ACTIVE' && status !== 'PAUSED') {
       throw new UnsupportedCommitError(
-        `marketing_set_campaign_status carries status ${String(status)}, which is neither ACTIVE nor PAUSED, so approving it would send Meta a value its own API rejects`,
+        `marketing_set_campaign_status carries status ${String(status)}, which is neither ACTIVE nor PAUSED: those two are the whole of what this lane stages, so a third value would reach the adapter as an instruction nobody chose`,
       )
     }
     // The campaign must still be the product of a succeeded create_campaign in
