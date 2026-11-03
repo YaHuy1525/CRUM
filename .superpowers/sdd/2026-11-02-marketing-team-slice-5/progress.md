@@ -1259,3 +1259,56 @@ Gates on `8629be5`, run by the controller: focused file `Tests 23 passed (23)`, 
 `Test Files 100 passed (100)`, `Tests 1274 passed | 1 todo (1275)`. Integration with the URL
 exported, three files: `Tests 15 passed (15)`, none skipped. `npm run typecheck` and `npm run lint`
 both exit 0.
+
+## Task 18 landed at `1d85f96`, reviewed clean, and both should-fix items ruled without a code change
+
+The derivation is in. `MUTATING_TOOL_IDS` went from 16 hand-written ids to 20, `toHaveLength(16)` is
+gone, no case states the guard list's size, and `crumToolRegistry` is exported with a one-word edit.
+The four prospect-lane ids the derivation exposed (`crm.draft_outreach`, `crm.send_outreach`,
+`crm.save_prospect_snapshot`, `crm.resolve_merge_candidate`) are now guarded, which was the live
+false-positive class R6 sat next to: a turn that genuinely sent an outreach used to read, to this
+processor, exactly like a turn that invented one.
+
+I re-ran the gate at HEAD before reviewing, and the implementer's figures held: `Test Files 17
+passed (17)`, `Tests 315 passed | 1 todo (316)`, typecheck and lint exit 0. The reviewer then ran
+four mutants of its own and none survived: dropping `crm.send_outreach` killed the derived case and
+the behavioural case together, a phantom id killed the derived case and the R6 case, a policy class
+flip on `crm.send_outreach` killed only the first, and a flip on `crm.bulk_import` killed only the
+backlog case. That last pair is what makes the backlog assertion real rather than decorative: the
+two ids the registry cannot reach are pinned by a class the policy says and a scope filter, not by
+a comment.
+
+**Should-fix 1, and why it does not become a code change.** The reviewer is right that
+`tests/mastra/processors/write-claim-guard.test.ts:16` resolves the policy through `loadPolicy()`
+with no directory, and right that this is cwd-relative. It is not a divergence, and I checked
+rather than assumed. `src/governance/policy.ts:97` makes `loadPolicy()` fall back through
+`findPolicyRoot(process.cwd())` and then the module directory, and the runtime path the guard
+describes calls exactly that function with no argument: `marketing-writes.ts` 11 times,
+`approval-writes.ts` 9, `customer-writes.ts` 8, `prospect-writes.ts` 5, `auto-writes.ts` 3,
+`prospect-merge.ts` 2. Passing `defaultPolicyDir()` explicitly would be the identical call. What
+the review did surface is a real inconsistency elsewhere, and it is now on the register: the only
+reader that honours `POLICY_DIR` is `src/governance/index.ts:6`, and nothing in `src/` imports it,
+while a single conformance test does. So `POLICY_DIR` is documented at `.env.example:90` and
+decorative in production, and a deployment that sets it gets 38 call sites ignoring it. That is a
+governance finding with a much wider blast radius than a guard test, and slice 5 does not own it.
+
+**Should-fix 2, ruled as accepted design with the reason.** Making the list itself derived rather
+than hand-written is not available to this file. `src/mastra/agent.ts:8` imports `./processors`,
+`src/mastra/processors.ts` imports `./processors/write-claim-guard`, so a `write-claim-guard.ts`
+that imported the registry to build its own list would close a cycle through the module that owns
+it. The shape the brief asked for, a hand-written list that only a CI-enforced cross-check can
+disagree with, is the best this layering permits, and the stale window the reviewer names is real
+but bounded: the next registered mutating tool must land in the same commit as its guard id, and
+the derived case is the thing that says so out loud when it does not. That rule goes to the
+slice-end register for slice 6, together with the observation that `src/evals/custom-scorers.ts:55`
+reads the same list and inherits the same window.
+
+The report also keeps one defence it challenged. The surviving `expect(calls).toHaveLength(1)` in
+the abort case counts one turn's abort callbacks, not the guard list's size, which the reviewer
+verified rather than accepted. Nits are in `task-18-review-1.md` and none change behaviour.
+
+Gate for the record after the review round, all at HEAD `1d85f96` with no further source change:
+gate set `Tests 315 passed | 1 todo (316)`, prospect lane 23 green, `npm run typecheck` and
+`npm run lint` exit 0. One sequencing deviation is recorded in the report and accepted: the one-word
+`export` had to be in place before the RED run, because the test reads `Object.keys` of the registry
+at module scope, and that is a property of the assertion the brief asked for rather than a mistake.
