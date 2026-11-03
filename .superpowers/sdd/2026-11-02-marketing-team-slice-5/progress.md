@@ -1212,3 +1212,50 @@ was widening `StageOutputSchema`, which is not this round's file.
 
 Two parked findings survive the round unchanged: `campaignExternalId` has no shape validation, and
 the instructions paragraph names an admin-only tool to roles that cannot reach it.
+
+## Task 17 round 3, and a review finding that outran its own severity
+
+`task-17-review-3.md` returned APPROVED_WITH_NITS on `a345ab8`, 0 blockers, 1 should-fix, 3 nits,
+and reproduced both A8.2 mutants itself. The should-fix is the one that mattered, and it was filed
+too gently. Round 2 had reported a stored gate of `refuse` as `approval` on the theory that a
+refuse draft "is more locked than the answer, never less, because no human can approve it". The
+reviewer read the approval route and found the claim false, and I confirmed it:
+`src/api/approvals.ts:266` checks already-decided, already-committed and expiry, and never reads
+`draft.gate`, and `applyDraft` does not either. So a `refuse` row sits in the queue waiting for
+exactly the click any other draft gets. A comment asserting the opposite is worse than the clamp,
+because the next reader will believe it.
+
+Fixed at `8629be5`, two files. `stageCampaignStatusChange` now throws
+`campaign_status_refused` before `getOrCreateDraft` when `gateFor` answers refuse, which is how
+this function already refuses everything else: the cron logs a thrown refusal and moves on, and
+the tool turns it into a human task with its own prose entry. The RED was measured before the
+source changed, and it is the bug stated plainly: `AssertionError: promise resolved "{ ... }"
+instead of rejecting`, and a chat answer that read `Status change to PAUSED staged for campaign
+delete all 2026`. The case that had been asserting the clamp became a case asserting that the
+reported gate is the stored gate for `auto`, because the half about `refuse` is no longer a path
+that exists. The clamp itself stays in the type position with a comment saying it is not a safety
+device. Two anchor citations in comments had drifted by one line and were re-derived.
+
+N1 from the same review is accepted and not fixed: `tokenOf` will still cut
+`postgres: the server closed the connection` to a token named `postgres`. That is what Addendum
+A8.4 prescribed, the shape is the rule, and the residual is a driver message whose first word
+happens to look like a token.
+
+The wider finding the should-fix points at is bigger than this slice and goes to the slice-end
+register rather than into this round: **no approval path in this repository reads `gate`.** The
+policy decides a gate at staging time, stores it, and nothing downstream asks whether the stored
+decision still permits the commit. Task 16 and Task 17 both inherit that. The narrow version,
+enforcing the gate at the approval boundary, is a governance change with its own blast radius and
+its own tests, not a nit round on a marketing tool.
+
+The two parked items are unchanged: `campaignExternalId` still has no shape validation, and the
+instructions paragraph still names an admin-only tool to roles that cannot reach it. With the
+refuse branch landed, the first of those is now materially less dangerous, because prose in the id
+can no longer produce an approvable draft. It still produces a scored high-risk payload, so it
+stays parked rather than closed.
+
+Gates on `8629be5`, run by the controller: focused file `Tests 23 passed (23)`, up from 21.
+`npx vitest run tests/mastra tests/db tests/governance tests/marketing` gives
+`Test Files 100 passed (100)`, `Tests 1274 passed | 1 todo (1275)`. Integration with the URL
+exported, three files: `Tests 15 passed (15)`, none skipped. `npm run typecheck` and `npm run lint`
+both exit 0.
