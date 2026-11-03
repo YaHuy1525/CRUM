@@ -7,20 +7,22 @@ export type * from './types.js'
 
 const SEVERITY_RANK: Record<Violation['severity'], number> = { error: 0, warning: 1 }
 
-export function todayInUtc(now: Date): string {
-  return now.toISOString().slice(0, 10)
-}
-
 /**
- * pg parses a `date` column into a JS Date at local midnight, so the stored calendar day
- * has to be read back in local time. `toISOString().slice(0, 10)` would move 2026-11-03 to
- * 2026-11-02 on any machine east of UTC, which is where this project runs and is where the
- * findings get stored. This is a wall-clock-free read: it consults the value's fields and
- * the process timezone, never `Date.now()`, and it is correct precisely because the process
- * that built the Date from the `date` column is the one reading it back. A Postgres `date`
- * has no zone of its own, so a worker running in a different TZ would disagree.
+ * The one calendar-day renderer in this layer. `ValidationContext.today` and every `date` column in a
+ * bundle go through here, so a date rule always compares two days read the same way; that unity is why
+ * there is no second helper for "today".
+ *
+ * pg parses a `date` column into a JS Date at *local* midnight (`postgres-date` builds
+ * `new Date(y, m, d)`), so the stored calendar day has to be read back with the local getters.
+ * `toISOString().slice(0, 10)` would move 2026-11-03 to 2026-11-02 on any machine east of UTC, which is
+ * where this project runs and where the findings get stored.
+ *
+ * Two properties to keep in mind. This is a wall-clock-free read: it consults the value's own fields and
+ * the process timezone, never `Date.now()`, and the caller supplies the instant so that constraint 6's
+ * clock stays outside `src/validation/`. And a Postgres `date` carries no zone of its own, so a worker
+ * running in a different timezone would disagree about which day a stored value names.
  */
-function localDay(value: Date): string {
+export function localDay(value: Date): string {
   const y = String(value.getFullYear())
   const mo = String(value.getMonth() + 1).padStart(2, '0')
   const d = String(value.getDate()).padStart(2, '0')
@@ -38,6 +40,9 @@ export function buildBundle(
     if (typeof value === 'string') return value
     if (typeof value === 'number') return Number.isFinite(value) ? String(value) : null
     if (typeof value === 'boolean' || typeof value === 'bigint') return String(value)
+    // Every Date becomes its local calendar day, so a `timestamptz` column that reaches this
+    // boundary through a `SELECT *` loses its time of day. No Phase 2 rule reads one today; a later
+    // task that wants an instant must read it from the row, not from a bundle.
     if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : localDay(value)
     return null
   }

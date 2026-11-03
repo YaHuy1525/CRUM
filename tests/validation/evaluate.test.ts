@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { buildBundle, evaluate, RULESET_VERSION, todayInUtc } from '../../src/validation/index.js'
+import { buildBundle, evaluate, localDay, RULESET_VERSION } from '../../src/validation/index.js'
+import { parseDate } from '../../src/validation/values.js'
 import type { ValidationContext, ValidationRule, Violation } from '../../src/validation/types.js'
 
 const CTX: ValidationContext = { today: '2026-11-03' }
@@ -14,19 +15,49 @@ function rule(partial: Partial<ValidationRule> & { id: string }, out: Violation[
   }
 }
 
-describe('todayInUtc', () => {
-  it('truncates an instant to its UTC date, ignoring the local zone', () => {
-    expect(todayInUtc(new Date('2026-11-03T23:59:59.999Z'))).toBe('2026-11-03')
-    expect(todayInUtc(new Date(Date.UTC(2026, 10, 4)))).toBe('2026-11-04')
+describe('localDay', () => {
+  it('renders the day an instant falls on locally, including the early-morning hours', () => {
+    // 00:30 is the hour that matters: this project runs at UTC+11, so a UTC read of a local
+    // early-morning instant returns the day before. Inputs are built from local components, so a
+    // correct implementation passes in any zone. The limit is the mirror of that: on a machine whose
+    // offset is exactly zero both reads agree and this case cannot kill a UTC implementation. It
+    // kills one here, measured at getTimezoneOffset() = -660, and the mutation was run.
+    expect(localDay(new Date(2026, 10, 3, 0, 30, 0))).toBe('2026-11-03')
+    expect(localDay(new Date(2026, 10, 3, 23, 59, 59))).toBe('2026-11-03')
+    expect(localDay(new Date(2026, 10, 4))).toBe('2026-11-04')
   })
 
   it('requires the caller to supply the instant so the module never reads the clock', () => {
     // A default argument would make this a wall-clock read inside src/validation/, which
     // constraint 6 forbids. `npx tsc --noEmit` covers tests/, and reports TS2578 "Unused
     // '@ts-expect-error' directive" on the line below if anyone reintroduces one.
-    // @ts-expect-error - now is required
-    const callableWithoutAnInstant: () => string = todayInUtc
+    // @ts-expect-error - value is required
+    const callableWithoutAnInstant: () => string = localDay
     expect(callableWithoutAnInstant).toBeTypeOf('function')
+  })
+
+  it('is the single renderer, so a stored date and ctx.today cannot end up in different frames', () => {
+    // The only catalogue rule that consumes ctx.today is invoice.invoice_date.future, whose body is
+    // `parseDate(invoice_date) > ctx.today`. Before R45 the two halves came from two helpers in two
+    // frames, and that fired a warning on an invoice dated the auditor's own business day for 11 of
+    // 24 hours. There is now one renderer for both sides, so the first two lines below are the same
+    // computation the boundary performs, and killing `localDay` kills both sides at once.
+    const stamped = new Date(2026, 10, 3)
+    const bundle = buildBundle('invoice', { invoice_date: stamped }, [], [])
+    const future: ValidationRule = {
+      id: 'invoice.invoice_date.future',
+      appliesTo: 'invoice',
+      fields: ['invoice_date'],
+      run: (b, ctx) => {
+        const d = parseDate(b.invoice?.invoice_date)
+        return d !== null && d > ctx.today
+          ? [{ ruleId: 'invoice.invoice_date.future', field: 'invoice_date', severity: 'warning', message: 'Invoice date is after today.' }]
+          : []
+      },
+    }
+    expect(bundle.invoice?.invoice_date).toBe('2026-11-03')
+    expect(evaluate(bundle, { today: localDay(stamped) }, [future])).toEqual([])
+    expect(evaluate(bundle, { today: '2026-11-02' }, [future])).toHaveLength(1)
   })
 })
 
@@ -90,7 +121,9 @@ describe('evaluate', () => {
   it('renders a pg date Date as the stored calendar day, not the UTC-shifted one', () => {
     // pg builds a `date` column as a Date at local midnight. A toISOString() read here would
     // turn 2026-11-03 into 2026-11-02 on any machine east of UTC, which is where this project
-    // writes and reads. Built in local time on purpose so the case holds in any zone.
+    // writes and reads. The input is built in local time, so the case *passes* in any zone; it
+    // only *kills* a UTC implementation where the offset is not zero, which is true of this box
+    // and is measured in the localDay case above rather than hidden here.
     expect(buildBundle('invoice', { invoice_date: new Date(2026, 10, 3) }, [], []).invoice)
       .toEqual({ invoice_date: '2026-11-03' })
     expect(buildBundle('invoice', { invoice_date: new Date('not a date') }, [], []).invoice)
@@ -110,6 +143,23 @@ describe('evaluate', () => {
     // null is no record at all, and there is nothing here for any of the 19 rules to say.
     expect(evaluate(buildBundle('invoice', {}, [], []), CTX, [wouldFire]).length).toBe(1)
     expect(evaluate(buildBundle('invoice', null, [], []), CTX, [wouldFire])).toEqual([])
+  })
+
+  it('runs rules for a bundle that has rows even when its header is absent, in both kinds', () => {
+    const firesOnInvoice = rule({ id: 'invoice.needs_vendor', fields: ['vendor_name'] }, [
+      { ruleId: 'invoice.needs_vendor', field: 'vendor_name', severity: 'error', message: 'absent' },
+    ])
+    const firesOnContract = rule({ id: 'contract.needs_party', appliesTo: 'contract', fields: ['party'] }, [
+      { ruleId: 'contract.needs_party', field: 'party', severity: 'error', message: 'absent' },
+    ])
+    // A mutation check found the all-empty case above pins the guard in one direction only: a guard
+    // reading `header === undefined` on its own keeps every earlier test green while silencing the
+    // `*.present` rules for a record that does have rows. These three assertions each kill one term
+    // of the real condition, and the third is what exercises the `bundle.kind` selection, which is
+    // otherwise dead under test — hard-wiring it to `bundle.invoice` survives the first two.
+    expect(evaluate(buildBundle('invoice', null, [{ amount: '1' }], []), CTX, [firesOnInvoice])).toHaveLength(1)
+    expect(evaluate(buildBundle('contract', null, [], [{ description: 'x' }]), CTX, [firesOnContract])).toHaveLength(1)
+    expect(evaluate(buildBundle('contract', { total: '10' }, [], []), CTX, [firesOnContract])).toHaveLength(1)
   })
 
   it('orders by codepoint, not locale collation, so the order survives a locale change', () => {

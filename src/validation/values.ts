@@ -32,7 +32,11 @@ export function isCurrencyShape(v: unknown): boolean {
   return typeof v === 'string' && /^[A-Za-z]{3}$/.test(v.trim())
 }
 
-const DATE_OR_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?Z?)?$/
+// A date, optionally followed by a time. The separator is `[ T]` because Postgres' own text rendering
+// is space-separated and ISO strings from extraction use `T`; the offset group accepts `Z`, `+11` and
+// `+11:00`. The time and offset are matched only so they do not invalidate the value, then dropped:
+// parseDate returns the day the string *writes*, and no zone conversion happens anywhere in this layer.
+const DATE_OR_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})(?:[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/
 
 export function parseDate(v: unknown): string | null {
   if (isAbsent(v)) return null

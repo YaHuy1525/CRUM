@@ -38,6 +38,21 @@ describe('parseDate', () => {
     expect(parseDate('2026-03-01')).toBe('2026-03-01')
     expect(parseDate('2026-03-01T00:00:00.000Z')).toBe('2026-03-01')
   })
+  it('accepts a space separator and an offset, and keeps the day as written', () => {
+    // Postgres renders its own timestamp text space-separated, and extraction hands over both forms,
+    // so a strict `T` would read a well-formed value as absent and the rule judging it would say
+    // nothing. The last two lines are the no-conversion half of the frame rule: the offset is matched
+    // so it cannot invalidate the value and is then dropped, so the day returned is the day the string
+    // writes. 23:00 at -05:00 is already the next day in UTC, and that is not what this returns.
+    expect(parseDate('2026-03-01 09:00:00')).toBe('2026-03-01')
+    expect(parseDate('2026-03-01T09:00:00+11:00')).toBe('2026-03-01')
+    expect(parseDate('2026-03-01T23:00:00-05:00')).toBe('2026-03-01')
+    expect(parseDate('2026-03-01T09:00:00Z')).toBe('2026-03-01')
+  })
+  it('still rejects a malformed value after the time part', () => {
+    expect(parseDate('2026-03-01 09:00:00xyz')).toBeNull()
+    expect(parseDate('2026-03-01T09')).toBeNull()
+  })
   it('rejects trailing junk instead of reading the date out of its prefix', () => {
     expect(parseDate('2026-03-011')).toBeNull()
     expect(parseDate('2026-03-01xyz')).toBeNull()
