@@ -8,7 +8,7 @@ if (existsSync(envPath)) {
 }
 
 import { parseEnv } from '../../src/config/env.js'
-import { createDocumentsRouter } from '../../src/api/documents.js'
+import { createDocumentsRouter, type DocumentQueueLike } from '../../src/api/documents.js'
 import { getDbClient } from '../../src/db/client.js'
 import type { Pool } from 'pg'
 
@@ -24,10 +24,12 @@ export interface TestServer {
 /**
  * Create a test server that wires the documents router to the real database
  * and exposes a `fetch()` method for making requests without binding a port.
+ *
+ * Pass a `queue` to override the default (null = uploads return 503).
  */
-export function createTestServer(): Promise<TestServer> {
+export function createTestServer(queue?: DocumentQueueLike | null): Promise<TestServer> {
   const env = parseEnv({})
-  const app = createDocumentsRouter({ env, queue: null })
+  const app = createDocumentsRouter({ env, queue: queue ?? null })
   const db = getDbClient()
 
   return Promise.resolve({

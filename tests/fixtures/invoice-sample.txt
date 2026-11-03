@@ -1,0 +1,10 @@
+Invoice #12345
+Date: 2026-11-03
+Vendor: Acme Corp
+Vendor Email: billing@acme.com
+Bill to: CRUM Pty Ltd
+Subtotal: $1000.00
+Tax: $250.00
+Total: $1250.00
+Due Date: 2026-11-17
+Currency: USD
