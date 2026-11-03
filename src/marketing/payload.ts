@@ -96,3 +96,16 @@ export function promotePayload(input: PromotePayload): PromotePayload {
 export function retryPayload(input: RetryPayload): RetryPayload {
   return { actionId: input.actionId, siteHash: input.siteHash }
 }
+
+/**
+ * The campaign status payload. Identifiers and a status only: the analyst's
+ * reason is prose the model wrote, and scoreRisk stringifies the payload, so a
+ * reason in here would make the approval gate depend on the phrasing rather than
+ * on the change. Both hooks need the same view, which is why it is a builder.
+ */
+export function campaignStatusPayload(input: {
+  campaignId: string
+  status: 'ACTIVE' | 'PAUSED'
+}): { campaignId: string; status: 'ACTIVE' | 'PAUSED' } {
+  return { campaignId: input.campaignId, status: input.status }
+}

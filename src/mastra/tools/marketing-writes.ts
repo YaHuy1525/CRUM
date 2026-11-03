@@ -37,7 +37,7 @@ import {
   unreadPlanColumns,
   type MarketingActionName,
 } from '../../marketing/outbox'
-import { promotePayload, retryPayload, saveRiskView, stagePayload } from '../../marketing/payload'
+import { campaignStatusPayload, promotePayload, retryPayload, saveRiskView, stagePayload } from '../../marketing/payload'
 import { SlugProblemError, siteProblem, slugProblem, unreferencedAssetNames } from '../../marketing/site'
 import {
   getDesignerArtifactText,
@@ -846,8 +846,20 @@ export async function stageRetry(params: {
  * Like `stagePromotion`, the function validates before it stages: an action this
  * process cannot run, a call that cannot name a uuid owner, a campaign that does
  * not exist on the bundle it is claimed to belong to, or a scale against a
- * campaign that is already active is refused before any row is written. The
- * caller (the analyst cron) logs the refusal and moves on.
+ * campaign that is already active is refused before any row is written.
+ *
+ * Two result conventions exist in this file and this function is the second one,
+ * chosen not missed: `stagePromotion` and `stageRetry` answer with a
+ * discriminated envelope (`StagePromotionResult`, `StageRetryResult`) because
+ * their refusals are values the tool renders, while this one refuses by
+ * throwing tokens — a shape Task 15 fixed and its unit cases pin — and returns
+ * the bare `{ pendingWriteId, riskScore }` pair `StageOutputSchema` forces on
+ * the tool. Converting the throws to an envelope would rewrite four throw sites
+ * and the cron's error handling to move a value that already travels honestly
+ * as an exception. Callers: the analyst cron logs a thrown refusal and moves on;
+ * `setCampaignStatusTool` below catches one and turns it into a refusal human
+ * task, so the sentence a chat turn reads is rendered through `readableReason`
+ * and never the bare token.
  */
 export async function stageCampaignStatusChange(args: {
   tenantId: string
@@ -857,7 +869,7 @@ export async function stageCampaignStatusChange(args: {
   status: 'ACTIVE' | 'PAUSED'
   reason: string
   userRole: string
-}): Promise<string> {
+}): Promise<{ pendingWriteId: string; riskScore: number }> {
   const db = getDbClient()
 
   // requested_by is `uuid NOT NULL` (migrations/0002_crum_spine.sql:158) and the
@@ -954,7 +966,9 @@ export async function stageCampaignStatusChange(args: {
   // The payload is identifiers and a status only: no prose, no slug, no bytes.
   // scoreRisk stringifies the whole draft, so keeping it free of agent-written
   // text keeps the score stable across runs that differ only in the reason.
-  const payload = { campaignId: args.campaignExternalId, status: args.status }
+  // One builder shared with the tool's requireApproval, so a plan shape cannot
+  // be understood two ways in two places.
+  const payload = campaignStatusPayload({ campaignId: args.campaignExternalId, status: args.status })
   const policy = loadPolicy()
   const assessment = scoreRisk(payload, policy.risk, 'marketing.set_campaign_status')
   const gate = policy.gateFor('marketing.set_campaign_status', assessment, {
@@ -985,7 +999,7 @@ export async function stageCampaignStatusChange(args: {
     requestedBy: args.userId,
     idempotencyKey: `campaign_status:${args.campaignExternalId}:${args.status}`,
   })
-  return draft.id
+  return { pendingWriteId: draft.id, riskScore: draft.riskScore }
 }
 
 /**
@@ -1002,10 +1016,23 @@ const REFUSAL_PROSE: Record<string, string> = {
   site_hash_moved: 'the page bytes changed since this action was staged',
   bundle_unavailable: 'the bundle has no publishable page to hash',
   bundle_mismatch: 'the action belongs to a different bundle than the one in the request',
+  // The two tokens stageCampaignStatusChange can surface into a chat turn
+  // through setCampaignStatusTool. campaign_already_active and
+  // campaign_status_actor_required read honestly after the underscore
+  // replacement below, so they deliberately have no entry here.
+  campaign_not_found: 'no campaign with that id was created by a publish this tenant completed',
+  provider_not_configured: 'this process has no campaign status adapter, so the change could not be run',
 }
 
 function readableReason(reason: string): string {
   return REFUSAL_PROSE[reason] ?? reason.replaceAll('_', ' ')
+}
+
+// Every refusal this function raises opens with its token and a colon, so the
+// prose map can be consulted without a second registry of error classes.
+function tokenOf(message: string): string {
+  const colon = message.indexOf(':')
+  return colon > 0 ? message.slice(0, colon) : message
 }
 
 export const promoteBundleTool = createTool({
@@ -1077,6 +1104,92 @@ export const promoteBundleTool = createTool({
         riskScore: result.riskScore,
         gate: 'approval' as const,
         message: `Promotion staged for approval (${result.pendingWriteId}). The page stays on its preview URL until it is approved and drained.`,
+      }
+    }),
+})
+
+export const setCampaignStatusTool = createTool({
+  id: 'marketing.set_campaign_status',
+  title: 'Set Campaign Status',
+  description:
+    'Ask the owner to approve pausing or activating one campaign this tenant created. Stages one approval and changes nothing until the owner approves and the publisher drains the work order.',
+  requestContextSchema: TenantRequestContextSchema,
+  inputSchema: z.object({
+    bundleId: z.string().uuid(),
+    campaignExternalId: z.string().trim().min(1).max(64),
+    status: z.enum(['ACTIVE', 'PAUSED']),
+    reason: z
+      .string()
+      .trim()
+      .min(3)
+      .max(500)
+      .describe('Why you recommend this change. It reaches the owner in chat, not the scored payload.'),
+  }),
+  outputSchema: StageOutputSchema,
+  outputValidation: 'warn',
+
+  requireApproval: (input, { requestContext } = {}) => {
+    const policy = loadPolicy()
+    // The campaign id is not knowable here without a read, and this hook must
+    // stay synchronous and side-effect free, so it scores an empty one. The
+    // payload is identifiers and a status, so the declared class decides the gate
+    // whatever the placeholder holds; execute recomputes on the real payload.
+    const assessment = scoreRisk(
+      campaignStatusPayload({ campaignId: '', status: input.status }),
+      policy.risk,
+      'marketing.set_campaign_status',
+    )
+    const rc = requestContext?.all as Record<string, unknown> | undefined
+    return (
+      policy.gateFor('marketing.set_campaign_status', assessment, { requestContext: rc }) === 'approval'
+    )
+  },
+
+  execute: async (input, context) =>
+    context.observe.span('marketing.set_campaign_status', async () => {
+      const rc = context.requestContext.all as { tenantId: string; userId: string; userRole: string }
+      try {
+        const staged = await stageCampaignStatusChange({
+          tenantId: rc.tenantId,
+          userId: rc.userId,
+          bundleId: input.bundleId,
+          campaignExternalId: input.campaignExternalId,
+          status: input.status,
+          reason: input.reason,
+          userRole: rc.userRole,
+        })
+        return {
+          pendingWriteId: staged.pendingWriteId,
+          riskScore: staged.riskScore,
+          gate: 'approval' as const,
+          // The reason is deliberately absent from the payload, so this is where
+          // the analyst's argument reaches a human. The draft the owner reviews
+          // names the campaign and the status; the conversation carries the why.
+          message: `Status change to ${input.status} staged for campaign ${input.campaignExternalId} (${input.reason}). Nothing changes at the provider until the owner approves and the publisher drains.`,
+        }
+      } catch (err) {
+        const why = err instanceof Error ? err.message : String(err)
+        // Refusing as a queue entry rather than a thrown turn, the way promote
+        // does: an owner reading a refusal can act on it, and a failed turn leaves
+        // no record of why no campaign was touched.
+        const humanTaskId = await createHumanTask(
+          {
+            tenantId: rc.tenantId,
+            runId: `campaign_status:${input.campaignExternalId}`,
+            toolName: 'marketing.set_campaign_status',
+            riskScore: 0,
+            title: `Refused status change for campaign ${input.campaignExternalId}`,
+            body: `Not staged: ${why}. No campaign was changed.`,
+            requestedBy: rc.userId,
+          },
+          'refusal',
+        )
+        return {
+          pendingWriteId: humanTaskId,
+          riskScore: 0,
+          gate: 'approval' as const,
+          message: `Campaign status change refused (${readableReason(tokenOf(why))}). A human task was created; nothing was staged and no campaign changed.`,
+        }
       }
     }),
 })

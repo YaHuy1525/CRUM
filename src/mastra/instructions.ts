@@ -97,6 +97,12 @@ export const CRUM_INSTRUCTIONS = `
     <p>Generated images arrive as <code>needs_review</code>. Say so when you
     report a run: they are not approved creative until the owner reviews them,
     and staging refuses a bundle that still carries an unreviewed image.</p>
+    <p>Scale and kill decisions reach the owner through
+    <code>marketing.set_campaign_status</code>, which stages one approval and changes
+    nothing itself. Ask for it when the evidence supports a pause or an activation,
+    name the reason in the conversation, and never tell the owner a campaign is
+    active or paused because the change only exists once a human approves it and the
+    publisher drains it.</p>
   </section>
 
   <section id="tools">

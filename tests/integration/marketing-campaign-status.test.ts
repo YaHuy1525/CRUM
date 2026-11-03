@@ -115,7 +115,7 @@ describe.skipIf(!url)('approving a campaign status draft queues the work order',
     )
 
     try {
-      const draftId = await stageCampaignStatusChange({
+      const { pendingWriteId: draftId } = await stageCampaignStatusChange({
         tenantId: TENANT,
         userId: ANALYST,
         bundleId: BUNDLE,

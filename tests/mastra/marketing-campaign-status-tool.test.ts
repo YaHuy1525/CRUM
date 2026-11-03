@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockQuery = vi.fn()
 const mockGetOrCreateDraft = vi.fn()
+const mockCreateHumanTask = vi.fn()
 const mockLoadPolicy = vi.fn()
 
 vi.mock('../../src/db/client', () => ({
@@ -11,6 +12,11 @@ vi.mock('../../src/db/client', () => ({
 vi.mock('../../src/db/pending-writes', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/db/pending-writes')>()),
   getOrCreateDraft: (...args: unknown[]): Promise<unknown> => mockGetOrCreateDraft(...args) as Promise<unknown>,
+  // Stubbed beside the draft for the same reason the promote file stubs it
+  // (tests/mastra/marketing-publish-tools.test.ts:25): the tool's catch turns a
+  // refusal into a queue entry, and the real insert would reach a database a
+  // unit test does not have.
+  createHumanTask: (...args: unknown[]): Promise<unknown> => mockCreateHumanTask(...args) as Promise<unknown>,
 }))
 
 vi.mock('../../src/governance/policy', async (importOriginal) => ({
@@ -18,7 +24,7 @@ vi.mock('../../src/governance/policy', async (importOriginal) => ({
   loadPolicy: (...args: unknown[]): unknown => mockLoadPolicy(...args) as unknown,
 }))
 
-import { stageCampaignStatusChange } from '../../src/mastra/tools/marketing-writes'
+import { setCampaignStatusTool, stageCampaignStatusChange } from '../../src/mastra/tools/marketing-writes'
 import { registerActionAdapter } from '../../src/marketing/outbox'
 import { uuidFromSeed } from '../../src/marketing/hash'
 
@@ -26,6 +32,9 @@ const TENANT = '11111111-1111-4111-8111-111111111111'
 const BUNDLE_ID = '33333333-3333-4333-8333-333333333333'
 const CAMPAIGN_ID = '23842653876'
 const DRAFT_ID = '44444444-4444-4444-8444-444444444444'
+// A refusal is answered with a human task id rather than a draft id, so the
+// refusal cases need a second constant that cannot be confused with either.
+const HUMAN_TASK_ID = '66666666-6666-4666-8666-666666666666'
 // requested_by is a uuid column that means "who asked", so every call below has
 // to name a person. The cron gets that id from CRUM_ANALYST_USER_ID, and a chat
 // caller gets it from the request context.
@@ -85,6 +94,10 @@ beforeEach(() => {
     gate: 'approval',
     payload: {},
   })
+  // A clearAllMocks leaves no resolved value behind, and the refusal path reads
+  // one: without it the first refusal case would fail on the stub rather than
+  // on the behaviour it is meant to pin.
+  mockCreateHumanTask.mockResolvedValue(HUMAN_TASK_ID)
 })
 
 afterEach(() => {
@@ -98,7 +111,7 @@ describe('stageCampaignStatusChange', () => {
       { fragment: "action = 'create_campaign'", rows: [{ id: 'act1' }] },
       { fragment: "action = 'set_campaign_status'", rows: [{ status: 'PAUSED' }] },
     ])
-    const draftId = await stageCampaignStatusChange({
+    const result = await stageCampaignStatusChange({
       tenantId: TENANT,
       userId: USER,
       bundleId: BUNDLE_ID,
@@ -107,7 +120,11 @@ describe('stageCampaignStatusChange', () => {
       reason: 'cost_per_lead_below_5',
       userRole: 'admin',
     })
-    expect(draftId).toBe(DRAFT_ID)
+    expect(result.pendingWriteId).toBe(DRAFT_ID)
+    // The score the draft was created with is carried out, not recomputed: the
+    // chat answer that reports a bogus score is worse than one that reports
+    // none (plan Step 2, and `draft.riskScore` is an existing field).
+    expect(result.riskScore).toBe(10)
     // The draft was created with the correct object type and payload.
     const call = mockGetOrCreateDraft.mock.calls[0]![0] as Record<string, unknown>
     expect(call.objectType).toBe('marketing_set_campaign_status')
@@ -126,7 +143,7 @@ describe('stageCampaignStatusChange', () => {
       { fragment: "action = 'create_campaign'", rows: [{ id: 'act1' }] },
       { fragment: "action = 'set_campaign_status'", rows: [] },
     ])
-    const draftId = await stageCampaignStatusChange({
+    const result = await stageCampaignStatusChange({
       tenantId: TENANT,
       userId: USER,
       bundleId: BUNDLE_ID,
@@ -135,7 +152,7 @@ describe('stageCampaignStatusChange', () => {
       reason: 'cost_per_lead_below_5',
       userRole: 'admin',
     })
-    expect(draftId).toBe(DRAFT_ID)
+    expect(result.pendingWriteId).toBe(DRAFT_ID)
     expect(mockGetOrCreateDraft).toHaveBeenCalledTimes(1)
   })
 
@@ -144,7 +161,7 @@ describe('stageCampaignStatusChange', () => {
     stubQueries([
       { fragment: "action = 'create_campaign'", rows: [{ id: 'act1' }] },
     ])
-    const draftId = await stageCampaignStatusChange({
+    const result = await stageCampaignStatusChange({
       tenantId: TENANT,
       userId: USER,
       bundleId: BUNDLE_ID,
@@ -153,7 +170,7 @@ describe('stageCampaignStatusChange', () => {
       reason: 'cost_per_lead_above_10',
       userRole: 'admin',
     })
-    expect(draftId).toBe(DRAFT_ID)
+    expect(result.pendingWriteId).toBe(DRAFT_ID)
     const call = mockGetOrCreateDraft.mock.calls[0]![0] as Record<string, unknown>
     expect(call.payload).toEqual({ campaignId: CAMPAIGN_ID, status: 'PAUSED' })
     // PAUSED does not query set_campaign_status: the kill door accepts any state.
@@ -332,5 +349,123 @@ describe('stageCampaignStatusChange', () => {
     // together and stay green. This is the one place the format itself is nailed
     // down; the value was measured in two separate processes.
     expect(uuidFromSeed(`campaign:${CAMPAIGN_ID}`)).toBe('ff96fb60-5cb9-8d7d-b265-918605379b58')
+  })
+})
+
+describe('marketing.set_campaign_status tool', () => {
+  // The same context the promote and retry tools are driven with
+  // (tests/mastra/marketing-publish-tools.test.ts:33): a plain request-context
+  // record and a span runner that just calls the function it is handed.
+  const rc = { tenantId: TENANT, userId: USER, bundleId: BUNDLE_ID, userRole: 'admin' }
+  const context = {
+    requestContext: { all: rc },
+    observe: { span: (_name: string, fn: () => Promise<unknown>) => fn() },
+  } as never
+
+  type ToolOut = { pendingWriteId: string; riskScore: number; gate: string; message: string }
+
+  it('requireApproval gates on the declared class whatever the placeholder campaign id holds', () => {
+    // The hook is synchronous and cannot read a database, so it scores
+    // campaignId: '' — the gate still closes because policy/tools.yaml:281
+    // declares the tool `approval` and gateFor cannot lower a declared class.
+    expect(typeof setCampaignStatusTool.requireApproval).toBe('function')
+    // requireApproval is a union with `boolean | undefined` on the tool type,
+    // so the callable is taken through an explicit function shape rather than a
+    // `!`, which cannot strip the `false` half.
+    const gate = setCampaignStatusTool.requireApproval as unknown as (
+      input: { status: 'ACTIVE' | 'PAUSED' },
+      ctx?: { requestContext?: { all: Record<string, unknown> } },
+    ) => boolean
+    expect(gate({ status: 'PAUSED' }, { requestContext: { all: rc } })).toBe(true)
+  })
+
+  it('execute stages the draft and carries its score and the analyst reason out', async () => {
+    stubQueries([
+      { fragment: "action = 'create_campaign'", rows: [{ id: 'act1' }] },
+      { fragment: "action = 'set_campaign_status'", rows: [{ status: 'PAUSED' }] },
+    ])
+    const out = (await setCampaignStatusTool.execute!(
+      {
+        bundleId: BUNDLE_ID,
+        campaignExternalId: CAMPAIGN_ID,
+        status: 'ACTIVE',
+        reason: 'cost_per_lead_below_5',
+      } as never,
+      context,
+    )) as unknown as ToolOut
+    expect(out.pendingWriteId).toBe(DRAFT_ID)
+    // The score is the one the draft was created with, not a recomputation.
+    expect(out.riskScore).toBe(10)
+    expect(out.gate).toBe('approval')
+    // The reason is deliberately absent from the scored payload, so the message
+    // is the one place this tool's argument reaches a human.
+    expect(out.message).toContain('cost_per_lead_below_5')
+    expect(out.message).toContain('Status change to ACTIVE')
+    expect(mockCreateHumanTask).not.toHaveBeenCalled()
+  })
+
+  it('turns a campaign_not_found throw into a refusal queue entry rather than a rejected turn', async () => {
+    stubQueries([{ fragment: "action = 'create_campaign'", rows: [] }])
+    const out = (await setCampaignStatusTool.execute!(
+      {
+        bundleId: BUNDLE_ID,
+        campaignExternalId: CAMPAIGN_ID,
+        status: 'PAUSED',
+        reason: 'cost_per_lead_above_10',
+      } as never,
+      context,
+    )) as unknown as ToolOut
+    // The owner reads the prose sentence from REFUSAL_PROSE, not the raw token:
+    // that is tokenOf handing the map the part before the colon.
+    expect(out.message).toMatch(/no campaign with that id was created by a publish this tenant completed/)
+    expect(out.pendingWriteId).toBe(HUMAN_TASK_ID)
+    expect(out.riskScore).toBe(0)
+    expect(mockGetOrCreateDraft).not.toHaveBeenCalled()
+    expect(mockCreateHumanTask).toHaveBeenCalledTimes(1)
+    expect(mockCreateHumanTask.mock.calls[0]![1]).toBe('refusal')
+  })
+
+  it('turns a campaign_already_active throw into the map-free sentence, one human task, nothing staged', async () => {
+    // Brief A3 expected this pin on the actor token, but the tool is not
+    // reachable with a near-miss actor: TenantRequestContextSchema
+    // (src/mastra/tenant-context.ts:6) validates `userId: z.string().uuid()`
+    // on the request context before `execute` runs, and the turn comes back as
+    // the framework's "Request context validation failed" message — captured
+    // live while this case was written, and reported as an A3 disagreement.
+    // campaign_already_active is the entry-free token a real chat turn can
+    // produce, so it pins the same machinery: tokenOf takes the part before
+    // the colon and the underscore replacement writes the sentence.
+    stubQueries([
+      { fragment: "action = 'create_campaign'", rows: [{ id: 'act1' }] },
+      { fragment: "action = 'set_campaign_status'", rows: [{ status: 'ACTIVE' }] },
+    ])
+    const out = (await setCampaignStatusTool.execute!(
+      {
+        bundleId: BUNDLE_ID,
+        campaignExternalId: CAMPAIGN_ID,
+        status: 'ACTIVE',
+        reason: 'cost_per_lead_below_5',
+      } as never,
+      context,
+    )) as unknown as ToolOut
+    // The closing parenthesis right after the sentence is the proof: the raw
+    // throw continues past a colon, so tokenOf stripped the detail.
+    expect(out.message).toMatch(/refused \(campaign already active\)/)
+    // Exactly one human task, and nothing staged.
+    expect(mockCreateHumanTask).toHaveBeenCalledTimes(1)
+    expect(mockGetOrCreateDraft).not.toHaveBeenCalled()
+    expect(out.pendingWriteId).toBe(HUMAN_TASK_ID)
+  })
+
+  it('accepts a 500-character reason and refuses a 501st character', async () => {
+    // The reason is the only prose this tool accepts, so its ceiling is the
+    // whole difference between an argument and an essay parked in a field.
+    const schema = setCampaignStatusTool.inputSchema
+    if (!schema) throw new Error('marketing.set_campaign_status has no input schema')
+    const base = { bundleId: BUNDLE_ID, campaignExternalId: CAMPAIGN_ID, status: 'PAUSED' }
+    const atCeiling = await schema['~standard'].validate({ ...base, reason: 'y'.repeat(500) })
+    expect(atCeiling.issues).toBeUndefined()
+    const pastIt = await schema['~standard'].validate({ ...base, reason: 'y'.repeat(501) })
+    expect(pastIt.issues).toBeDefined()
   })
 })

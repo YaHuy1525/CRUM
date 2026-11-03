@@ -325,7 +325,7 @@ export async function runAnalystCron(args: {
       continue
     }
     try {
-      const draftId = await stageStatus({
+      const staged = await stageStatus({
         tenantId: args.tenantId,
         userId: args.analystUserId,
         bundleId: rec.bundleId,
@@ -334,8 +334,11 @@ export async function runAnalystCron(args: {
         reason: rec.reason,
         userRole: 'campaign-analyst',
       })
-      stagedDrafts.push({ campaignId: rec.campaignId, status, draftId })
-      console.log(`[analyst-cron] staged ${status} draft ${draftId} for ${rec.campaignId}`)
+      // The element type stays { campaignId, status, draftId }: a report that
+      // renames the field would move the shape for nobody's benefit. The score
+      // now comes back too; the cron does not need it, the chat tool does.
+      stagedDrafts.push({ campaignId: rec.campaignId, status, draftId: staged.pendingWriteId })
+      console.log(`[analyst-cron] staged ${status} draft ${staged.pendingWriteId} for ${rec.campaignId}`)
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       errors.push(`stage_failed: ${rec.campaignId}: ${message}`)
