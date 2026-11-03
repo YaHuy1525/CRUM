@@ -136,3 +136,9 @@ The plan asks you to name the two baseline failures again or explain what change
 - `migrations against a real database > refuses a second receipt for the same staged draft`, failing with `null value in column "draft_hash" of relation "pending_writes" violates not-null constraint`, because the raw INSERT at about `:99` omits a column `migrations/0003_crum_add_draft_hash.sql` made NOT NULL with no default. `draft_hash` predates slice 5, so this is not this slice's defect and Step 2 wants it named as carried forward.
 
 Do not repair either one. Fixing them means editing an integration file this task does not own, and the honest report of a slice is the one that separates what it broke from what it inherited.
+
+## Addendum C6. `tests/mastra` is green now, and one of its reds was this slice's
+
+The controller fixed R-45 at `151722e`, so `npx vitest run tests/mastra` gives `Test Files 56 passed (56)` and `Tests 518 passed (518)` against a slice 4 baseline of 496. Three cases in `tests/mastra/prospect-merge-tools.test.ts` were failing because Task 14's row-mapper normaliser refuses a `created_at` that is neither a `Date` nor a string, while that file's stub of `INSERT ... RETURNING *` answered with only an id.
+
+Report it that way. It is a red this slice caused and this slice fixed, not one inherited from slice 4, and the difference matters to anyone reading the counts later. The only inherited failures in this slice's gate are the two in `tests/integration/migrations.test.ts` named in C5.
