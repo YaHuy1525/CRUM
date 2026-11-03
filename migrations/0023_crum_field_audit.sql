@@ -35,20 +35,29 @@ DECLARE
   new_val jsonb;
   tenant uuid;
   doc_id uuid;
+  row_id uuid;
   user_id uuid;
   source text;
 BEGIN
   IF TG_TABLE_NAME IN ('invoices', 'contracts') THEN
     doc_id := COALESCE(NEW.document_id, OLD.document_id);
+    row_id := COALESCE(NEW.document_id, OLD.document_id);
     SELECT d.tenant_id INTO tenant FROM documents d WHERE d.id = doc_id;
   ELSE
     tenant := COALESCE(NEW.tenant_id, OLD.tenant_id);
     doc_id := COALESCE(NEW.document_id, OLD.document_id);
+    row_id := COALESCE(NEW.id, OLD.id);
+  END IF;
+
+  -- During CASCADE deletes the parent document row may already be gone,
+  -- so tenant can be NULL.  Skip audit logging in that case.
+  IF tenant IS NULL THEN
+    RETURN COALESCE(NEW, OLD);
   END IF;
   
   user_id := current_setting('app.current_user_id', true)::uuid;
   source := current_setting('app.change_source', true);
-  IF source IS NULL THEN source := 'extraction'; END IF;
+  IF source IS NULL OR source = '' THEN source := 'extraction'; END IF;
   
   old_row := to_jsonb(OLD);
   new_row := to_jsonb(NEW);
@@ -59,7 +68,7 @@ BEGIN
         new_val := new_row[field_name];
         IF new_val IS NOT NULL AND new_val != 'null'::jsonb THEN
           INSERT INTO document_field_audit (document_id, tenant_id, table_name, field_name, row_id, action, old_value, new_value, changed_by, change_source)
-          VALUES (doc_id, tenant, TG_TABLE_NAME, field_name, COALESCE(NEW.id, NEW.document_id), 'insert', NULL, new_val, user_id, source);
+          VALUES (doc_id, tenant, TG_TABLE_NAME, field_name, row_id, 'insert', NULL, new_val, user_id, source);
         END IF;
       END IF;
     END LOOP;
@@ -70,7 +79,7 @@ BEGIN
         new_val := new_row[field_name];
         IF old_val IS DISTINCT FROM new_val THEN
           INSERT INTO document_field_audit (document_id, tenant_id, table_name, field_name, row_id, action, old_value, new_value, changed_by, change_source)
-          VALUES (doc_id, tenant, TG_TABLE_NAME, field_name, COALESCE(NEW.id, NEW.document_id), 'update', old_val, new_val, user_id, source);
+          VALUES (doc_id, tenant, TG_TABLE_NAME, field_name, row_id, 'update', old_val, new_val, user_id, source);
         END IF;
       END IF;
     END LOOP;
@@ -80,7 +89,7 @@ BEGIN
         old_val := old_row[field_name];
         IF old_val IS NOT NULL AND old_val != 'null'::jsonb THEN
           INSERT INTO document_field_audit (document_id, tenant_id, table_name, field_name, row_id, action, old_value, new_value, changed_by, change_source)
-          VALUES (doc_id, tenant, TG_TABLE_NAME, field_name, COALESCE(OLD.id, OLD.document_id), 'delete', old_val, NULL, user_id, source);
+          VALUES (doc_id, tenant, TG_TABLE_NAME, field_name, row_id, 'delete', old_val, NULL, user_id, source);
         END IF;
       END IF;
     END LOOP;
