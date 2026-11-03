@@ -785,3 +785,103 @@ Ruling for the fixture, minimal and inside the file Task 15 already owns: `inser
 The `describe.skipIf(!url)` note is confirmed and goes in the Task 19 report: the cases have skipped silently since slice 3 shipped, and a slice that reported green was reporting a lane that never executed.
 
 Carried to Task 16: it writes the `applyDraft` branch that hands the adapter `payload.campaignId`, which is why Step 4 keeps the real Meta id in the payload and only the derived uuid in `target_id`.
+## Task 15 review round 1, and the fix wave (controller)
+
+`task-15-review-1.md` is an independent review of `0a21d8a` by an agent that did not write the code and edited nothing to produce it. Verdict: DONE WITH FINDINGS, with 1 Critical, 2 Important and 6 Minor. Every item is answered below or in `45a0f75`, except where a ruling says the reviewer's preference lost to a reason.
+
+### R-33: the executability guard was right and the process behind it was not
+
+The Critical is real and I reproduced its premise before accepting it. `grep -rn "registerActionAdapter" src/ scripts/` returns `src/mastra/index.ts` and `scripts/publish-drain.ts:315` only, and the cron's module graph (`scripts/analyst-cron.ts` importing `stageCampaignStatusChange` and the bare `campaignAnalystAgent`) reaches neither, so `isExecutable('set_campaign_status')` was false in a cron process even with a fully configured deployment. The reviewer's standalone probes said so, and the first review's own reasoning is the one I agree with: the guard should not be relaxed, because an approvable draft the drainer records as `no_adapter` is an approval that lies. So the fix is reachability, not the door.
+
+Ruling: `scripts/analyst-cron.ts` now reads the Meta lane through an exported `statusAdapterConfigFromEnv` and registers `makeSetCampaignStatusAdapter` in its own process inside `main()`, which is the shape `publish-drain.ts:315` already uses for the page lane. The read is both-or-nothing, warns on an unparsable `CRUM_META_AD_ACCOUNTS`, and answers null for `[]`, matching `src/mastra/index.ts:155-176`. Five unit cases in `tests/scripts/analyst-cron-config.test.ts` cover it without a provider call.
+
+Two things this does not fix, stated rather than glossed. Registration happens in `main()`, so a process that imports the module and calls `runAnalystCron` directly still has nothing registered, which is why the integration file registers its own stub and now says plainly that the stub stands in for `main()`'s registration. And the parse is a copy of boot's rather than one shared helper, because boot's inline version is pinned by `tests/mastra/marketing-boot.test.ts:50` and its warning string; extracting `metaAdsConfigFromEnv` and pointing both callers at it is the cleaner shape and is parked for the final review with the drainer-registration question it belongs to.
+
+### R-34: the `.env.example` carry-in, written down a round late
+
+Overruling the "do not touch `.env.example`" rule for this task's own variable is R-32's ruling and the reviewer independently confirmed the contract case makes it impossible to finish green. The reviewer also caught something I did not record: the same commit carries a `CRUM_IMAGE_PROVIDER` block that is not Task 15's setting, landed because the schema gained the key in `832d759` and the example file did not, which left `tests/config/env.test.ts` red before this task started. I verified that against the parent (`git show 6e01eb3:.env.example` has no such line while `src/config/env.ts:211` has the key) and the content is correct, blank resolving to `replicate`.
+
+Ruling: accepted as substance, recorded as a hygiene miss. The repo already has the tidier precedent, `309d9d6 fix(config): document the nine marketing variables the env contract case was missing`, so next time the carry-in gets its own commit and this commit's message stays true to its diff. This section is the disclosure the ledger was missing.
+
+### R-35: the two reads stay differently scoped, and one of them is a forward guard
+
+I-2 is answered with a comment rather than a query change, because a uuid task should not quietly change what a scale recommendation refuses. The claim in the comment is mine and I checked it myself rather than trusting the review: `applyDraft` has branches for `email` (`src/db/pending-writes.ts:408`), `prospect_merge` (`:429`), `marketing_stage` (`:465`), `marketing_promote` (`:495`) and `marketing_retry` (`:576`), then falls to `requireTarget` (`:638`), so nothing in `src/` writes a `set_campaign_status` row until Task 16 lands its branch. `campaign_already_active` therefore cannot fire in production today, and the unit case that covers it hands the function a row the database cannot yet contain. The tenant-wide shape is also the data lane's shape (`src/db/marketing.ts:499-508` is the same three filters byte for byte), which is the consistency argument the comment makes.
+
+Carried to Task 16: writing the status row is what turns that read live, and its review should re-read this ruling.
+
+### R-36: the malformed actor closes here, the other four sites do not
+
+M-4 was offered as "fix here or own it in Task 18". I took it here. This task exists because a non-uuid reached a uuid column and the insert died on 22P02, and a truthy-but-malformed actor is the same failure with a different spelling, so leaving the guard at `!args.userId` would have closed half the bug class and documented the other half as a TODO. It borrows `ID_SHAPE` (`src/mastra/tools/marketing-writes.ts:631`) instead of writing a second uuid rule, and Task 17 is the caller that makes it matter because it forwards `rc.userId` unparsed.
+
+What is still open and belongs to Task 18 or the final review: the four other `requestedBy` write sites (`:236`, `:556`, `:724`, `:833`) remain unchecked by repo convention, and one guard here does not make that convention safe.
+
+### R-37: a config file cannot check a users row
+
+M-3 is answered by wording only. `pending_writes.requested_by` has no foreign key (`migrations/0002_crum_spine.sql:158`), so `env.ts` saying "the uuid of a real user" promised a check nothing performs. Both that message and `.env.example` now say what is actually enforced (shape) and what is the operator's judgement (that the shape names someone). The alternative the reviewer offered, resolving the id against `users` in `main()`, is refused for now: it spends a database read on every cron run to police a config value that a well-meaning owner can only get wrong once, and the audit-truth question around `requested_by` deserves one answer across all five write sites rather than a special case here. Parked with the drainer-registration questions.
+
+### R-38: the fixture now points at the defect it hides
+
+M-5 accepted. `tests/integration/analyst-cron.test.ts` says in the helper comment that production writes a seven-day window (`scripts/analyst-cron.ts:251` computes it, `:283` inserts it) that lands outside `listRecentSnapshots`' own filter, that R-32's probe proved it, and that the passing aggregation case is evidence about totals and not about the lookback. The self-invisibility itself stays parked as a product decision, which is the same ruling R-32 made and the reviewer did not contest.
+
+### M-1, M-2 and I-1, the smaller answers
+
+M-1: the unit file pins `uuidFromSeed('campaign:23842653876')` to the literal measured across two processes, because every other comparison recomputes the seed on both sides and would move with a format change. M-2: the `target_id` comment stops crediting the dedupe to `uuidFromSeed` (it is `ON CONFLICT (tenant_id, draft_hash)` at `src/db/pending-writes.ts:111`) and stops calling the payload the only copy of the external id, since `draft_hash` digests a key that embeds it. The payload note now states the forward constraint Task 16 depends on. I-1: answered in two parts, the `beforeAll` comment naming what the stub stands in for, and a new integration case that unregisters the adapter and pins the cron-level refusal as `stage_failed: <id>: provider_not_configured` with zero rows written, then restores the registration for the cases after it.
+
+### Gates as re-run for 45a0f75
+
+`npx vitest run tests/mastra/marketing-campaign-status-tool.test.ts tests/config/env.test.ts tests/scripts/analyst-cron-config.test.ts` gives 3 files and 55 tests passed (12, 38, 5). The adjacent set (`tests/db/pending-writes-commit.test.ts`, `tests/db/open-stage-draft.test.ts`, `tests/api/marketing.test.ts`, `tests/governance/marketing-payload.test.ts`, `tests/mastra/marketing-boot.test.ts`) gives 5 files and 75 passed. With `CRUM_INTEGRATION_DATABASE_URL` exported in the same shell, `npx vitest run --project integration tests/integration/analyst-cron.test.ts` gives `12 collected, 12 passed`, no "skipped" in the output, and the log shows real drafts staged for both campaigns plus the new refusal case running against the unregistered adapter.
+
+`npm run typecheck` and `npm run lint` are currently red in the working tree, and none of it is this commit. Typecheck's single diagnostic is `tests/helpers/test-server.ts(34,5)` and lint's four are split between `tests/helpers/test-server.ts` and `tests/api/document-audit.test.ts`. Both files are untracked (`??` in `git status`), both were rewritten seconds before the run, and both belong to the documents and queue effort. `npx eslint` over the seven owned files exits 0. The owned set is clean and the repo-wide lane is not, which is what Task 19's report will have to say about the shared branch.
+
+### The other effort inside Task 15's window
+
+Three of its commits landed between my implementation commit and my fix wave: `94eb7e2`, `aa5d333` (which adds `migrations/0023_crum_field_audit.sql`) and `1ccd7d3`. None touched this task's files, my commit contains exactly its seven named paths, and nothing of theirs was staged. Worth recording as an operating rule for the remaining tasks: the round-2 reviewer and the controller must not run the integration lane at the same time, because both use the same `TENANT` uuid against `crum_slice5`, and a collision there would read as a flaky failure rather than a scheduling one. No DB run was made after the review was dispatched.
+
+### Tool-choice note
+
+A `simplify` check ran mid-turn. Decision recorded rather than assumed: `Bash` stays for `git`, `vitest`, `tsc` and `eslint`, because no connected MCP server offers them (`github` is remote API, `node-repl` would lose the working directory and the exported integration database URL that the integration lane requires, and running the project's gates through a REPL instead of its own scripts would be evidence about my wrapper rather than about the repo). One call was genuinely wasted: a grep-filtered repeat of the lint output after the plain output was already in hand.
+## Task 16 pre-flight (controller, before implementation)
+
+The plan section is `docs/superpowers/plans/2026-11-02-marketing-team-slice-5.md:3744-3947`. Every anchor was checked against the tree at `45a0f75`.
+
+### R-39: the drainer cannot run what Task 16 queues, and no task owns that
+
+Task 16's own title is the claim being tested, so the claim has to survive `claimNextQueued`. Read of the current shape: `scripts/publish-drain.ts:191-206` takes any queued `marketing_actions` row, builds the action from its `action` and `payload` columns, asks `isExecutable`, and records `no_adapter: <name> has no adapter in this process` as a failure when the answer is no. `main()` registers only the two page adapters (`:309-316`, via `pageHostConfigFromEnv`). Meta registration lives only in `src/mastra/index.ts:155-181`, which the drainer process never imports. So after Task 16 lands exactly as written, an owner approves a scale draft, the branch inserts a correct `set_campaign_status` row, and the documented deployment (`npx tsx scripts/publish-drain.ts`, which the plan's own Task 19 walkthrough step at `:4351` tells the operator to run) marks it failed. Task 16's integration test would not see this, because Step 5 registers the adapter inside the test process.
+
+No task in the plan owns it. `grep -n "publish-drain" ` over the plan returns five hits and none of them is a registration change, and round 1 of the Task 15 review parked the same question ("who drains the Meta lane"). Ruling: it belongs to Task 16, because that is the task whose deliverable is false without it, and the fix is three lines of the shape the file already uses.
+
+Scope added to Task 16, with reasons for each choice:
+
+1. Move the Meta config read out of `scripts/analyst-cron.ts` into `src/marketing/meta-ads-config.ts` as `metaAdsConfigFromEnv(env, label)`, following the two precedents that already exist for a config helper living beside its adapter (`src/marketing/page-host.ts:188`, `src/marketing/meta-conversions.ts:140`). The label is a parameter because the two scripts warn with their own prefix. This closes R-33's parked note for the two scripts; `src/mastra/index.ts` keeps its inline copy, because `tests/mastra/marketing-boot.test.ts:50` pins its warning and refactoring boot is not this task's subject.
+2. `scripts/publish-drain.ts` `main()` registers `makeSetCampaignStatusAdapter` and `makeCreateCampaignAdapter` when the read answers, and warns in the same voice as the page lane when it does not. Both adapters, not just the status one, because `create_campaign` rows have had the same hole since slice 3 and a half-fixed lane is the kind of thing a reader later mistakes for a whole one.
+3. `scripts/analyst-cron.ts` switches to the shared helper. Its five unit cases in `tests/scripts/analyst-cron-config.test.ts` move to the new module's test file rather than being rewritten, and the re-export from the cron is dropped.
+4. `tests/marketing/publish-drain.test.ts` is safe for this: it has four cases, none calls `main()` and none pins the page-lane warning, which I checked before ruling rather than after.
+
+The task's own file list therefore grows: `src/db/pending-writes.ts`, `tests/db/marketing-commit.test.ts`, `tests/integration/marketing-campaign-status.test.ts` from the plan, plus `src/marketing/meta-ads-config.ts` (new), `scripts/publish-drain.ts`, `scripts/analyst-cron.ts`, and the moved config test.
+
+### Anchor drifts in the plan section
+
+Six line references have moved, all by a handful of lines, and none changes a step's meaning:
+
+| Plan says | Tree says | Note |
+| --- | --- | --- |
+| `pending-writes.ts:632` for `requireTarget` | `:638` | the insertion point for the new branch |
+| `pending-writes.ts:62` for the object-type union | `:63` | `marketing_set_campaign_status` is already there |
+| `marketing_promote` at `:489-565` | `:495` to about `:575` | the shape the new branch is told to follow |
+| `audit_receipts` insert at `:687-692` | `:693`, `committed_record_id` sixth | confirmed by reading the column list |
+| `marketing-commit.test.ts:37` for `stubQueries`, `:48` for `stageDraft` | `:39` and `:49` | `calls()` is at `:77` |
+| `src/db/marketing.ts:506` for `payload ->> 'status'` | `:500` | same query, one read earlier |
+
+Anchors that are exact: `makeSetCampaignStatusAdapter` at `src/marketing/meta-ads.ts:134` with the URL and body at `:145-157`, `drainOnce({ pool, bundleId })` at `scripts/publish-drain.ts:172`, `policy/tools.yaml:281`, `write-claim-guard.ts:24`, `migrations/0018_crum_marketing.sql:88` for the `bundle_id uuid NOT NULL REFERENCES marketing_bundles`, `tests/integration/marketing-publish.test.ts:75` for `migrate(pool)` and `:227` for `commitWithReceipt`, and `commitWithReceipt(draft, { approvedBy, scope })` at `src/db/pending-writes.ts:661`.
+
+### Three things the implementer should not have to rediscover
+
+`tests/db/marketing-commit.test.ts` defines `TENANT`, `APPROVER`, `BUNDLE`, `PAGE_TEXT` and `PAGE_HASH` and does not define `ACTION` or `RECEIPT`, which Step 4's snippet uses. Both are the implementer's to add, in the id style the plan names.
+
+`getPendingWrite(id, tenantId)` at `src/db/pending-writes.ts:753` returns `PendingWrite | null`, so Step 5's third move has to narrow the null before `commitWithReceipt` rather than pass the result straight in.
+
+Inside `applyDraft` the payload is already hoisted at `:406` as `(draft.payload ?? {}) as Record<string, unknown>`, so the branch reads `payload['campaignId']` like its siblings and does not re-read `draft.payload`.
+
+### Dependency on Task 15's rulings
+
+R-35 matters here in both directions: Task 16's insert is what finally makes `stageCampaignStatusChange`'s already-active read return rows, and the branch's own no-op rule (Step 3, latest succeeded status equals the asked status) is the same question asked one step later under the transaction. The two reads stay tenant-wide together, which is what `src/db/marketing.ts:499-508` does, so the pair should not be made bundle-scoped by accident in one place only.
