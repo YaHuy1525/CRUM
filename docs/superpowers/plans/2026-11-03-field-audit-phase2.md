@@ -463,7 +463,7 @@ export type * from './types.js'
 
 const SEVERITY_RANK: Record<Violation['severity'], number> = { error: 0, warning: 1 }
 
-export function todayInUtc(now: Date = new Date()): string {
+export function todayInUtc(now: Date): string {
   return now.toISOString().slice(0, 10)
 }
 
@@ -476,14 +476,13 @@ export function buildBundle(
   const coerce = (value: unknown): string | null => {
     if (value === null || value === undefined) return null
     if (typeof value === 'string') return value
-    if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
-      return String(value)
-    }
+    if (typeof value === 'number') return Number.isFinite(value) ? String(value) : null
+    if (typeof value === 'boolean' || typeof value === 'bigint') return String(value)
     return null
   }
   const toRow = (row: Record<string, unknown>): Record<string, string | null> =>
     Object.fromEntries(Object.entries(row).map(([key, value]) => [key, coerce(value)]))
-  const head = header === null ? null : toRow(header)
+  const head = header == null ? null : toRow(header)
   return kind === 'invoice'
     ? { kind, invoice: head ?? undefined, lines: lines.map(toRow), terms: [] }
     : { kind, contract: head ?? undefined, terms: terms.map(toRow), lines: [] }
@@ -494,6 +493,8 @@ export function evaluate(
   ctx: ValidationContext,
   rules: readonly ValidationRule[] = RULES,
 ): Violation[] {
+  const header = bundle.kind === 'invoice' ? bundle.invoice : bundle.contract
+  if (header === undefined && bundle.lines.length === 0 && bundle.terms.length === 0) return []
   const seen = new Set<string>()
   const found: Violation[] = []
   for (const rule of rules) {
@@ -508,15 +509,18 @@ export function evaluate(
   return found.sort((a, b) => {
     const bySeverity = SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]
     if (bySeverity !== 0) return bySeverity
-    const byRule = a.ruleId.localeCompare(b.ruleId)
-    return byRule !== 0 ? byRule : a.field.localeCompare(b.field)
+    if (a.ruleId !== b.ruleId) return a.ruleId < b.ruleId ? -1 : 1
+    if (a.field !== b.field) return a.field < b.field ? -1 : 1
+    return 0
   })
 }
 ```
 
-Close the code block. `todayInUtc` is the only place in `src/validation/` that may accept a `Date`, and its default argument reads the clock only when a caller omits it, which production code does and tests never do.
+Close the code block. `todayInUtc` takes `now` as a required argument and is the only place in `src/validation/` that may accept a `Date`. Constraint 6 declares this module clock-free, and a default argument would let production code read the wall clock from inside it while every test stayed silent about that read, so the caller supplies the instant. Step 6 pins the requirement with `@ts-expect-error`: if a later task reintroduces a default, `npx tsc --noEmit` fails on an unused directive rather than shipping a clock read.
 
-`coerce` narrows with `typeof` before it calls `String`, rather than applying `String(value)` to an `unknown`. Two reasons, both measured. First, `@typescript-eslint/no-base-to-string` is enabled in this repo's config and errors on `String(unknown)`, so the one-line version forces either a lint suppression in production code or a cast that lies about the value's type. Second, an object reaching this boundary would stringify to `[object Object]`, which every rule then reads as a present value, and a finding on it is worse than no finding; returning `null` makes an unexpected object read as absent, which constraint 5 already defines as the safe state. No row type at the two planned call sites holds an object (`src/db/documents.ts:71-110`, `InvoiceHeaderWrite`, `InvoiceLineWrite`, `ContractHeaderWrite`, `ContractTermWrite`), so this branch is a guard, not a behaviour anyone should depend on.
+The first two lines of `evaluate` are spec 5.2's "drops rules whose subject row is absent" clause read at the one level where it is decidable without knowing any rule: a bundle with no header and no rows at all is not a record with missing fields, it is no record. Per-field absence stays each rule's business, because only a rule knows which of its fields it is judging, and Task 8's `normalized` precondition is what keeps a header-less bundle from reaching here in the first place. The comparator uses codepoint rather than `String.prototype.localeCompare` so the stored order of findings does not shift with the machine's locale; the two disagree on `'a'` versus `'B'`, which is why Step 6 has a case for it.
+
+`coerce` narrows with `typeof` before it calls `String`, rather than applying `String(value)` to a value it has already checked for null. Two reasons, both measured. First, `@typescript-eslint/no-base-to-string` is enabled in this repo's config, and after `if (value === null || value === undefined) return null` the residual type is `{}`, which the rule errors on: a scratch file with `String(v)` on an unchecked `unknown` lints clean, while the same call after that null check fails at the `String` line. Narrowing first leaves no residual to complain about, so neither a lint suppression in production code nor a cast that lies about the value's type is needed. Second, an object reaching this boundary would stringify to `[object Object]`, which every rule then reads as a present value, and a finding on it is worse than no finding; returning `null` makes an unexpected object read as absent, which constraint 5 already defines as the safe state. No row type at the two planned call sites holds an object (`src/db/documents.ts:71-110`, `InvoiceHeaderWrite`, `InvoiceLineWrite`, `ContractHeaderWrite`, `ContractTermWrite`), so this branch is a guard, not a behaviour anyone should depend on.
 
 - [ ] **Step 6: Write the failing evaluate tests**
 
@@ -524,7 +528,7 @@ Create `tests/validation/evaluate.test.ts`. It builds rules inline rather than i
 
 ```ts
 import { describe, it, expect } from 'vitest'
-import { buildBundle, evaluate, RULESET_VERSION } from '../../src/validation/index.js'
+import { buildBundle, evaluate, RULESET_VERSION, todayInUtc } from '../../src/validation/index.js'
 import type { ValidationContext, ValidationRule } from '../../src/validation/types.js'
 
 const CTX: ValidationContext = { today: '2026-11-03' }
@@ -538,6 +542,22 @@ function rule(partial: Partial<ValidationRule> & { id: string }, out: never[] | 
     ...partial,
   }
 }
+
+describe('todayInUtc', () => {
+  it('truncates an instant to its UTC date, ignoring the local zone', () => {
+    expect(todayInUtc(new Date('2026-11-03T23:59:59.999Z'))).toBe('2026-11-03')
+    expect(todayInUtc(new Date(Date.UTC(2026, 10, 4)))).toBe('2026-11-04')
+  })
+
+  it('requires the caller to supply the instant so the module never reads the clock', () => {
+    // A default argument would make this a wall-clock read inside src/validation/, which
+    // constraint 6 forbids. `npx tsc --noEmit` covers tests/, and reports TS2578 "Unused
+    // '@ts-expect-error' directive" on the line below if anyone reintroduces one.
+    // @ts-expect-error - now is required
+    const callableWithoutAnInstant: () => string = todayInUtc
+    expect(callableWithoutAnInstant).toBeTypeOf('function')
+  })
+})
 
 describe('evaluate', () => {
   it('skips rules that do not apply to the bundle kind', () => {
@@ -591,6 +611,30 @@ describe('evaluate', () => {
 
   it('reads an object-valued column as absent rather than as [object Object]', () => {
     expect(buildBundle('invoice', { meta: { a: 1 } }, [], []).invoice).toEqual({ meta: null })
+  })
+
+  it('reads a NaN or infinite amount as absent rather than as a number', () => {
+    const b = buildBundle('invoice', { total: Number.NaN, tax: Number.POSITIVE_INFINITY }, [], [])
+    expect(b.invoice).toEqual({ total: null, tax: null })
+  })
+
+  it('runs rules against an empty header but drops them all when there is no header and no rows', () => {
+    const wouldFire = rule({ id: 'invoice.needs_vendor', fields: ['vendor_name'] }, [
+      { ruleId: 'invoice.needs_vendor', field: 'vendor_name', severity: 'error', message: 'absent' },
+    ])
+    // {} is a record whose fields are all missing, which is exactly what a rule judges.
+    // null is no record at all, and there is nothing here for any of the 19 rules to say.
+    expect(evaluate(buildBundle('invoice', {}, [], []), CTX, [wouldFire]).length).toBe(1)
+    expect(evaluate(buildBundle('invoice', null, [], []), CTX, [wouldFire])).toEqual([])
+  })
+
+  it('orders by codepoint, not locale collation, so the order survives a locale change', () => {
+    const r = rule({ id: 'same' }, [
+      { ruleId: 'same', field: 'a', severity: 'error', message: '1' },
+      { ruleId: 'same', field: 'B', severity: 'error', message: '2' },
+    ])
+    // localeCompare in en-US puts 'a' before 'B'; a codepoint compare puts 'B' (66) first.
+    expect(evaluate(invoice, CTX, [r]).map((v) => v.field)).toEqual(['B', 'a'])
   })
 })
 ```
