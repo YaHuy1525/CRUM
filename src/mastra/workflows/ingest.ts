@@ -77,6 +77,14 @@ export const ingestStep = createStep({
 
     const embeddingModel = crumEmbeddingModel()
 
+    // The tenantVectorStoreResolver reads tenantId from requestContext, but when
+    // this step runs inside the document-intake workflow, the requestContext
+    // doesn't automatically contain the workflow's inputData fields. Set it
+    // here so the resolver can find it.
+    if (requestContext && typeof requestContext.get === 'function' && !requestContext.get('tenantId')) {
+      requestContext.set('tenantId', inputData.tenantId)
+    }
+
     return withRagIngestion(
       {
         mastra,

@@ -227,7 +227,7 @@ describe('crm.send_outreach safety checks', () => {
       ],
       'FROM prospect_consents': [],
       'JOIN prospect_channels c': [],
-      'INSERT INTO pending_writes': [{ id: PENDING_ID }],
+      'INSERT INTO pending_writes': [pendingWriteRow()],
     })
 
     const result = await runSend({ ...sendInput(), channel: 'linkedin' })
@@ -246,7 +246,7 @@ describe('crm.send_outreach safety checks', () => {
       ],
       'FROM prospect_consents': [],
       'JOIN prospect_channels c': [],
-      'INSERT INTO pending_writes': [{ id: PENDING_ID }],
+      'INSERT INTO pending_writes': [pendingWriteRow()],
     })
 
     await runSend(sendInput())
@@ -397,7 +397,7 @@ describe('crm.draft_outreach safety checks', () => {
       'FROM prospects WHERE id': [{ id: PROSPECT_ID }],
       'SELECT platform FROM prospect_channels': [{ platform: 'instagram' }],
       'FROM prospect_snapshots': [{ id: SNAPSHOT_ID }],
-      'INSERT INTO pending_writes': [{ id: PENDING_ID }],
+      'INSERT INTO pending_writes': [pendingWriteRow()],
     })
 
     const result = await runDraft(
