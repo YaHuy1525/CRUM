@@ -23,12 +23,12 @@ describe('setAuditContext', () => {
 
     expect(mockQuery).toHaveBeenCalledTimes(2)
     expect(mockQuery).toHaveBeenCalledWith(
-      'SET LOCAL app.current_user_id = $1',
-      ['00000000-0000-4000-8000-000000000002'],
+      'SELECT set_config($1, $2, false)',
+      ['app.current_user_id', '00000000-0000-4000-8000-000000000002'],
     )
     expect(mockQuery).toHaveBeenCalledWith(
-      'SET LOCAL app.change_source = $1',
-      ['manual_correction'],
+      'SELECT set_config($1, $2, false)',
+      ['app.change_source', 'manual_correction'],
     )
   })
 
@@ -40,8 +40,8 @@ describe('setAuditContext', () => {
 
     expect(mockQuery).toHaveBeenCalledTimes(1)
     expect(mockQuery).toHaveBeenCalledWith(
-      'SET LOCAL app.change_source = $1',
-      ['extraction'],
+      'SELECT set_config($1, $2, false)',
+      ['app.change_source', 'extraction'],
     )
   })
 
@@ -51,8 +51,8 @@ describe('setAuditContext', () => {
     for (const source of sources) {
       await setAuditContext({ userId: null, changeSource: source })
       expect(mockQuery).toHaveBeenCalledWith(
-        'SET LOCAL app.change_source = $1',
-        [source],
+        'SELECT set_config($1, $2, false)',
+        ['app.change_source', source],
       )
     }
   })

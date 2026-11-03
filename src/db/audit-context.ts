@@ -8,7 +8,7 @@ export interface AuditContext {
 export async function setAuditContext(context: AuditContext): Promise<void> {
   const client = getDbClient()
   if (context.userId) {
-    await client.query('SET LOCAL app.current_user_id = $1', [context.userId])
+    await client.query('SELECT set_config($1, $2, false)', ['app.current_user_id', context.userId])
   }
-  await client.query('SET LOCAL app.change_source = $1', [context.changeSource])
+  await client.query('SELECT set_config($1, $2, false)', ['app.change_source', context.changeSource])
 }
