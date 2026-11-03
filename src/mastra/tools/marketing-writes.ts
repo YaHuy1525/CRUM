@@ -923,13 +923,13 @@ export async function stageCampaignStatusChange(args: {
   // campaign") is what is being tested. The wider read is also the safer one: if
   // the data ever did disagree, it refuses a no-op rather than staging one.
   //
-  // What the comment would be hiding if it did not say it: nothing in src/ writes
-  // a set_campaign_status row yet. deriveActions (src/marketing/outbox.ts:141)
-  // inserts create_campaign only, and the writer for status rows is Task 16's
-  // applyDraft branch. Until that lands this query returns zero rows in
-  // production, so campaign_already_active is a forward guard rather than a live
-  // refusal, and the unit case that exercises it passes a row the database cannot
-  // yet contain.
+  // What the comment would be hiding if it did not say it: until Task 16 landed
+  // there was no writer of a set_campaign_status row anywhere in src/. The
+  // deriveActions map (src/marketing/outbox.ts:141) inserts create_campaign only,
+  // and the applyDraft branch is the sole writer, so this query returns rows only
+  // once an approval has been committed. Before that it was a forward guard rather
+  // than a live refusal, and the unit case that exercised it passed a row the
+  // database could not then contain.
   if (args.status === 'ACTIVE') {
     const latest = await db.query<{ status: string }>(
       `SELECT payload ->> 'status' AS status
@@ -976,8 +976,8 @@ export async function stageCampaignStatusChange(args: {
     // different mechanism and should not be credited to this line: a re-ask lands
     // on the existing draft through ON CONFLICT (tenant_id, draft_hash), where
     // draft_hash is the idempotencyKey below (src/db/pending-writes.ts:111). The
-    // real id stays in payload.campaignId, the one field of the row that carries
-    // it in the clear, and Task 16's applyDraft branch has to read it from there.
+    // real id stays in payload.campaignId, which Task 16's applyDraft branch reads.
+    // Not the only cleartext copy: draft_hash holds the idempotencyKey verbatim (:124).
     targetId: uuidFromSeed(`campaign:${args.campaignExternalId}`),
     payload,
     riskScore: assessment.score,

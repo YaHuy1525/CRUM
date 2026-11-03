@@ -255,7 +255,9 @@ describe('stageCampaignStatusChange', () => {
         reason: 'cost_per_lead_above_10',
         userRole: 'admin',
       }),
-    ).rejects.toThrow(/campaign_status_actor_required/)
+    // The sentence has to say which half of the bug it caught, or a guard that
+    // treats a near-miss actor as a missing one passes anyway.
+    ).rejects.toThrow(/campaign_status_actor_required.*received nothing/)
     // The guard is the cheapest answer, so nothing is read and nothing is staged.
     expect(mockQuery).not.toHaveBeenCalled()
     expect(mockGetOrCreateDraft).not.toHaveBeenCalled()
@@ -317,7 +319,9 @@ describe('stageCampaignStatusChange', () => {
         reason: 'cost_per_lead_above_10',
         userRole: 'admin',
       }),
-    ).rejects.toThrow(/campaign_status_actor_required/)
+    // And the other half: a value that is present but is not a uuid must be named
+    // as such, because that is the shape Task 17 forwards unparsed.
+    ).rejects.toThrow(/campaign_status_actor_required.*not one/)
     expect(mockQuery).not.toHaveBeenCalled()
     expect(mockGetOrCreateDraft).not.toHaveBeenCalled()
   })
