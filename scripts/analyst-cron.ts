@@ -16,9 +16,8 @@ import { closeDbClient } from '../src/db/client'
 import { listActiveCampaigns } from '../src/db/marketing'
 import { insertSnapshot, listRecentSnapshots, type MetricsSnapshotRow } from '../src/db/marketing-metrics'
 import { campaignAnalystAgent } from '../src/mastra/agents/campaign-analyst'
-import { makeSetCampaignStatusAdapter, type MetaAdsConfig } from '../src/marketing/meta-ads'
+import { registerMetaLane } from '../src/marketing/meta-ads-config'
 import { readCampaignMetrics, type MetricsReadbackConfig } from '../src/marketing/metrics-readback'
-import { registerActionAdapter } from '../src/marketing/outbox'
 import { stageCampaignStatusChange } from '../src/mastra/tools/marketing-writes'
 
 interface AggregatedMetrics {
@@ -183,49 +182,6 @@ function parseArgs(argv: string[]): { tenantId: string | null } {
     }
   }
   return { tenantId }
-}
-
-/**
- * The Meta lane, read the way boot reads it (src/mastra/index.ts:155-176): the
- * access token and a non-empty JSON array of ad account ids, or nothing at all.
- *
- * The cron never calls the adapter it registers, so this looks odd until the
- * guard is read: stageCampaignStatusChange refuses an action its own process has
- * no adapter for, because an approval that queues work nothing can run is an
- * approval that lies. That check is per process, which is exactly how the
- * publisher works too (scripts/publish-drain.ts:315 registers the two page
- * adapters in the drainer's own process rather than trusting the server's map),
- * and a cron that registered nothing would refuse every recommendation on any
- * host, however well configured the deployment is. Registration costs no request
- * and no credit: the adapter is only a map entry until a drainer executes it.
- *
- * The parse is a deliberate copy of boot's, including the warning, because
- * boot's version is pinned by tests/mastra/marketing-boot.test.ts:50. One helper
- * for both call sites is the cleaner shape and is parked for the final review.
- */
-export function statusAdapterConfigFromEnv(env: {
-  CRUM_META_ADS_ACCESS_TOKEN?: string | undefined
-  CRUM_META_AD_ACCOUNTS?: string | undefined
-}): MetaAdsConfig | null {
-  const accessToken = env.CRUM_META_ADS_ACCESS_TOKEN
-  const raw = env.CRUM_META_AD_ACCOUNTS
-  if (!accessToken || !raw) return null
-
-  let adAccounts: string[]
-  try {
-    const parsed: unknown = JSON.parse(raw)
-    if (!Array.isArray(parsed) || !parsed.every((account) => typeof account === 'string')) {
-      throw new Error('CRUM_META_AD_ACCOUNTS must be a JSON array of strings')
-    }
-    adAccounts = parsed
-  } catch (err) {
-    console.warn(
-      '[analyst-cron] Failed to parse CRUM_META_AD_ACCOUNTS:',
-      err instanceof Error ? err.message : String(err),
-    )
-    return null
-  }
-  return adAccounts.length > 0 ? { accessToken, adAccounts } : null
 }
 
 /**
@@ -437,14 +393,22 @@ async function main(): Promise<void> {
   }
 
   // Staging now asks whether this process can run the action it is queuing, so a
-  // cron with a configured Meta lane has to say so in its own registry. The
-  // adapter is never executed from here; the drainer does that.
-  const statusConfig = statusAdapterConfigFromEnv(env)
-  if (statusConfig) {
-    registerActionAdapter(makeSetCampaignStatusAdapter(statusConfig))
-  } else {
+  // cron with a configured Meta lane has to say so in its own registry. The cron
+  // never executes what it registers here; the drainer does that. Registration
+  // costs no request and no credit, because an adapter is only a map entry until
+  // something runs it, and a cron that registered nothing would refuse every
+  // recommendation on any host, however well configured the deployment is, since
+  // the guard reads this process's map (src/marketing/outbox.ts:81).
+  //
+  // The read and the registration now live in one module shared with the
+  // publisher (src/marketing/meta-ads-config.ts), and the lane registers both Meta
+  // actions rather than this cron's one. Both halves are what the brief asks for:
+  // a process that can run a status change and not a campaign creation is the
+  // disagreement between two entrypoints this closes.
+  const metaLane = registerMetaLane(env, 'analyst-cron')
+  if (metaLane.length === 0) {
     console.warn(
-      '[analyst-cron] no set_campaign_status adapter in this process; a scale or kill recommendation will refuse to stage rather than queue work nothing can run',
+      '[analyst-cron] no Meta campaign adapter in this process; a scale or kill recommendation will refuse to stage rather than queue work nothing can run',
     )
   }
 

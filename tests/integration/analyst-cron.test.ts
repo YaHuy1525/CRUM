@@ -94,8 +94,8 @@ async function insertSnapshot(params: {
   // daysAgo days ago stays inside for every daysAgo this file uses.
   //
   // The green case below is not evidence that the lookback is right. Production
-  // writes a seven-day window (analyst-cron.ts:251 computes start as now - 7d and
-  // :283 inserts it), so a run's own fresh snapshot starts seconds outside the
+  // writes a seven-day window (analyst-cron.ts:207 computes start as now - 7d and
+  // :239 inserts it), so a run's own fresh snapshot starts seconds outside the
   // filter and is invisible to the run that wrote it; that is a defect in the query
   // or the stamp, not in this fixture, and fixing it would change what the analyst
   // sees. It is carried to the final review, and this file deliberately keeps a
@@ -137,9 +137,9 @@ describe.skipIf(!url)('analyst cron', () => {
   beforeAll(async () => {
     // Staging a status draft asks whether this process can run the action, so the
     // staging cases need an adapter registered. The cron gets its own in main(),
-    // built from CRUM_META_ADS_ACCESS_TOKEN and CRUM_META_AD_ACCOUNTS by
-    // statusAdapterConfigFromEnv (scripts/analyst-cron.ts:206, unit-covered in
-    // tests/scripts/analyst-cron-config.test.ts), which this file does not run: the
+    // which reads CRUM_META_ADS_ACCESS_TOKEN and CRUM_META_AD_ACCOUNTS through
+    // registerMetaLane (src/marketing/meta-ads-config.ts:86, unit-covered in
+    // tests/marketing/meta-ads-config.test.ts). This file does not run main(): the
     // cases call runAnalystCron directly with an injected agent, so the
     // registration here stands in for main()'s. It is a stub on purpose, and
     // nothing reaches Meta: the drainer never runs in this file and the stub answers

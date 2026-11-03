@@ -22,6 +22,7 @@ import { Pool } from 'pg'
 import { parseEnv } from '../src/config/env'
 import { getDbClient } from '../src/db/client'
 import { markBundleLive } from '../src/db/marketing'
+import { registerMetaLane, type MetaLaneEnv } from '../src/marketing/meta-ads-config'
 import {
   actionAdapter,
   isExecutable,
@@ -293,6 +294,54 @@ function report(counts: { ran: number; succeeded: number; failed: number }): voi
   )
 }
 
+/**
+ * The settings both lanes read, taken from the two readers rather than restated
+ * here, so this file cannot drift from what they actually ask for.
+ */
+export type DrainEnv = Parameters<typeof pageHostConfigFromEnv>[0] & MetaLaneEnv
+
+export interface DrainAdapters {
+  /** The closures that put the registry back as this process found it. */
+  handles: Array<() => void>
+  /** Which lanes the environment actually configured, so the caller can say the
+   *  missing one out loud instead of letting a reader infer it from a count. */
+  pageHostConfigured: boolean
+  metaConfigured: boolean
+}
+
+/**
+ * Register every action this process can run.
+ *
+ * Both lanes, in one call, because the registry is the drainer's whole vocabulary.
+ * `drainOnce` asks `isExecutable` about the row it just claimed (`:204`, and the
+ * lookup the adapter call makes at `:162`) and records `no_adapter` when the answer
+ * is no, and `isExecutable` reads this process's map (`src/marketing/outbox.ts:81`).
+ * The server registers the Meta pair at boot (`src/mastra/index.ts:174-175`), but
+ * the publisher is a different process, so a host that approves campaign work and
+ * drains it here fails every Meta row while succeeding every page row. That
+ * asymmetry is invisible from either file alone, which is why the two reads are one
+ * call and one test rather than two blocks that can drift apart again.
+ *
+ * A missing half is not an error here. Whether "this host does not run that lane"
+ * is the plan or the bug is an operator's judgement, so the caller is told which
+ * lanes landed and says so.
+ */
+export function registerDrainAdapters(env: DrainEnv): DrainAdapters {
+  const handles: Array<() => void> = []
+  const pageHost = pageHostConfigFromEnv(env)
+  if (pageHost !== null) {
+    handles.push(registerActionAdapter(makePublishPageAdapter(pageHost)))
+    handles.push(registerActionAdapter(makePromotePageAdapter(pageHost)))
+  }
+  const metaLane = registerMetaLane(env, 'publish-drain')
+  handles.push(...metaLane)
+  return {
+    handles,
+    pageHostConfigured: pageHost !== null,
+    metaConfigured: metaLane.length > 0,
+  }
+}
+
 async function main(): Promise<void> {
   const envPath = new URL('../.env', import.meta.url)
   if (existsSync(envPath)) process.loadEnvFile(envPath)
@@ -304,16 +353,20 @@ async function main(): Promise<void> {
   }
 
   // The adapters this process can run are the whole meaning of "executable". A
-  // missing Pages config is said out loud and still starts: every queued publish
-  // then fails as no_adapter, in the table, where a human can see it.
-  const pageHost = pageHostConfigFromEnv(env)
-  if (pageHost === null) {
+  // missing lane is said out loud and still starts: every queued action of that
+  // kind then fails as no_adapter, in the table, where a human can see it. The
+  // undo handles are deliberately not kept: a drainer holds its registry for the
+  // life of the process, and the caller that wants the map back is the test.
+  const { pageHostConfigured, metaConfigured } = registerDrainAdapters(env)
+  if (!pageHostConfigured) {
     console.warn(
       '[publish-drain] no complete Cloudflare Pages config; queued page actions will be recorded as no_adapter',
     )
-  } else {
-    registerActionAdapter(makePublishPageAdapter(pageHost))
-    registerActionAdapter(makePromotePageAdapter(pageHost))
+  }
+  if (!metaConfigured) {
+    console.warn(
+      '[publish-drain] no complete Meta Ads config; queued campaign actions will be recorded as no_adapter',
+    )
   }
 
   const options = parseArgs(process.argv.slice(2))

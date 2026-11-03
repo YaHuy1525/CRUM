@@ -15,6 +15,12 @@
  *
  * No database here: the fake answers the claim with one promote row and records
  * every statement, so the assertion is made against the SQL itself.
+ *
+ * The second block is the registration the loop depends on. A drainer can only
+ * run what this process has registered, and for three slices it registered the
+ * page lane and nothing else, which quietly failed every campaign row an owner
+ * approved. That is measured here rather than in the boot test, because boot is a
+ * different process and the point of the defect is which process is which.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -31,8 +37,8 @@ vi.mock('@/db/marketing', async (importOriginal) => {
   }
 })
 
-import { registerActionAdapter } from '@/marketing/outbox'
-import { claimNextQueued, drainOnce } from '../../scripts/publish-drain'
+import { isExecutable, registerActionAdapter } from '@/marketing/outbox'
+import { claimNextQueued, drainOnce, registerDrainAdapters } from '../../scripts/publish-drain'
 
 const TENANT = '11111111-1111-4111-8111-111111111111'
 const BUNDLE = '33333333-3333-4333-8333-333333333333'
@@ -47,6 +53,23 @@ const PROMOTE_ROW = {
   attempts: 1,
 }
 
+// What Task 16's approval actually writes, in the shape the queue holds it: the
+// adapter reads the payload off the row, so this is the row a deployment gets.
+const CREATE_ROW = {
+  id: ACTION,
+  tenant_id: TENANT,
+  bundle_id: BUNDLE,
+  action: 'create_campaign',
+  payload: {
+    adAccountId: 'act_111',
+    name: 'spring-offer',
+    objective: 'OUTCOME_LEADS',
+    startPaused: true,
+    dailyCeilingMinor: 2000,
+  },
+  attempts: 1,
+}
+
 interface Recorded {
   text: string
   values: unknown[]
@@ -54,12 +77,12 @@ interface Recorded {
 
 /**
  * One claim, then nothing: the second pass over the loop must see an empty
- * result or the test would hang on a fake that can always find a row. Every
+ * result or the test would hang on a fake that always finds a row. Every
  * statement lands in `recorded` in the order the drainer asked for it. `failOn`
  * makes the statement it matches reject, which is how a database failure at a
- * chosen point in the pass is played back.
+ * chosen point in the pass is played back, and `row` is what the claim returns.
  */
-function fakeClient(failOn?: RegExp) {
+function fakeClient(failOn?: RegExp, row: Record<string, unknown> = PROMOTE_ROW) {
   const recorded: Recorded[] = []
   let claimed = false
   const client = {
@@ -75,7 +98,7 @@ function fakeClient(failOn?: RegExp) {
       claimed = true
       // The claim is the one statement whose row the drainer reads back; every
       // other statement here is an UPDATE with nothing to return.
-      return Promise.resolve({ rows: [PROMOTE_ROW] as unknown as T[] })
+      return Promise.resolve({ rows: [row] as unknown as T[] })
     },
   }
   return { client, recorded }
@@ -177,5 +200,109 @@ describe('drainOnce', () => {
     const claims = direct.recorded.filter((entry) => /SET status = 'running'/.test(entry.text))
     expect(claims).toHaveLength(2)
     for (const claim of claims) expect(claim.text).toMatch(/executed_at = now\(\)/)
+  })
+})
+
+/**
+ * What the publisher's process can run, read from the settings a host would set.
+ *
+ * R-39 is the reason this block exists. An owner approved a scale recommendation,
+ * the approval wrote a correct campaign row, and the documented publisher recorded
+ * `no_adapter` against it, because main() registered the two page adapters and
+ * Meta's pair was only ever mapped by the server at boot (src/mastra/index.ts:174).
+ * The registry is per process (src/marketing/outbox.ts:70), so the queue could hold
+ * work this process could name and not run, and no single file showed the gap. The
+ * question a deployment answers is the one asked below: after reading its own
+ * environment, can this process run every action the queue can hold?
+ */
+describe('registerDrainAdapters', () => {
+  const PAGES = {
+    CRUM_CLOUDFLARE_ACCOUNT_ID: 'cf-account',
+    CRUM_CLOUDFLARE_PAGES_PROJECT: 'crum-bundles',
+    CRUM_CLOUDFLARE_API_TOKEN: 'cf-token-not-a-real-one',
+    CRUM_PAGES_PRODUCTION_BRANCH: 'main',
+  }
+  const META = {
+    CRUM_META_ADS_ACCESS_TOKEN: 'meta-token-not-a-real-one',
+    CRUM_META_AD_ACCOUNTS: '["act_111"]',
+  }
+  const EVERY_ACTION = ['publish_page', 'promote_page', 'create_campaign', 'set_campaign_status'] as const
+
+  let handles: Array<() => void> = []
+  const requested: string[] = []
+
+  beforeEach(() => {
+    // No provider and no network: fetch is replaced for the whole case, so a call
+    // that reached outside the adapter would land here and be counted. Every
+    // registration below is checked by asking the map, and one case is checked by
+    // draining, which is the only way to prove the entry the map hands back is the
+    // adapter the config built rather than a name with nothing under it.
+    requested.length = 0
+    vi.stubGlobal('fetch', (input: unknown) => {
+      requested.push(String(input))
+      return Promise.resolve(new Response(JSON.stringify({ id: '23842653876', success: true }), { status: 200 }))
+    })
+  })
+
+  afterEach(() => {
+    for (const off of handles) off()
+    handles = []
+    vi.unstubAllGlobals()
+  })
+
+  it('maps all four queued actions in the process that has to drain them', () => {
+    const registration = registerDrainAdapters({ ...PAGES, ...META })
+    handles = registration.handles
+    expect(handles).toHaveLength(4)
+    for (const name of EVERY_ACTION) {
+      expect(isExecutable(name)).toBe(true)
+    }
+    // The handles undo exactly what was added, which is what keeps the next case
+    // honest: a leaked registration would make an unconfigured host look configured.
+    for (const off of handles) off()
+    for (const name of EVERY_ACTION) {
+      expect(isExecutable(name)).toBe(false)
+    }
+    handles = []
+  })
+
+  it('drains a campaign row rather than recording no_adapter against it', async () => {
+    const registration = registerDrainAdapters({ ...PAGES, ...META })
+    handles = registration.handles
+    expect(registration.metaConfigured).toBe(true)
+
+    const { client, recorded } = fakeClient(undefined, CREATE_ROW)
+    const counts = await drainOnce({ pool: client })
+
+    expect(counts).toEqual({ ran: 1, succeeded: 1, failed: 0 })
+    expect(requested).toEqual(['https://graph.facebook.com/v18.0/act_111/campaigns'])
+    const statements = recorded.map((entry) => entry.text)
+    expect(statements.some((text) => /SET status = 'succeeded'/.test(text))).toBe(true)
+    // The reap statement also writes 'failed', so the assertion is about the
+    // recordFailure shape, which is what a no_adapter refusal would have produced.
+    expect(statements.some((text) => /SET status = 'failed', last_error = \$2/.test(text))).toBe(false)
+  })
+
+  it('says which lane a half-configured host is missing, and registers only the other', () => {
+    // Both flags are what main() warns on, so they have to be per lane rather than
+    // one boolean over the whole registry: "no Pages config" and "no Meta config"
+    // are different operators' problems, and a host with one lane running is not a
+    // host that registered nothing.
+    const pagesOnly = registerDrainAdapters(PAGES)
+    handles = pagesOnly.handles
+    expect(pagesOnly).toMatchObject({ pageHostConfigured: true, metaConfigured: false })
+    expect(handles).toHaveLength(2)
+    expect(isExecutable('promote_page')).toBe(true)
+    expect(isExecutable('create_campaign')).toBe(false)
+    expect(isExecutable('set_campaign_status')).toBe(false)
+  })
+
+  it('reports the page lane as missing when only Meta is configured', () => {
+    const metaOnly = registerDrainAdapters(META)
+    handles = metaOnly.handles
+    expect(metaOnly).toMatchObject({ pageHostConfigured: false, metaConfigured: true })
+    expect(handles).toHaveLength(2)
+    expect(isExecutable('publish_page')).toBe(false)
+    expect(isExecutable('create_campaign')).toBe(true)
   })
 })
