@@ -1010,3 +1010,51 @@ The brief must tell the implementer that connectors carry `class: approval` and 
 ### The dependency to respect
 
 Step 2 predicts the third case passes because Task 17 already put `marketing.set_campaign_status` in the registry. That is the only forward reference in the task, and it means Task 18 must not be dispatched before Task 17's commit is verified: with 41 registry keys the third case still passes (the backlog filter does not name the tool), but the first case fails with five missing ids instead of four, which would read like a new defect rather than an unfinished predecessor.
+
+## A1 (R-39) landed at `a573a1f`
+
+The controller wrote this round rather than an implementer, for the reason already recorded: the commit sits between two reviews' file reads and Task 17's registry edit, and its scope was ruled here in the ledger rather than in a brief. Controller-authored code gets the same independent review as an implementer's, so round 2 of the Task 16 review covers it.
+
+### What the fix is
+
+`src/marketing/meta-ads-config.ts` is new and holds both halves of the Meta lane in one module: the environment read `metaAdsConfigFromEnv(env, label)` and the registration `registerMetaLane(env, label)`. `scripts/publish-drain.ts` registers both lanes in one exported call, `registerDrainAdapters(env)`. `scripts/analyst-cron.ts` drops its private copy of the parse, the 42-line `statusAdapterConfigFromEnv` plus its comment, and calls the shared registration.
+
+That is R-39 closed. The publisher used to map `publish_page` and `promote_page` only, so every campaign row an approval produced came back `no_adapter: create_campaign has no adapter in this process`, and neither file showed the gap because the registry is per process (`src/marketing/outbox.ts:70`).
+
+One behaviour detail worth having on the record: the cron's warning string is unchanged. The helper prefixes its parse warning with the `label` argument, and the call passes `analyst-cron`, so an operator's existing log grep still matches.
+
+### Two deviations from the ruled shape, both chosen so a test can reach them
+
+The R-39 ruling at line 855 said "registers `makeSetCampaignStatusAdapter` and `makeCreateCampaignAdapter` when the read answers, and warns in the same voice as the page lane when it does not". It is implemented, in two places, with a different type than the brief's draft implied.
+
+`registerMetaLane` returns `Array<() => void>` rather than a boolean, because `registerActionAdapter` hands back an unregister closure precisely so a caller can put the map back as it found it (`src/marketing/outbox.ts:74-79`), and a caller that throws them away cannot write a test that does not leak into the next case. `main()` keeps them unused on purpose and says so in the comment; a process that is ending is a process that is unregistering anyway.
+
+`registerDrainAdapters` returns a record with `pageHostConfigured` and `metaConfigured` rather than a bare handle list, because the defect lives exactly at the point where a single boolean cannot say which lane is missing. "no Pages config" and "no Meta config" are two operators' problems, and main's two warnings are the observable. The page block was also restructured out of `main()` into the exported function: `main()` is behind an entry guard and no test can reach it, which is why R-39 survived three slices of tests. The precedent is the deleted `statusAdapterConfigFromEnv`, exported from a script for exactly this reason.
+
+### The mutation that proves the new block
+
+`tests/marketing/publish-drain.test.ts` gains four `registerDrainAdapters` cases and a `fakeClient(failOn?, row?)` second parameter so the claim can return a campaign row. Deleting `handles.push(...metaLane)` gives `Tests 3 failed | 5 passed (8)`, naming `maps all four queued actions`, `drains a campaign row rather than recording no_adapter`, and `reports the page lane as missing when only Meta is configured`. Restoring both lines returns 8 passed. The drain case stubs `globalThis.fetch` (the adapters fall back to `config.fetchImpl ?? fetch`, `src/marketing/meta-ads.ts:59`) and asserts the single request is `https://graph.facebook.com/v18.0/act_111/campaigns`, so nothing left the process and the map entry is proven to be the adapter the config built rather than a name with nothing under it.
+
+The RED that preceded the implementation was the expected module-not-found for a test written first: `Failed to load url ../../src/marketing/meta-ads-config ... Does the file exist?` with `Test Files 1 failed (1)` and `Tests no tests`.
+
+### Gates, run here
+
+| Gate | Command | Result |
+| --- | --- | --- |
+| Lane unit | `npx vitest run tests/marketing/meta-ads-config.test.ts tests/marketing/publish-drain.test.ts tests/marketing/meta-ads.test.ts tests/marketing/outbox.test.ts tests/marketing/page-host.test.ts tests/mastra/marketing-boot.test.ts` | `Test Files 6 passed (6)`, `Tests 83 passed (83)` |
+| Task 15 and 16 unit | `npx vitest run tests/db/marketing-commit.test.ts tests/db/pending-writes-commit.test.ts tests/mastra/marketing-campaign-status-tool.test.ts` | `Tests 62 passed (62)`, 13 plus 37 plus 12 |
+| Integration | `npx vitest run --project integration tests/integration/analyst-cron.test.ts tests/integration/marketing-campaign-status.test.ts` with the 5455 URL exported | `Test Files 2 passed (2)`, `Tests 13 passed (13)`, 12 plus 1, no skip line |
+| Typecheck | `npm run typecheck` | clean |
+| Lint | `npm run lint` | one error, mine, then clean |
+
+The typecheck red recorded against Task 16 round 1 is gone, and not because I touched it: the other effort's `f283490` changed `src/api/documents.ts`, which is the file that held the error. The lint error was mine and was real: `tests/marketing/publish-drain.test.ts:241` had an async arrow with no await, which `@typescript-eslint/require-await` refuses, so the fetch stub returns `Promise.resolve(...)` from a plain arrow.
+
+### What A1 does not close
+
+`src/mastra/index.ts:158` still holds a third inline copy of the same parse. It stays, because `tests/mastra/marketing-boot.test.ts:50` pins the warning inside a once-per-change log and folding boot in would move a pinned message without moving what the test is about. Parked for the final review.
+
+The cron's `main()` call site is still untested, and was before. The read is covered by nine cases in `tests/marketing/meta-ads-config.test.ts`, the call is two lines, and `main()` is behind the same entry guard, so the reachability problem is unchanged rather than improved. What did change in the cron's behaviour is that it now registers `create_campaign` as well as `set_campaign_status`. An adapter the cron will never execute costs a map entry, and a per-process subset for each entrypoint is the shape that produced R-39, so the pair is registered everywhere the pair is configured.
+
+### A workspace fact, because it will confuse the next reader
+
+The `git mv` of the config test is in history under someone else's commit. `4079d2d`, the other effort's "test(documents): add coverage for field_confidence filtering and resolution", contains the line `.../meta-ads-config.test.ts}` with zero content changes, which is git reporting a pure rename: their `git add` swept my staged index entry, and `a573a1f` carries the rewritten content. Nothing was mangled, and the tree is consistent at both commits. The hazard is real and cheap to respect: keep the window between `git add` and `git commit` short on a branch another effort is committing to.
