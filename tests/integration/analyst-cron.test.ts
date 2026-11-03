@@ -11,6 +11,8 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { closeDbClient, getDbClient } from '../../src/db/client'
 import type { MetricsReadbackConfig, MetricsReadbackResult } from '../../src/marketing/metrics-readback'
+import { registerActionAdapter } from '../../src/marketing/outbox'
+import { uuidFromSeed } from '../../src/marketing/hash'
 
 const url = process.env.CRUM_INTEGRATION_DATABASE_URL ?? ''
 if (url) process.env.DATABASE_URL = url
@@ -21,6 +23,16 @@ const BUNDLE_A = 'b4000000-0000-4000-8000-000000000020'
 const BUNDLE_B = 'b4000000-0000-4000-8000-000000000021'
 const CAMPAIGN_A = 'camp-ext-20-a'
 const CAMPAIGN_B = 'camp-ext-20-b'
+// The owner the cron names as the requester of a staged draft. requested_by is a
+// uuid column that means who asked, so this file has to carry a person, and
+// CRUM_ANALYST_USER_ID is where the real cron gets one.
+const ANALYST = 'c4000000-0000-4000-8000-000000000020'
+
+// Staging now refuses an action this process has no adapter for, so the cases
+// below that expect a draft need one present. It never runs here: the drainer is
+// not part of this file, and an adapter that would talk to Meta never belongs in a
+// test (the standing rule).
+let unregisterStatus: () => void = () => {}
 
 async function setupFixtures() {
   const db = getDbClient()
@@ -73,11 +85,15 @@ async function insertSnapshot(params: {
 }) {
   const db = getDbClient()
   const daysAgo = params.daysAgo ?? 1
-  const windowEnd = new Date()
-  const windowStart = new Date(windowEnd.getTime() - 7 * 24 * 60 * 60 * 1000)
-  // Shift both by daysAgo so the snapshot falls within the 7-day lookback.
-  windowStart.setDate(windowStart.getDate() - daysAgo)
-  windowEnd.setDate(windowEnd.getDate() - daysAgo)
+  // The snapshot's own window has to START inside the cron's lookback, because
+  // listRecentSnapshots filters `window_start >= now() - 7 days`
+  // (src/db/marketing-metrics.ts:124). This helper used to build a full seven-day
+  // window and then shift both ends backwards by daysAgo, which pushed every
+  // window_start past the boundary, so the aggregation case was asserting totals
+  // over rows the query could not return and read zero. A one-day window that ends
+  // daysAgo days ago stays inside for every daysAgo this file uses.
+  const windowEnd = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000)
+  const windowStart = new Date(windowEnd.getTime() - 24 * 60 * 60 * 1000)
 
   await db.query(
     `INSERT INTO marketing_metrics_snapshots
@@ -97,6 +113,7 @@ async function countPendingWrites(targetId: string): Promise<number> {
 }
 
 afterAll(async () => {
+  unregisterStatus()
   if (!url) return
   const db = getDbClient()
   await db.query(`DELETE FROM pending_writes WHERE tenant_id = $1`, [TENANT])
@@ -108,6 +125,13 @@ afterAll(async () => {
 
 describe.skipIf(!url)('analyst cron', () => {
   beforeAll(async () => {
+    // Staging a status draft now asks whether this process can run the action, so
+    // the two staging cases need an adapter registered. Nothing here reaches Meta:
+    // the drainer never runs in this file and the stub answers without a network.
+    unregisterStatus = registerActionAdapter({
+      name: 'set_campaign_status',
+      execute: () => Promise.resolve({ externalId: 'analyst-cron-test-stub' }),
+    })
     await setupFixtures()
   })
 
@@ -213,11 +237,18 @@ describe.skipIf(!url)('analyst cron', () => {
 
   it('stages a draft for a "scale" recommendation', async () => {
     const db = getDbClient()
-    await db.query(`DELETE FROM pending_writes WHERE tenant_id = $1 AND target_id = $2`, [TENANT, CAMPAIGN_A])
+    // target_id is a uuid and the draft is keyed by the id derived from Meta's,
+    // so this file has to address the derived one or the cast fails before the
+    // case can say anything about staging.
+    await db.query(`DELETE FROM pending_writes WHERE tenant_id = $1 AND target_id = $2`, [
+      TENANT,
+      uuidFromSeed(`campaign:${CAMPAIGN_A}`),
+    ])
 
     const { runAnalystCron } = await import('../../scripts/analyst-cron')
     const result = await runAnalystCron({
       tenantId: TENANT,
+      analystUserId: ANALYST,
       invokeAgent: () =>
         Promise.resolve('{"recommendation":"scale","threshold":"cost_per_lead_below_5","message":"Scale it","campaigns":[{"bundleId":"' + BUNDLE_A + '","campaignId":"' + CAMPAIGN_A + '","recommendation":"scale","reason":"cost_per_lead_below_5"}]}'),
     })
@@ -226,17 +257,33 @@ describe.skipIf(!url)('analyst cron', () => {
     expect(result.stagedDrafts[0]!.status).toBe('ACTIVE')
     expect(result.stagedDrafts[0]!.campaignId).toBe(CAMPAIGN_A)
 
-    const draftCount = await countPendingWrites(CAMPAIGN_A)
+    const draftCount = await countPendingWrites(uuidFromSeed(`campaign:${CAMPAIGN_A}`))
     expect(draftCount).toBeGreaterThanOrEqual(1)
+
+    // The columns the fix is about, read back from the row the insert wrote. The
+    // unit file can only show what the function handed the data layer.
+    const stored = await db.query<{ target_id: string; requested_by: string; payload: { campaignId: string } }>(
+      `SELECT target_id, requested_by, payload FROM pending_writes
+        WHERE tenant_id = $1 AND target_id = $2`,
+      [TENANT, uuidFromSeed(`campaign:${CAMPAIGN_A}`)],
+    )
+    expect(stored.rows[0]?.requested_by).toBe(ANALYST)
+    expect(stored.rows[0]?.target_id).toBe(uuidFromSeed(`campaign:${CAMPAIGN_A}`))
+    // The id the adapter will need is the real one, not the derived key.
+    expect(stored.rows[0]?.payload.campaignId).toBe(CAMPAIGN_A)
   })
 
   it('stages a draft for a "kill" recommendation', async () => {
     const db = getDbClient()
-    await db.query(`DELETE FROM pending_writes WHERE tenant_id = $1 AND target_id = $2`, [TENANT, CAMPAIGN_B])
+    await db.query(`DELETE FROM pending_writes WHERE tenant_id = $1 AND target_id = $2`, [
+      TENANT,
+      uuidFromSeed(`campaign:${CAMPAIGN_B}`),
+    ])
 
     const { runAnalystCron } = await import('../../scripts/analyst-cron')
     const result = await runAnalystCron({
       tenantId: TENANT,
+      analystUserId: ANALYST,
       invokeAgent: () =>
         Promise.resolve('{"recommendation":"kill","threshold":"cost_per_lead_above_20","message":"Kill it","campaigns":[{"bundleId":"' + BUNDLE_B + '","campaignId":"' + CAMPAIGN_B + '","recommendation":"kill","reason":"cost_per_lead_above_20"}]}'),
     })
@@ -245,8 +292,38 @@ describe.skipIf(!url)('analyst cron', () => {
     expect(result.stagedDrafts[0]!.status).toBe('PAUSED')
     expect(result.stagedDrafts[0]!.campaignId).toBe(CAMPAIGN_B)
 
-    const draftCount = await countPendingWrites(CAMPAIGN_B)
+    const draftCount = await countPendingWrites(uuidFromSeed(`campaign:${CAMPAIGN_B}`))
     expect(draftCount).toBeGreaterThanOrEqual(1)
+  })
+
+  it('reports a recommendation it cannot stage because no owner is named', async () => {
+    const db = getDbClient()
+    await db.query(`DELETE FROM pending_writes WHERE tenant_id = $1 AND target_id = $2`, [
+      TENANT,
+      uuidFromSeed(`campaign:${CAMPAIGN_A}`),
+    ])
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+    const { runAnalystCron } = await import('../../scripts/analyst-cron')
+    const result = await runAnalystCron({
+      tenantId: TENANT,
+      invokeAgent: () =>
+        Promise.resolve('{"recommendation":"scale","threshold":"cost_per_lead_below_5","message":"Scale it","campaigns":[{"bundleId":"' + BUNDLE_A + '","campaignId":"' + CAMPAIGN_A + '","recommendation":"scale","reason":"cost_per_lead_below_5"}]}'),
+    })
+
+    // An unattributed draft is no approval at all, so nothing is staged, and the
+    // run says so in its error count rather than reading as a clean nothing-to-do.
+    expect(result.stagedDrafts).toEqual([])
+    expect(result.errors).toContain(`not_staged_no_actor: ${CAMPAIGN_A}`)
+    const why = logSpy.mock.calls.map((call) => String(call[0] ?? '')).filter((line) => line.includes('CRUM_ANALYST_USER_ID is unset'))
+    expect(why.length).toBe(1)
+    // The analyst's own reason reaches the log, because the recommendation is the
+    // only thing an operator without a configured actor gets to act on.
+    expect(why[0]).toContain('cost_per_lead_below_5')
+    expect(await countPendingWrites(uuidFromSeed(`campaign:${CAMPAIGN_A}`))).toBe(0)
+
+    logSpy.mockRestore()
   })
 
   it('logs message for "hold" recommendation without staging a draft', async () => {

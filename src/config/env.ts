@@ -232,6 +232,16 @@ export const EnvSchema = z.object({
     blankAsUnset,
     z.coerce.number().int().min(1).max(10_000_000).default(200),
   ),
+  // Slice 5 spec section 9.2: a staged draft needs a uuid actor, and the analyst
+  // cron is the only caller that has no human in the loop. Blank is unset, like
+  // every other credential here, so an `CRUM_ANALYST_USER_ID=` placeholder line
+  // cannot fail a boot. Unset means the cron reports its recommendations and
+  // stages nothing, because inventing a synthetic person to satisfy a column that
+  // means "who asked" would put a fiction in the audit trail.
+  CRUM_ANALYST_USER_ID: z.preprocess(
+    blankAsUnset,
+    z.string().uuid('CRUM_ANALYST_USER_ID must be the uuid of a real user').optional(),
+  ),
 })
 
 export type CrumEnv = z.infer<typeof EnvSchema>

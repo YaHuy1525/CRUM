@@ -192,6 +192,7 @@ export async function runAnalystCron(args: {
   windowStart?: Date
   windowEnd?: Date
   metricsReadback?: MetricsReadbackConfig | null
+  analystUserId?: string | null
   invokeAgent?: (input: AnalystInput) => Promise<string>
   stageStatus?: typeof stageCampaignStatusChange
 }): Promise<{
@@ -310,9 +311,22 @@ export async function runAnalystCron(args: {
     }
 
     const status = rec.recommendation === 'scale' ? 'ACTIVE' : 'PAUSED'
+
+    // An unattributed draft is not a smaller approval, it is no approval: the
+    // insert fails on requested_by before anybody can review it. Report the
+    // recommendation, say plainly that nothing was staged, and count it in errors
+    // so the summary line cannot read "0 error(s)" over a run that staged nothing.
+    if (!args.analystUserId) {
+      errors.push(`not_staged_no_actor: ${rec.campaignId}`)
+      console.log(
+        `[analyst-cron] ${rec.recommendation} for ${rec.campaignId} was not staged (${rec.reason}): CRUM_ANALYST_USER_ID is unset, so no owner could be named as the requester`,
+      )
+      continue
+    }
     try {
       const draftId = await stageStatus({
         tenantId: args.tenantId,
+        userId: args.analystUserId,
         bundleId: rec.bundleId,
         campaignExternalId: rec.campaignId,
         status,
@@ -377,8 +391,18 @@ async function main(): Promise<void> {
     console.warn('[analyst-cron] CRUM_META_ADS_ACCESS_TOKEN is unset; skipping live metrics collection')
   }
 
+  // The requester of a staged draft is a column that means who asked, so a run
+  // without this cannot produce an approvable row. Warn before the work rather
+  // than let a silent run report "0 draft(s) staged" as if nothing were missing.
+  const analystUserId = env.CRUM_ANALYST_USER_ID ?? null
+  if (!analystUserId) {
+    console.warn(
+      '[analyst-cron] CRUM_ANALYST_USER_ID is unset; recommendations will be reported but never staged',
+    )
+  }
+
   try {
-    const result = await runAnalystCron({ tenantId, metricsReadback })
+    const result = await runAnalystCron({ tenantId, metricsReadback, analystUserId })
     console.log(
       `[analyst-cron] done: ${result.campaignsProcessed} campaign(s), ` +
         `${result.snapshotsCollected} snapshot(s) collected, ` +

@@ -21,7 +21,7 @@ import {
   type ArtifactInput,
   type MarketingBundleRow,
 } from '../../db/marketing'
-import { computeBundleHash } from '../../marketing/hash'
+import { computeBundleHash, uuidFromSeed } from '../../marketing/hash'
 import {
   LEAD_ENDPOINT_PLACEHOLDER,
   leadEndpointUrl,
@@ -843,13 +843,15 @@ export async function stageRetry(params: {
  * regardless of its current state, because pausing an already-paused campaign
  * is harmless and the owner may still want the audit trail. Spec section 9.4.
  *
- * Like `stagePromotion`, the function validates before it stages: a campaign
- * that does not exist, or that is already active when the recommendation is to
- * scale, is refused before any row is written. The caller (the analyst cron)
- * logs the refusal and moves on.
+ * Like `stagePromotion`, the function validates before it stages: an action this
+ * process cannot run, a call with no owner named, a campaign that does not exist
+ * on the bundle it is claimed to belong to, or a scale against a campaign that is
+ * already active is refused before any row is written. The caller (the analyst
+ * cron) logs the refusal and moves on.
  */
 export async function stageCampaignStatusChange(args: {
   tenantId: string
+  userId: string
   bundleId: string
   campaignExternalId: string
   status: 'ACTIVE' | 'PAUSED'
@@ -858,20 +860,45 @@ export async function stageCampaignStatusChange(args: {
 }): Promise<string> {
   const db = getDbClient()
 
-  // The campaign must have been created by a succeeded create_campaign action.
-  // A draft over a campaign that does not exist would authorise nothing, so
-  // this is asked before anything is queued.
+  // requested_by is `uuid NOT NULL` (migrations/0002_crum_spine.sql:158) and the
+  // column means who asked. 'analyst-cron' is a label, not a person, and Postgres
+  // refused it at the insert, so every draft this function staged since slice 3
+  // failed to exist. A call that cannot name an owner refuses here, in words,
+  // before it spends a query on 22P02.
+  if (!args.userId) {
+    throw new Error(
+      `campaign_status_actor_required: no user id was supplied for the status change on ${args.campaignExternalId}`,
+    )
+  }
+
+  // An action this process has no adapter for cannot be run by the drainer, so it
+  // must not be approvable. stagePromotion (:674) and stageRetry (:789) both ask;
+  // this function is the marketing staging path that never did, and reaching the
+  // lane is the point of the residual.
+  if (!isExecutable('set_campaign_status')) {
+    throw new Error(
+      'provider_not_configured: this process has no set_campaign_status adapter, so approving a status change would queue work nothing can run',
+    )
+  }
+
+  // The campaign must have been created by a succeeded create_campaign action,
+  // under the bundle the caller named. A draft over a campaign that does not
+  // exist would authorise nothing, and the analyst reads metrics per bundle and
+  // recommends against that bundle's campaign, so a same-looking id owned by a
+  // different bundle is not this bundle's campaign and its recommendation is not
+  // actionable. Both are asked before anything is queued.
   const created = await db.query<{ id: string }>(
     `SELECT id FROM marketing_actions
       WHERE tenant_id = $1
         AND action = 'create_campaign'
         AND status = 'succeeded'
-        AND result ->> 'externalId' = $2`,
-    [args.tenantId, args.campaignExternalId],
+        AND result ->> 'externalId' = $2
+        AND bundle_id = $3`,
+    [args.tenantId, args.campaignExternalId, args.bundleId],
   )
   if (created.rows.length === 0) {
     throw new Error(
-      `campaign_not_found: no succeeded create_campaign action for external id ${args.campaignExternalId}`,
+      `campaign_not_found: no succeeded create_campaign action for external id ${args.campaignExternalId} on bundle ${args.bundleId}`,
     )
   }
 
@@ -917,11 +944,17 @@ export async function stageCampaignStatusChange(args: {
     runId: 'analyst-cron',
     objectType: 'marketing_set_campaign_status',
     operation: 'update',
-    targetId: args.campaignExternalId,
+    // Meta's campaign id is not a uuid and target_id is one
+    // (migrations/0002_crum_spine.sql:149), which is the second half of why this
+    // insert has always failed. uuidFromSeed gives the same external identity the
+    // same derived id every time, so a re-ask still lands on the existing draft
+    // rather than a second approval, and the real id stays in the payload, which
+    // is the only copy of it the draft keeps.
+    targetId: uuidFromSeed(`campaign:${args.campaignExternalId}`),
     payload,
     riskScore: assessment.score,
     gate,
-    requestedBy: 'analyst-cron',
+    requestedBy: args.userId,
     idempotencyKey: `campaign_status:${args.campaignExternalId}:${args.status}`,
   })
   return draft.id

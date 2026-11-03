@@ -248,6 +248,39 @@ describe('slice 4 image settings', () => {
   })
 })
 
+describe('slice 5 analyst actor setting', () => {
+  const ANALYST = 'c4000000-0000-4000-8000-000000000020'
+
+  it('treats a blank analyst id as unset, not as a failed boot', () => {
+    // The `.env.example` line Step 5 writes is `CRUM_ANALYST_USER_ID=`, and an
+    // unconfigured install still has to boot. Unset is the honest state: the cron
+    // reports and stages nothing rather than inventing a person.
+    expect(parseEnv({}).CRUM_ANALYST_USER_ID).toBeUndefined()
+    expect(parseEnv({ CRUM_ANALYST_USER_ID: '' }).CRUM_ANALYST_USER_ID).toBeUndefined()
+    expect(parseEnv({ CRUM_ANALYST_USER_ID: '   ' }).CRUM_ANALYST_USER_ID).toBeUndefined()
+  })
+
+  it('parses a real user uuid through untouched', () => {
+    expect(parseEnv({ CRUM_ANALYST_USER_ID: ANALYST }).CRUM_ANALYST_USER_ID).toBe(ANALYST)
+  })
+
+  it('refuses a label where a person belongs, and names the line to fix', () => {
+    // 'analyst-cron' is the literal the cron used to write into requested_by, so
+    // it is exactly the value an operator would copy in. The issue path carries the
+    // variable name, which is what makes the failure fixable without a stack trace.
+    expect(() => parseEnv({ CRUM_ANALYST_USER_ID: 'analyst-cron' })).toThrowError(EnvParseError)
+    let caught: unknown
+    try {
+      parseEnv({ CRUM_ANALYST_USER_ID: 'analyst-cron' })
+    } catch (err) {
+      caught = err
+    }
+    const failure = caught as { issues: Array<{ path: unknown[] }>; message: string }
+    expect(failure.issues.some((issue) => issue.path.join('.') === 'CRUM_ANALYST_USER_ID')).toBe(true)
+    expect(failure.message).toContain('CRUM_ANALYST_USER_ID')
+  })
+})
+
 describe('.env.example is the contract', () => {
   const documented = documentedNames()
 
