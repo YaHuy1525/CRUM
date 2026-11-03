@@ -13,6 +13,7 @@ import {
 } from '../db/documents'
 import { invalidateOpenStageDraft } from '../db/pending-writes'
 import { listBundleIdsForDocument } from '../db/marketing-assets'
+import { setAuditContext } from '../db/audit-context'
 import { MAX_DOCUMENT_BYTES } from '../mastra/workflows/document-intake'
 import type { DocumentJobData } from '../queue/document-queue'
 import { getDbClient } from '../db/client'
@@ -397,8 +398,7 @@ export function createDocumentsRouter(deps: DocumentsRouterDeps): Hono {
     const client: PoolClient = await getDbClient().connect()
     try {
       await client.query('BEGIN')
-      await client.query('SELECT set_config($1, $2, false)', ['app.current_user_id', identity.userId])
-      await client.query('SELECT set_config($1, $2, false)', ['app.change_source', 'manual_correction'])
+      await setAuditContext(client, { userId: identity.userId, changeSource: 'manual_correction' })
 
       await client.query(
         `UPDATE ${tableName} SET ${field} = $1 WHERE document_id = $2`,

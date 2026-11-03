@@ -1,59 +1,35 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
-import type { Pool } from 'pg'
+import { describe, it, expect, vi } from 'vitest'
 import { setAuditContext } from '../../src/db/audit-context.js'
-import { getDbClient } from '../../src/db/client.js'
 
-vi.mock('../../src/db/client.js', () => ({
-  getDbClient: vi.fn(),
-}))
+function client() {
+  const query = vi.fn().mockResolvedValue({ rows: [{}] })
+  return { query, calls: query.mock.calls }
+}
 
 describe('setAuditContext', () => {
-  const mockQuery = vi.fn()
-
-  beforeEach(() => {
-    vi.clearAllMocks()
-    vi.mocked(getDbClient).mockReturnValue({ query: mockQuery } as unknown as Pool)
+  it('sets both settings transaction-locally on the caller connection', async () => {
+    const c = client()
+    await setAuditContext(c as never, { userId: 'u-1', changeSource: 'manual_correction' })
+    expect(c.calls).toEqual([
+      ['SELECT set_config($1, $2, true)', ['app.current_user_id', 'u-1']],
+      ['SELECT set_config($1, $2, true)', ['app.change_source', 'manual_correction']],
+    ])
   })
 
-  it('sets both session variables when userId is provided', async () => {
-    await setAuditContext({
-      userId: '00000000-0000-4000-8000-000000000002',
-      changeSource: 'manual_correction',
-    })
-
-    expect(mockQuery).toHaveBeenCalledTimes(2)
-    expect(mockQuery).toHaveBeenCalledWith(
-      'SELECT set_config($1, $2, false)',
-      ['app.current_user_id', '00000000-0000-4000-8000-000000000002'],
-    )
-    expect(mockQuery).toHaveBeenCalledWith(
-      'SELECT set_config($1, $2, false)',
-      ['app.change_source', 'manual_correction'],
-    )
+  it('omits the user setting when the actor is unknown but always sets the source', async () => {
+    const c = client()
+    await setAuditContext(c as never, { userId: null, changeSource: 'extraction' })
+    expect(c.calls).toEqual([
+      ['SELECT set_config($1, $2, true)', ['app.change_source', 'extraction']],
+    ])
   })
 
-  it('sets only change_source when userId is null', async () => {
-    await setAuditContext({
-      userId: null,
-      changeSource: 'extraction',
-    })
-
-    expect(mockQuery).toHaveBeenCalledTimes(1)
-    expect(mockQuery).toHaveBeenCalledWith(
-      'SELECT set_config($1, $2, false)',
-      ['app.change_source', 'extraction'],
-    )
-  })
-
-  it('accepts all valid changeSource values', async () => {
-    const sources = ['extraction', 'manual_correction', 're_parse', 'import', 'system'] as const
-
+  it('accepts only the spellings the shipped CHECK constraint allows', async () => {
+    const c = client()
+    const sources = ['extraction', 'manual_correction', 're-parse', 'import', 'system'] as const
     for (const source of sources) {
-      await setAuditContext({ userId: null, changeSource: source })
-      expect(mockQuery).toHaveBeenCalledWith(
-        'SELECT set_config($1, $2, false)',
-        ['app.change_source', source],
-      )
+      await setAuditContext(c as never, { userId: null, changeSource: source })
     }
+    expect(c.calls.map((call) => (call[1] as string[])[1])).toEqual(sources)
   })
 })
