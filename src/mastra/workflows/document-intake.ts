@@ -8,6 +8,8 @@ import type { InvoiceExtract, ContractExtract } from '../schemas/documents'
 import { parseEnv } from '../../config/env'
 import { BLOCK_TYPES, convertWithDocling, layoutBlocks } from '../docling'
 import type { DocumentBlock, ParseRun } from '../docling'
+import { convertWithOcr } from '../ocr'
+import type { OcrDocumentBlock } from '../ocr'
 import {
   insertDocument,
   resolveCustomerByEntity,
@@ -127,7 +129,7 @@ const blockSchema = z.object({
 })
 
 const parseRunSchema = z.object({
-  parser: z.enum(['docling', 'unpdf', 'mammoth', 'plain']),
+  parser: z.enum(['docling', 'unpdf', 'mammoth', 'plain', 'tesseract']),
   parser_version: z.string(),
   status: z.enum(['ok', 'failed']),
   duration_ms: z.number().int().nullable(),
@@ -201,6 +203,32 @@ const parseBinaryStep = createStep({
         }
       } catch (err) {
         console.warn(`[document-intake] parse sidecar failed, falling back: ${String(err)}`)
+        blocks = null
+      }
+    }
+
+    // OCR path: for images, try the OCR sidecar if Docling failed or is unavailable.
+    const ocrUrl = parseEnv().OCR_URL
+    if (!blocks && isImage && ocrUrl) {
+      try {
+        const ocrResult = await convertWithOcr(ocrUrl, new Uint8Array(bytes), inputData.title, mime)
+        blocks = ocrResult.blocks.map((b: OcrDocumentBlock) => ({
+          page_number: b.page_number,
+          block_index: b.block_index,
+          block_type: b.block_type,
+          content_md: b.content_md,
+          bbox: b.bbox,
+          confidence: b.confidence,
+        }))
+        parse = {
+          parser: 'tesseract',
+          parser_version: ocrResult.parser_version,
+          status: 'ok',
+          duration_ms: null,
+          meta: { language: ocrResult.language, psm: ocrResult.psm },
+        }
+      } catch (err) {
+        console.warn(`[document-intake] OCR sidecar failed, falling back: ${String(err)}`)
         blocks = null
       }
     }
@@ -363,6 +391,7 @@ const normalizedSchema = extractedSchema.extend({
   customerId: z.string().uuid().nullable(),
   confidence: z.number().nullable(),
   needsReview: z.boolean(),
+  fieldConfidence: z.record(z.string(), z.number()).nullable(),
 })
 
 export function normalizeInvoice(extract: InvoiceExtract): {
@@ -428,13 +457,42 @@ const normalizeAndResolveStep = createStep({
   outputSchema: normalizedSchema,
   execute: async ({ inputData }) => {
     if (inputData.kind === 'other' || !inputData.extract) {
-      return { ...inputData, normalized: null, customerId: null, confidence: null }
+      return { ...inputData, normalized: null, customerId: null, confidence: null, fieldConfidence: null }
     }
 
     const extract = inputData.extract
     const modelConf = typeof extract.confidence === 'number' ? extract.confidence : undefined
     const coverage = coverageScore(extract, inputData.kind)
     const confidence = computeConfidence(modelConf, coverage)
+
+    // Compute per-field confidence
+    const fieldConfidence: Record<string, number> = {}
+    const extractConfidence = extract.confidence as
+      | Record<string, number | undefined>
+      | undefined
+    if (inputData.kind === 'invoice') {
+      const invExtract = extract as InvoiceExtract
+      fieldConfidence.vendor_name = extractConfidence?.vendorName ?? (invExtract.vendorName ? 1.0 : 0.0)
+      fieldConfidence.vendor_email = extractConfidence?.vendorEmail ?? (invExtract.vendorEmail ? 1.0 : 0.0)
+      fieldConfidence.invoice_number = extractConfidence?.invoiceNumber ?? (invExtract.invoiceNumber ? 1.0 : 0.0)
+      fieldConfidence.invoice_date = extractConfidence?.invoiceDate ?? (invExtract.invoiceDate ? 1.0 : 0.0)
+      fieldConfidence.due_date = extractConfidence?.dueDate ?? (invExtract.dueDate ? 1.0 : 0.0)
+      fieldConfidence.currency = extractConfidence?.currency ?? (invExtract.currency ? 1.0 : 0.0)
+      fieldConfidence.subtotal = extractConfidence?.subtotal ?? (invExtract.subtotal ? 1.0 : 0.0)
+      fieldConfidence.tax = extractConfidence?.tax ?? (invExtract.tax ? 1.0 : 0.0)
+      fieldConfidence.total = extractConfidence?.total ?? (invExtract.total ? 1.0 : 0.0)
+    } else if (inputData.kind === 'contract') {
+      const conExtract = extract as ContractExtract
+      fieldConfidence.counterparty = extractConfidence?.counterparty ?? (conExtract.counterparty ? 1.0 : 0.0)
+      fieldConfidence.counterparty_email = extractConfidence?.counterpartyEmail ?? (conExtract.counterpartyEmail ? 1.0 : 0.0)
+      fieldConfidence.effective_date = extractConfidence?.effectiveDate ?? (conExtract.effectiveDate ? 1.0 : 0.0)
+      fieldConfidence.expiry_date = extractConfidence?.expiryDate ?? (conExtract.expiryDate ? 1.0 : 0.0)
+      fieldConfidence.term_months = extractConfidence?.termMonths ?? (conExtract.termMonths ? 1.0 : 0.0)
+      fieldConfidence.contract_value = extractConfidence?.contractValue ?? (conExtract.contractValue ? 1.0 : 0.0)
+      fieldConfidence.currency = extractConfidence?.currency ?? (conExtract.currency ? 1.0 : 0.0)
+      fieldConfidence.auto_renewal = extractConfidence?.autoRenewal ?? (conExtract.autoRenewal !== undefined ? 1.0 : 0.0)
+      fieldConfidence.renewal_notice_days = extractConfidence?.renewalNoticeDays ?? (conExtract.renewalNoticeDays ? 1.0 : 0.0)
+    }
 
     const entityName = (inputData.kind === 'invoice' ? extract.vendorName : extract.counterparty) as string | undefined
     const entityEmail = (inputData.kind === 'invoice' ? extract.vendorEmail : extract.counterpartyEmail) as string | undefined
@@ -450,7 +508,7 @@ const normalizeAndResolveStep = createStep({
         ? normalizeInvoice(extract)
         : normalizeContract(extract, inputData.text)
 
-    return { ...inputData, normalized, customerId, confidence, needsReview }
+    return { ...inputData, normalized, customerId, confidence, needsReview, fieldConfidence }
   },
 })
 
@@ -513,6 +571,7 @@ const persistStructuredStep = createStep({
         meta: inputData.parse.meta,
       },
       blocks: inputData.blocks,
+      fieldConfidence: inputData.fieldConfidence,
     })
 
     const finalStatus: 'ready' | 'needs_review' =

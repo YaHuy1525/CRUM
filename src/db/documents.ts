@@ -177,6 +177,7 @@ export interface PersistDocumentInput {
   file?: DocumentFileWrite | null
   parse?: DocumentParseWrite | null
   blocks?: DocumentBlockWrite[]
+  fieldConfidence?: Record<string, number> | null
 }
 
 export async function insertDocument(
@@ -244,6 +245,12 @@ export async function insertDocument(
           [row.id, line.description, line.quantity, line.unit_price, line.amount, line.currency],
         )
       }
+      if (input.fieldConfidence) {
+        await client.query(
+          `UPDATE invoices SET field_confidence = $1 WHERE document_id = $2`,
+          [JSON.stringify(input.fieldConfidence), row.id],
+        )
+      }
     }
 
     if (input.kind === 'contract' && input.contract) {
@@ -271,6 +278,12 @@ export async function insertDocument(
           `INSERT INTO contract_terms (document_id, clause_type, title, text, start_offset, end_offset)
            VALUES ($1, $2, $3, $4, $5, $6)`,
           [row.id, term.clause_type, term.title, term.text, term.start_offset, term.end_offset],
+        )
+      }
+      if (input.fieldConfidence) {
+        await client.query(
+          `UPDATE contracts SET field_confidence = $1 WHERE document_id = $2`,
+          [JSON.stringify(input.fieldConfidence), row.id],
         )
       }
     }
