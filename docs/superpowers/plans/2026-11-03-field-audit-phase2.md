@@ -34,6 +34,7 @@
 | `src/validation/rules.ts` | new | The 19-entry catalogue. One `run` per entry, no shared control flow between entries. |
 | `src/validation/index.ts` | new | `RULESET_VERSION`, `evaluate`, `buildBundle`, `todayInUtc`. The only module other layers import. |
 | `migrations/0024_crum_field_validation.sql` | new | `document_validation` and its three indexes. |
+| `migrations/0025_crum_audit_user_placeholder_guard.sql` | new | `log_field_changes()` restated with one changed line, so the actor cast survives the custom GUC's `''` placeholder. |
 | `src/db/validation.ts` | new | Every read and write over `document_validation`: `replaceValidation`, `listViolations`, `waiveViolation`, `openCounts` (Task 7), `reviewQueue` (Task 11), `reviewAnalytics` (Task 12), `exportAuditRows` (Task 13). |
 | `src/mastra/workflows/document-intake.ts` | modify | Validate the bundle before the status decision, persist findings, widen the review trigger. |
 | `src/api/documents.ts` | modify | Six new routes, the H3 projection fix, re-validation after a correction. |
@@ -47,7 +48,7 @@
 | `console/components/DocumentManager.tsx` | modify | Review mode: queue filter, editable detail views, audit panel. |
 | `console/components/SidebarNav.tsx` | clean, modify only if a deep link is added | Leave alone unless Task 15 needs it. |
 
-Tests mirror it: `tests/validation/{values,evaluate,rules-invoice,rules-contract}.test.ts`, `tests/db/{validation,audit-context-isolation}.test.ts`, `tests/api/{document-validation,review-queue,analytics,audit-export}.test.ts`, `tests/integration/correction-revalidates.test.ts`, `console/tests/{FindingList,EditableField,AuditTrail,DocumentManagerReviewMode,ReviewAnalytics}.test.tsx`. Fourteen test files, one per deliverable that a reviewer could reject on its own.
+Tests mirror it: `tests/validation/{values,evaluate,rules-invoice,rules-contract}.test.ts`, `tests/db/{validation,audit-context-isolation,audit-context-placeholder}.test.ts`, `tests/api/{document-validation,review-queue,analytics,audit-export}.test.ts`, `tests/integration/correction-revalidates.test.ts`, `console/tests/{FindingList,EditableField,AuditTrail,DocumentManagerReviewMode,ReviewAnalytics}.test.tsx`. Fifteen test files, one per deliverable that a reviewer could reject on its own.
 
 ## Task Order and Why
 
@@ -1129,21 +1130,23 @@ git commit -m "feat(validation): six contract rules and the nineteen-rule catalo
 
 ---
 
-### Task 6: Migration 0024
+### Task 6: Migration 0024 and the audit trigger placeholder guard
 
 **Files:**
 - Create: `migrations/0024_crum_field_validation.sql`
+- Create: `migrations/0025_crum_audit_user_placeholder_guard.sql`
+- Create: `tests/db/audit-context-placeholder.test.ts`
 
 Resolved at pre-flight: `tests/db/schema-parity.test.ts` does not exist, and the only table-enumerating test is `tests/integration/migrations.test.ts`, whose `SPINE_TABLES` list at `:34-45` names the nine spine tables and nothing added by `0018` to `0023`. Marketing's own migrations did not extend it, so neither does this one. No test file is modified by this task.
 
 **Interfaces:**
-- Consumes: `documents(id)`.
-- Produces: table `document_validation` with columns `id, document_id, tenant_id, ruleset_version, severity, rule_id, field_name, message, status, waived_by, waived_at, waiver_reason, created_at` and constraint `uq_validation_slot UNIQUE (document_id, rule_id, field_name)`. Task 7 writes it.
+- Consumes: `documents(id)`, and the `log_field_changes()` body shipped in `migrations/0023_crum_field_audit.sql:28-100`.
+- Produces: table `document_validation` with columns `id, document_id, tenant_id, ruleset_version, severity, rule_id, field_name, message, status, waived_by, waived_at, waiver_reason, created_at` and constraint `uq_validation_slot UNIQUE (document_id, rule_id, field_name)`. Task 7 writes it. Also produces the corrected `log_field_changes()`, which reads the actor as `NULLIF(current_setting('app.current_user_id', true), '')::uuid`, so Tasks 8 to 13 can write audited rows on a pooled backend that has already carried a correction.
 
-- [ ] **Step 1: Confirm 0024 is free**
+- [ ] **Step 1: Confirm 0024 and 0025 are free**
 
-Run: `ls migrations/ | tail -5 && grep -rl "0024" migrations/ | head`
-Expected: the highest existing prefix is `0023`. If another file already claims `0024`, take the next free number and update every reference to the filename in this plan's later tasks.
+Run: `ls migrations/ | tail -5 && grep -rl "002[45]" migrations/ | head`
+Expected: the highest existing prefix is `0023`. If another file already claims one of these numbers, take the next free number and update every reference to the filename in this plan's later tasks.
 
 - [ ] **Step 2: Write the migration**
 
@@ -1181,12 +1184,54 @@ CREATE INDEX IF NOT EXISTS idx_validation_tenant_rule ON document_validation (te
 CREATE INDEX IF NOT EXISTS idx_validation_tenant_field ON document_validation (tenant_id, field_name, created_at DESC);
 ```
 
-- [ ] **Step 3: Apply it**
+- [ ] **Step 3: Write the failing placeholder-guard test**
+
+Create `tests/db/audit-context-placeholder.test.ts`. Copy the `.env` header from `tests/db/field-audit.test.ts:1-12` and the session-mode connection and `seedInvoice` pattern from `tests/db/audit-context-isolation.test.ts`, which Task 2 landed. The point is a backend that has ALREADY carried a transaction-local context, because that is the state in which Postgres leaves the custom GUC holding the placeholder `''` rather than NULL.
+
+```ts
+it('still audits a contextless write on a backend that once carried a context', async () => {
+  // 1. open a session-mode pool so one pinned backend sees both transactions
+  // 2. BEGIN; setAuditContext(client, { userId: USER, changeSource: 'manual_correction' });
+  //    UPDATE invoices SET total = ...; COMMIT
+  // 3. assert the backend now reads the GUC as '' rather than NULL:
+  //    SELECT current_setting('app.current_user_id', true) IS NULL
+  // 4. BEGIN; UPDATE invoices SET total = ... on a SECOND seeded document with no
+  //    setAuditContext call at all; COMMIT
+  // 5. expect(step 4).toResolve(), and the second document's audit rows to carry
+  //    changed_by IS NULL and change_source = 'extraction'
+})
+```
+
+Run: `npx vitest run tests/db/audit-context-placeholder.test.ts`
+Expected: FAIL at step 4 with `error: invalid input syntax for type uuid: ""`. Record that output in the report; it is the evidence the guard is needed. If step 3 reads NULL rather than `''`, the premise is wrong on this server version: stop and report BLOCKED with what the read returned, because then Step 4 has a different cause.
+
+- [ ] **Step 4: Write 0025 and make the test pass**
+
+Create `migrations/0025_crum_audit_user_placeholder_guard.sql`. Copy the body of `log_field_changes()` from `migrations/0023_crum_field_audit.sql:28-100` verbatim into a `CREATE OR REPLACE FUNCTION log_field_changes() RETURNS TRIGGER AS $$ ... $$ LANGUAGE plpgsql;` statement, and change exactly one line: 0023's
+
+```sql
+  user_id := current_setting('app.current_user_id', true)::uuid;
+```
+
+becomes
+
+```sql
+  user_id := NULLIF(current_setting('app.current_user_id', true), '')::uuid;
+```
+
+`NULLIF` turns the custom GUC's placeholder `''` back into SQL NULL before the uuid cast. The `change_source` two lines below already guards for `''` the same way; this line was the one that did not, so any contextless write to an audited table that landed on a backend which had ever carried a correction threw instead of auditing with a NULL actor.
+
+Above the statement, put a header comment naming the single delta and why, and do not restate 0023's trigger attachment or the `field_confidence` `ALTER TABLE`s: the trigger already exists and points at this function by name, so replacing the function is enough. Do not add `BEGIN` or `COMMIT`.
+
+Run: `npx vitest run tests/db/audit-context-placeholder.test.ts`
+Expected: PASS.
+
+- [ ] **Step 5: Apply both migrations**
 
 Run: `npx tsx scripts/db-migrate.ts`
-Expected: it records version `0024` and prints no error. If the runner refuses because it expects a paired schema export, run `npm run db:export-schema` and include the regenerated artifact in Step 4's commit.
+Expected: it records versions `0024` and `0025` and prints no error. If the runner refuses because it expects a paired schema export, run `npm run db:export-schema` and include the regenerated artifact in Step 6's commit.
 
-- [ ] **Step 4: Verify the shape with psql through the runner's own client**
+- [ ] **Step 6: Verify the shapes with psql through the runner's own client**
 
 Run:
 
@@ -1197,18 +1242,22 @@ const r = await getDbClient().query(\"select column_name, data_type, is_nullable
 console.table(r.rows)
 const c = await getDbClient().query(\"select conname from pg_constraint where conrelid='document_validation'::regclass\")
 console.log(c.rows.map((x) => x.conname))
+const f = await getDbClient().query(\"select prosrc from pg_proc where proname='log_field_changes'\")
+console.log(f.rows[0].prosrc.includes(\"NULLIF(current_setting('app.current_user_id', true), '')::uuid\"))
 "
 ```
 
-Expected: 13 columns in the order above, and the constraint list includes `uq_validation_slot`, `document_validation_severity_check`, `document_validation_status_check`.
+Expected: 13 columns in the order above, the constraint list includes `uq_validation_slot`, `document_validation_severity_check`, `document_validation_status_check`, and the last line prints `true`, which proves the live server carries the guarded cast.
 
-- [ ] **Step 5: Typecheck, lint, commit**
+- [ ] **Step 7: Typecheck, lint, commit**
 
 ```bash
 npx tsc --noEmit && npx eslint .
-git add migrations/0024_crum_field_validation.sql
-git commit -m "feat(db): one row per validation finding, keyed to rule and field"
+git add migrations/0024_crum_field_validation.sql migrations/0025_crum_audit_user_placeholder_guard.sql tests/db/audit-context-placeholder.test.ts
+git commit -m "feat(db): one row per validation finding, and the audit trigger stops casting the GUC placeholder"
 ```
+
+The reviewer for this task must diff 0025's function body against `migrations/0023_crum_field_audit.sql:28-100` and confirm the two bodies differ by that one line and the header comment only. Restating a function body is how a plpgsql fix ships, so the copy is not a duplication finding; an undocumented second difference in the body is.
 
 ---
 ---
