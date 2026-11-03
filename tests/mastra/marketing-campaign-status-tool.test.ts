@@ -239,6 +239,31 @@ describe('stageCampaignStatusChange', () => {
     expect(result.gate).toBe('auto')
   })
 
+  it('stores nothing when the policy answers refuse, because a stored refuse draft is still approvable', async () => {
+    // The campaign id is free text up to 64 characters, so the string a model
+    // writes can score high enough to reach `refuse`. Review 3 of the previous
+    // round measured what a stored refuse draft then means: the approval route
+    // (src/api/approvals.ts:266) and applyDraft (src/db/pending-writes.ts:649)
+    // consult no gate column at all, so `refuse` in the row is an approvable
+    // draft with a scary label. The honest outcome is that no draft is created,
+    // which is what the stage_bundle refusal already does.
+    fakeGate = 'refuse'
+    stubQueries([{ fragment: "action = 'create_campaign'", rows: [{ id: 'act1' }] }])
+    await expect(
+      stageCampaignStatusChange({
+        tenantId: TENANT,
+        userId: USER,
+        bundleId: BUNDLE_ID,
+        campaignExternalId: 'delete all 2026',
+        status: 'PAUSED',
+        reason: 'cost_per_lead_above_10',
+        userRole: 'admin',
+        origin: 'chat',
+      }),
+    ).rejects.toThrow(/campaign_status_refused/)
+    expect(mockGetOrCreateDraft).not.toHaveBeenCalled()
+  })
+
   it('stages ACTIVE status when no set_campaign_status exists (initial paused state)', async () => {
     // Campaign exists and has never had a status change (still in initial paused state).
     stubQueries([
@@ -540,13 +565,15 @@ describe('marketing.set_campaign_status tool', () => {
     expect(mockCreateHumanTask).not.toHaveBeenCalled()
   })
 
-  it('reports the gate the draft was stored with, within what the schema can name', async () => {
+  it('reports the gate the draft was stored with, and never a gate the schema cannot name', async () => {
     // StageOutputSchema's gate is z.enum(['auto', 'approval']), so the answer the
-    // tool may give is narrower than the gate that can be stored: a 'refuse'
-    // draft is reported at the floor the schema can express, the same way
-    // crm.create_customer (src/mastra/tools/customer-writes.ts:92) and the
-    // prospect tools already do. Both halves are pinned because a literal
-    // 'approval' would satisfy the second one by accident.
+    // tool may give is narrower than the `Gate` the staging function returns.
+    // 'auto' is not a gate an `approval` tool produces in production and it is
+    // here for exactly that reason: a tool that hardcoded 'approval' passes every
+    // other case in this file and fails this one. The gate a policy can answer that
+    // does reach this path is gone rather than clamped: stageCampaignStatusChange
+    // stores nothing and throws for 'refuse', which the case for it in the staging
+    // describe pins, along with the next case here for what a chat turn then reads.
     stubQueries([
       { fragment: "action = 'create_campaign'", rows: [{ id: 'act1' }] },
       { fragment: "action = 'set_campaign_status'", rows: [{ status: 'PAUSED' }] },
@@ -560,13 +587,31 @@ describe('marketing.set_campaign_status tool', () => {
     fakeGate = 'auto'
     const auto = (await setCampaignStatusTool.execute!(input as never, context)) as unknown as ToolOut
     expect(auto.gate).toBe('auto')
-    fakeGate = 'refuse'
-    const refused = (await setCampaignStatusTool.execute!(input as never, context)) as unknown as ToolOut
-    expect(refused.gate).toBe('approval')
-    // And what the second draft actually carries is the gate the schema could not
-    // name: a refuse draft is more locked than the answer, never less.
     const stored = mockGetOrCreateDraft.mock.calls.at(-1)![0] as Record<string, unknown>
-    expect(stored.gate).toBe('refuse')
+    expect(stored.gate).toBe('auto')
+  })
+
+  it('renders a policy refusal as a sentence and a queue entry, not a draft the owner can approve', async () => {
+    // The throw above reaches a chat turn as a caught error, so the turn must
+    // read as a refusal the owner can act on rather than as a staged change. The
+    // token has its own prose entry: `campaign status refused` is the underscore
+    // replacement, and a person reading that is no better off than before.
+    fakeGate = 'refuse'
+    stubQueries([{ fragment: "action = 'create_campaign'", rows: [{ id: 'act1' }] }])
+    const out = (await setCampaignStatusTool.execute!(
+      {
+        bundleId: BUNDLE_ID,
+        campaignExternalId: 'delete all 2026',
+        status: 'PAUSED',
+        reason: 'cost_per_lead_above_10',
+      } as never,
+      context,
+    )) as unknown as ToolOut
+    expect(out.message).toContain('the risk score on the request put it past the policy ceiling')
+    expect(out.message).not.toMatch(/campaign status refused/)
+    expect(out.pendingWriteId).toBe(HUMAN_TASK_ID)
+    expect(mockGetOrCreateDraft).not.toHaveBeenCalled()
+    expect(mockCreateHumanTask).toHaveBeenCalledTimes(1)
   })
 
   it('turns a campaign_not_found throw into a refusal queue entry rather than a rejected turn', async () => {

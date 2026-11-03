@@ -983,6 +983,21 @@ export async function stageCampaignStatusChange(args: {
   const gate = policy.gateFor('marketing.set_campaign_status', assessment, {
     requestContext: { tenantId: args.tenantId, userRole: args.userRole },
   })
+  // `refuse` is not a label for a draft, it is an answer that no draft may exist.
+  // The review round that added this branch measured what the alternative meant:
+  // the approval route (src/api/approvals.ts:266) and `applyDraft`
+  // (src/db/pending-writes.ts:649) never read the gate column, so a row stored as
+  // `refuse` waits in the queue for exactly the click any other draft gets. The
+  // campaign id is free text up to 64 characters, so reaching `refuse` is a model
+  // writing prose into an identifier, which is rare but not impossible. Throwing
+  // is how this function already refuses: the cron logs it and moves on, and
+  // `setCampaignStatusTool` turns it into a human task, so both lanes get a
+  // refusal rather than an approvable row.
+  if (gate === 'refuse') {
+    throw new Error(
+      `campaign_status_refused: the risk score on the request put it past the policy ceiling (${assessment.score}), so no draft was created for ${args.campaignExternalId}`,
+    )
+  }
 
   // One draft per campaign per desired status: a re-ask for the same change
   // lands on the existing draft rather than a second one.
@@ -990,7 +1005,7 @@ export async function stageCampaignStatusChange(args: {
     tenantId: args.tenantId,
     // The cron keeps the label it has always carried, and a chat draft takes
     // 'pending' — the value the other marketing staging drafts already use for a
-    // row no run can be resumed from (:549, :717, :826) and a member of
+    // row no run can be resumed from (:550, :718, :827) and a member of
     // UNMATCHABLE_RUN_IDS (src/api/approvals.ts:95). Either way the queue says
     // which lane staged it and promises no link neither lane has.
     runId: args.origin === 'cron' ? 'analyst-cron' : 'pending',
@@ -1030,7 +1045,7 @@ const REFUSAL_PROSE: Record<string, string> = {
   site_hash_moved: 'the page bytes changed since this action was staged',
   bundle_unavailable: 'the bundle has no publishable page to hash',
   bundle_mismatch: 'the action belongs to a different bundle than the one in the request',
-  // The two tokens stageCampaignStatusChange can surface into a chat turn
+  // The three tokens stageCampaignStatusChange can surface into a chat turn
   // through setCampaignStatusTool. campaign_already_active and
   // campaign_status_actor_required read honestly after the underscore
   // replacement below, so they deliberately have no entry here.
@@ -1043,6 +1058,12 @@ const REFUSAL_PROSE: Record<string, string> = {
   // describes only the other half sends the owner looking in the wrong place.
   campaign_not_found: 'no campaign with that id was created by a completed publish on the bundle named in the request',
   provider_not_configured: 'this process has no campaign status adapter, so the change could not be run',
+  // The underscore replacement would say "campaign status refused", which names
+  // no condition and tells the owner nothing to change. The score is in the
+  // thrown message and stays out of this sentence because the number without the
+  // ceiling it crossed is not actionable either; what a person can act on is that
+  // the request itself read as dangerous, and the request is the campaign id.
+  campaign_status_refused: 'the risk score on the request put it past the policy ceiling, so nothing was staged',
 }
 
 function readableReason(reason: string): string {
@@ -1197,13 +1218,16 @@ export const setCampaignStatusTool = createTool({
         return {
           pendingWriteId: staged.pendingWriteId,
           riskScore: staged.riskScore,
-          // The gate the draft was created with, not a literal. StageOutputSchema
-          // names only `auto | approval`, so the one stored gate it cannot hold
-          // is reported at the floor the schema can express — the narrowing
-          // crm.create_customer (src/mastra/tools/customer-writes.ts:92) and the
-          // prospect tools already make. A draft stored as `refuse` is more
-          // locked than the answer, never less: nothing commits it without a
-          // human, and no human can approve it.
+          // The gate the draft was created with, not a literal. The `refuse`
+          // branch inside stageCampaignStatusChange means no draft exists by the
+          // time a turn could report one, so the only gate that can arrive here is
+          // `approval`, which is also the whole of what StageOutputSchema can name
+          // for a tool declared `approval`. The narrowing is kept because the
+          // return type says `Gate` and the schema does not, and it follows the
+          // same shape crm.create_customer (src/mastra/tools/customer-writes.ts:92)
+          // and the prospect tools already use. It is not a safety device: an
+          // approval queue entry is approved on its object type and its receipt,
+          // and a stored `refuse` would have been approvable anyway.
           gate: staged.gate === 'refuse' ? ('approval' as const) : staged.gate,
           // The reason is deliberately absent from the payload, so this is where
           // the analyst's argument reaches a human. The draft the owner reviews
