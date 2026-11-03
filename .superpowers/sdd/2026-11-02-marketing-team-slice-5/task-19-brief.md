@@ -127,3 +127,12 @@ This task owns one file, the new report. It owns no code. If a suite is red, the
 Step 7's `git add -f` and the `-m` before the `--` are both load-bearing, because `docs/` is matched by `.gitignore` while the files inside it are tracked. A plain `git add` on that path exits 1, and a chained `git add ... && git commit ...` then never reaches the commit. Check with `git diff --cached --name-only` that the single path is staged before committing, since another effort on this branch has already swept one worker's staged index.
 
 The report's style is fixed by the standing rule and repeated here because it is easy to break at length: plain language, needed professional terms explained in the sentence that uses them, no dashes as punctuation, no semicolons, no divider lines, no table of contents. Backticks around a file or column name are fine.
+
+## Addendum C5. The two `migrations.test.ts` failures, measured at the current HEAD
+
+The plan asks you to name the two baseline failures again or explain what changed. They are unchanged, and here is the measurement so you can confirm rather than discover. Run as a single file against `crum_slice5` with the URL exported, `tests/integration/migrations.test.ts` collects 7 and gives `2 failed | 5 passed`, and the two are:
+
+- `migrations against a real database > boots through main(), which runs storage.init() and then the spine`, failing at `tests/integration/migrations.test.ts:55` with `AssertionError: expected [] to include '0002_crum_spine.sql'`. The slice 4 report calls this the empty-database race, and the run above is the stronger form of the same cause: the database this cluster holds is already migrated, so `applied` comes back empty however the file is run. Say which of the two conditions your own run produced.
+- `migrations against a real database > refuses a second receipt for the same staged draft`, failing with `null value in column "draft_hash" of relation "pending_writes" violates not-null constraint`, because the raw INSERT at about `:99` omits a column `migrations/0003_crum_add_draft_hash.sql` made NOT NULL with no default. `draft_hash` predates slice 5, so this is not this slice's defect and Step 2 wants it named as carried forward.
+
+Do not repair either one. Fixing them means editing an integration file this task does not own, and the honest report of a slice is the one that separates what it broke from what it inherited.
