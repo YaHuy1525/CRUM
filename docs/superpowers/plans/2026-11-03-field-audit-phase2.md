@@ -17,7 +17,7 @@
 3. Every query takes the tenant predicate. `document_validation.tenant_id` is written from the caller's identity, never copied from the document row.
 4. Import extensions follow ruling R35, not a single repo-wide suffix. Measured: 505 extensionless relative imports against 19 with `.js`, and all 19 live in the async-intake surface Task 1 copied (`src/queue`, `src/temporal`, `src/mastra/{adaptive-extraction,multi-format-parser}.ts`). `tsconfig.json` sets `moduleResolution: "bundler"` and every entry point runs through `tsx` or `mastra dev/build`, never raw `node dist/`, so both forms resolve in both test and production paths. The rule is therefore: a file you modify keeps the convention already used by the other imports in that file (`src/api` and `src/db` are extensionless), and a file you create uses the form written in this plan's code blocks. Never "fix" an existing file's suffixes as a drive-by.
 5. `pg` returns `numeric` as a string. Treat `''`, `null` and `NaN` as absent, never as zero.
-6. Nothing under `src/validation/` may import `pg`, read `process.env`, or consult the wall clock. The date arrives as `ValidationContext.today`. `Date.UTC` inside `parseDate` validates fields of a supplied string and never reads today.
+6. Nothing under `src/validation/` may import `pg`, read `process.env`, or consult the wall clock. The date arrives as `ValidationContext.today`. `Date.UTC` inside `parseDate` validates fields of a supplied string and never reads today. **Calendar-day frame (R45):** a stored day is read *as written*, and no zone conversion happens anywhere in this layer. `localDay` in `src/validation/index.ts` is the only renderer of a calendar day, used for a `date` column arriving as a `Date` and for the `today` a caller puts in `ValidationContext`; `parseDate` matches a time and offset part and then drops them rather than converting. Callers outside the module read the clock themselves — `localDay(new Date())` at a route or workflow step — because the required parameter is what keeps that read visible at the boundary. The one place UTC arithmetic is right is `timestamptz` window maths (Tasks 12 and 13), which never compares against a stored day; there, build and render must both use UTC inside the same function.
 7. Unit tests live under `tests/**/*.test.ts` (vitest project `unit`), integration tests under `tests/integration/**` (project `integration`). A test that touches the database loads `.env` before importing anything that reads it, copying lines 1-12 of `tests/db/field-audit.test.ts`.
 8. The gate for every task, in order: `npx tsc --noEmit`, `npx eslint .`, `npx vitest run <touched files>`, then commit.
 9. The primary tree at `D:\Code\CRUM` is occupied by a live `feat/marketing-slice-5` run. Phase 2 never writes there. Every command in this plan runs from `D:\Code\CRUM\.qoder\worktrees\field-audit-phase2`, and nothing outside that directory is staged or committed.
@@ -32,7 +32,7 @@
 | `src/validation/types.ts` | new | `Severity`, `Violation`, `ValidationContext`, `DocumentRecordBundle`, `ValidationRule`. Types only. |
 | `src/validation/values.ts` | new | The primitives every rule shares: `isAbsent`, `parseAmount`, `parseDate`, `isEmail`, `isCurrencyShape`, plus the two tolerance constants. Pure. |
 | `src/validation/rules.ts` | new | The 19-entry catalogue. One `run` per entry, no shared control flow between entries. |
-| `src/validation/index.ts` | new | `RULESET_VERSION`, `evaluate`, `buildBundle`, `todayInUtc`. The only module other layers import. |
+| `src/validation/index.ts` | new | `RULESET_VERSION`, `evaluate`, `buildBundle`, `localDay`. The only module other layers import. |
 | `migrations/0024_crum_field_validation.sql` | new | `document_validation` and its three indexes. |
 | `migrations/0025_crum_audit_user_placeholder_guard.sql` | new | `log_field_changes()` restated with one changed line, so the actor cast survives the custom GUC's `''` placeholder. |
 | `src/db/validation.ts` | new | Every read and write over `document_validation`: `replaceValidation`, `listViolations`, `waiveViolation`, `openCounts` (Task 7), `reviewQueue` (Task 11), `reviewAnalytics` (Task 12), `exportAuditRows` (Task 13). |
@@ -304,7 +304,7 @@ git commit -m "fix(audit): provenance settings stop surviving the connection the
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: the five types in spec section 5.1 verbatim, plus `RULESET_VERSION`, `evaluate`, `buildBundle`, `todayInUtc`, the five primitives, and `AMOUNT_TOLERANCE`, `MAX_PLAUSIBLE_AMOUNT`, `RULES`.
+- Produces: the five types in spec section 5.1 verbatim, plus `RULESET_VERSION`, `evaluate`, `buildBundle`, `localDay`, the five primitives, and `AMOUNT_TOLERANCE`, `MAX_PLAUSIBLE_AMOUNT`, `RULES`.
 
 `rules.ts` is created here as `export const RULES: ValidationRule[] = []` so `evaluate` is testable before any rule exists. Tasks 4 and 5 fill it.
 
@@ -352,6 +352,21 @@ describe('parseDate', () => {
   it('normalises an ISO date and a timestamp down to the date', () => {
     expect(parseDate('2026-03-01')).toBe('2026-03-01')
     expect(parseDate('2026-03-01T00:00:00.000Z')).toBe('2026-03-01')
+  })
+  it('accepts a space separator and an offset, and keeps the day as written', () => {
+    // Postgres renders its own timestamp text space-separated, and extraction hands over both forms,
+    // so a strict `T` would read a well-formed value as absent and the rule judging it would say
+    // nothing. The last two lines are the no-conversion half of the frame rule: the offset is matched
+    // so it cannot invalidate the value and is then dropped, so the day returned is the day the string
+    // writes. 23:00 at -05:00 is already the next day in UTC, and that is not what this returns.
+    expect(parseDate('2026-03-01 09:00:00')).toBe('2026-03-01')
+    expect(parseDate('2026-03-01T09:00:00+11:00')).toBe('2026-03-01')
+    expect(parseDate('2026-03-01T23:00:00-05:00')).toBe('2026-03-01')
+    expect(parseDate('2026-03-01T09:00:00Z')).toBe('2026-03-01')
+  })
+  it('still rejects a malformed value after the time part', () => {
+    expect(parseDate('2026-03-01 09:00:00xyz')).toBeNull()
+    expect(parseDate('2026-03-01T09')).toBeNull()
   })
   it('rejects trailing junk instead of reading the date out of its prefix', () => {
     expect(parseDate('2026-03-011')).toBeNull()
@@ -433,7 +448,11 @@ export function isCurrencyShape(v: unknown): boolean {
   return typeof v === 'string' && /^[A-Za-z]{3}$/.test(v.trim())
 }
 
-const DATE_OR_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?Z?)?$/
+// A date, optionally followed by a time. The separator is `[ T]` because Postgres' own text rendering
+// is space-separated and ISO strings from extraction use `T`; the offset group accepts `Z`, `+11` and
+// `+11:00`. The time and offset are matched only so they do not invalidate the value, then dropped:
+// parseDate returns the day the string *writes*, and no zone conversion happens anywhere in this layer.
+const DATE_OR_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})(?:[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/
 
 export function parseDate(v: unknown): string | null {
   if (isAbsent(v)) return null
@@ -447,7 +466,9 @@ export function parseDate(v: unknown): string | null {
 }
 ```
 
-`parseDate` rebuilds the instant from the three numeric components and re-reads them out of the ISO string. That is how `2026-02-30` is rejected rather than rolled to March. It never consults the clock. The pattern is anchored at both ends and spells out the optional time part, because a start-anchored `^\d{4}-\d{2}-\d{2}` would read `2026-03-01xyz` and `2026-03-011` as a valid `2026-03-01`; a truncated day is exactly the shape an OCR slip produces, and a rule that then compares that date against `ctx.today` would be judging a value the reader invented. The `T…` branch stays permissive because `pg` renders a `timestamp` as `2026-03-01T00:00:00` and the values test pins that an ISO timestamp normalises to its date.
+`parseDate` rebuilds the instant from the three numeric components and re-reads them out of the ISO string. That is how `2026-02-30` is rejected rather than rolled to March. It never consults the clock. The pattern is anchored at both ends and spells out the optional time part, because a start-anchored `^\d{4}-\d{2}-\d{2}` would read `2026-03-01xyz` and `2026-03-011` as a valid `2026-03-01`; a truncated day is exactly the shape an OCR slip produces, and a rule that then compares that date against `ctx.today` would be judging a value the reader invented.
+
+The time branch exists for strings that come out of extraction and out of `parsedJson`, not for `pg`. An earlier draft of this paragraph claimed `pg` renders a timestamp as `2026-03-01T00:00:00`, and that is wrong twice over: `pg-types` binds OID 1114 and 1184 to `postgres-date` as well as 1082, so a timestamp reaches `buildBundle` as a `Date` and never as a string, and when Postgres does emit text it is space-separated (`DateStyle=ISO`). The separator is therefore `[ T]` and an optional offset group follows, because rejecting `2026-03-01 09:00:00` as absent would silence a rule judging a perfectly well-formed extracted value. Whatever the time part says, the day returned is the day the string writes: `2026-03-01T23:00:00-05:00` gives `2026-03-01` even though that instant is already the next day in UTC, because the frame rule in constraint 6 forbids a conversion here and the values test pins it.
 
 - [ ] **Step 4: Implement `src/validation/rules.ts` as an empty catalogue**
 
@@ -469,20 +490,22 @@ export type * from './types.js'
 
 const SEVERITY_RANK: Record<Violation['severity'], number> = { error: 0, warning: 1 }
 
-export function todayInUtc(now: Date): string {
-  return now.toISOString().slice(0, 10)
-}
-
 /**
- * pg parses a `date` column into a JS Date at local midnight, so the stored calendar day
- * has to be read back in local time. `toISOString().slice(0, 10)` would move 2026-11-03 to
- * 2026-11-02 on any machine east of UTC, which is where this project runs and is where the
- * findings get stored. This is a wall-clock-free read: it consults the value's fields and
- * the process timezone, never `Date.now()`, and it is correct precisely because the process
- * that built the Date from the `date` column is the one reading it back. A Postgres `date`
- * has no zone of its own, so a worker running in a different TZ would disagree.
+ * The one calendar-day renderer in this layer. `ValidationContext.today` and every `date` column in a
+ * bundle go through here, so a date rule always compares two days read the same way; that unity is why
+ * there is no second helper for "today".
+ *
+ * pg parses a `date` column into a JS Date at *local* midnight (`postgres-date` builds
+ * `new Date(y, m, d)`), so the stored calendar day has to be read back with the local getters.
+ * `toISOString().slice(0, 10)` would move 2026-11-03 to 2026-11-02 on any machine east of UTC, which is
+ * where this project runs and where the findings get stored.
+ *
+ * Two properties to keep in mind. This is a wall-clock-free read: it consults the value's own fields and
+ * the process timezone, never `Date.now()`, and the caller supplies the instant so that constraint 6's
+ * clock stays outside `src/validation/`. And a Postgres `date` carries no zone of its own, so a worker
+ * running in a different timezone would disagree about which day a stored value names.
  */
-function localDay(value: Date): string {
+export function localDay(value: Date): string {
   const y = String(value.getFullYear())
   const mo = String(value.getMonth() + 1).padStart(2, '0')
   const d = String(value.getDate()).padStart(2, '0')
@@ -500,6 +523,9 @@ export function buildBundle(
     if (typeof value === 'string') return value
     if (typeof value === 'number') return Number.isFinite(value) ? String(value) : null
     if (typeof value === 'boolean' || typeof value === 'bigint') return String(value)
+    // Every Date becomes its local calendar day, so a `timestamptz` column that reaches this
+    // boundary through a `SELECT *` loses its time of day. No Phase 2 rule reads one today; a later
+    // task that wants an instant must read it from the row, not from a bundle.
     if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : localDay(value)
     return null
   }
@@ -539,9 +565,11 @@ export function evaluate(
 }
 ```
 
-Close the code block. `todayInUtc` takes `now` as a required argument and is the only place in `src/validation/` that may accept a `Date`. Constraint 6 declares this module clock-free, and a default argument would let production code read the wall clock from inside it while every test stayed silent about that read, so the caller supplies the instant. Step 6 pins the requirement with `@ts-expect-error`: if a later task reintroduces a default, `npx tsc --noEmit` fails on an unused directive rather than shipping a clock read.
+Close the code block. `localDay` takes the `Date` as a required argument and is the only place in `src/validation/` that may accept one. Constraint 6 declares this module clock-free, and a default argument would let production code read the wall clock from inside it while every test stayed silent about that read, so the caller supplies the instant. Step 6 pins the requirement with `@ts-expect-error`: if a later task reintroduces a default, `npx tsc --noEmit` fails on an unused directive rather than shipping a clock read.
 
-The first two lines of `evaluate` are spec 5.2's "drops rules whose subject row is absent" clause read at the one level where it is decidable without knowing any rule: a bundle with no header and no rows at all is not a record with missing fields, it is no record. Per-field absence stays each rule's business, because only a rule knows which of its fields it is judging, and Task 8's `normalized` precondition is what keeps a header-less bundle from reaching here in the first place. The comparator uses codepoint rather than `String.prototype.localeCompare` so the stored order of findings does not shift with the machine's locale; the two disagree on `'a'` versus `'B'`, which is why Step 6 has a case for it.
+It is also the only renderer of a calendar day, and that is the ruling rather than an accident (R45). `ValidationContext.today` and a `date` column that arrives as a `Date` are compared against each other by `invoice.invoice_date.future`, so the two halves have to be produced the same way. The bundle half is fixed by `pg`: `postgres-date` builds `new Date(y, m, d)`, so a stored `2026-11-03` is local midnight and only the local getters recover it. A UTC `today` beside it made the rule fire on an invoice dated the auditor's own business day for every hour before 11:00 here (UTC+11, `getTimezoneOffset()` = `-660`). One exported helper means a future task cannot put the two halves in different frames even by mistake, and Tasks 8, 10 and 12 call `localDay(new Date())` at their own boundaries instead of being handed a zero-argument helper that reads the clock for them.
+
+The first two lines of `evaluate` are spec 5.2's "drops rules whose subject row is absent" clause read at the one level where it is decidable without knowing any rule: a bundle with no header and no rows at all is not a record with missing fields, it is no record. Per-field absence stays each rule's business, because only a rule knows which of its fields it is judging, and Task 8's `normalized` precondition is what keeps a header-less bundle from reaching here in the first place. All three terms of that condition are pinned from both directions, because a mutation check showed the all-empty case alone leaves the over-broad reading alive: a guard written as just `header === undefined` keeps every other test green while silencing exactly the `*.present` rules this ruling exists to protect, and dropping either row-count term does the same for one kind. Step 6's `runs rules for a bundle that has rows even when its header is absent` case carries the three assertions that die, one per term, and the `bundle.kind` selection on the line above the guard, which is otherwise dead under test because every other call in the file passes an invoice. The comparator uses codepoint rather than `String.prototype.localeCompare` so the stored order of findings does not shift with the machine's locale; the two disagree on `'a'` versus `'B'`, which is why Step 6 has a case for it.
 
 `coerce` narrows with `typeof` before it calls `String`, rather than applying `String(value)` to a value it has already checked for null. Two reasons, both measured. First, `@typescript-eslint/no-base-to-string` is enabled in this repo's config, and after `if (value === null || value === undefined) return null` the residual type is `{}`, which the rule errors on: a scratch file with `String(v)` on an unchecked `unknown` lints clean, while the same call after that null check fails at the `String` line. Narrowing first leaves no residual to complain about, so neither a lint suppression in production code nor a cast that lies about the value's type is needed. Second, a plain object reaching this boundary would stringify to `[object Object]`, which every rule then reads as a present value, and a finding on it is worse than no finding; returning `null` makes an unexpected object read as absent, which constraint 5 already defines as the safe state. One object type is not a guard, and this paragraph said otherwise until it was measured: `getInvoice` and `getContract` do `SELECT *` (`src/db/documents.ts:492,508`) and their row types declare `invoice_date: string | null`, but nothing in `src/` or `scripts/` calls `setTypeParser`, so `pg`'s default applies and a `date` column arrives as a `Date`. Measured against the project's live pooler, `SELECT '2026-11-03'::date` returns a `Date` whose `String()` is `Tue Nov 03 2026 00:00:00 GMT+1100` and whose `toISOString()` is `2026-11-02T13:00:00.000Z`; the same query returns `numeric` as a string and `boolean` as a boolean. Task 9's brief says those rows feed `buildBundle`, so without the `instanceof Date` branch every date rule would read `invoice_date` as absent, and with a `toISOString()` version it would judge the day before the one stored.
 
@@ -553,7 +581,8 @@ The `rule()` helper takes `out: Violation[]` and returns `run: () => out` with n
 
 ```ts
 import { describe, it, expect } from 'vitest'
-import { buildBundle, evaluate, RULESET_VERSION, todayInUtc } from '../../src/validation/index.js'
+import { buildBundle, evaluate, localDay, RULESET_VERSION } from '../../src/validation/index.js'
+import { parseDate } from '../../src/validation/values.js'
 import type { ValidationContext, ValidationRule, Violation } from '../../src/validation/types.js'
 
 const CTX: ValidationContext = { today: '2026-11-03' }
@@ -568,19 +597,49 @@ function rule(partial: Partial<ValidationRule> & { id: string }, out: Violation[
   }
 }
 
-describe('todayInUtc', () => {
-  it('truncates an instant to its UTC date, ignoring the local zone', () => {
-    expect(todayInUtc(new Date('2026-11-03T23:59:59.999Z'))).toBe('2026-11-03')
-    expect(todayInUtc(new Date(Date.UTC(2026, 10, 4)))).toBe('2026-11-04')
+describe('localDay', () => {
+  it('renders the day an instant falls on locally, including the early-morning hours', () => {
+    // 00:30 is the hour that matters: this project runs at UTC+11, so a UTC read of a local
+    // early-morning instant returns the day before. Inputs are built from local components, so a
+    // correct implementation passes in any zone. The limit is the mirror of that: on a machine whose
+    // offset is exactly zero both reads agree and this case cannot kill a UTC implementation. It
+    // kills one here, measured at getTimezoneOffset() = -660, and the mutation was run.
+    expect(localDay(new Date(2026, 10, 3, 0, 30, 0))).toBe('2026-11-03')
+    expect(localDay(new Date(2026, 10, 3, 23, 59, 59))).toBe('2026-11-03')
+    expect(localDay(new Date(2026, 10, 4))).toBe('2026-11-04')
   })
 
   it('requires the caller to supply the instant so the module never reads the clock', () => {
     // A default argument would make this a wall-clock read inside src/validation/, which
     // constraint 6 forbids. `npx tsc --noEmit` covers tests/, and reports TS2578 "Unused
     // '@ts-expect-error' directive" on the line below if anyone reintroduces one.
-    // @ts-expect-error - now is required
-    const callableWithoutAnInstant: () => string = todayInUtc
+    // @ts-expect-error - value is required
+    const callableWithoutAnInstant: () => string = localDay
     expect(callableWithoutAnInstant).toBeTypeOf('function')
+  })
+
+  it('is the single renderer, so a stored date and ctx.today cannot end up in different frames', () => {
+    // The only catalogue rule that consumes ctx.today is invoice.invoice_date.future, whose body is
+    // `parseDate(invoice_date) > ctx.today`. Before R45 the two halves came from two helpers in two
+    // frames, and that fired a warning on an invoice dated the auditor's own business day for 11 of
+    // 24 hours. There is now one renderer for both sides, so the first two lines below are the same
+    // computation the boundary performs, and killing `localDay` kills both sides at once.
+    const stamped = new Date(2026, 10, 3)
+    const bundle = buildBundle('invoice', { invoice_date: stamped }, [], [])
+    const future: ValidationRule = {
+      id: 'invoice.invoice_date.future',
+      appliesTo: 'invoice',
+      fields: ['invoice_date'],
+      run: (b, ctx) => {
+        const d = parseDate(b.invoice?.invoice_date)
+        return d !== null && d > ctx.today
+          ? [{ ruleId: 'invoice.invoice_date.future', field: 'invoice_date', severity: 'warning', message: 'Invoice date is after today.' }]
+          : []
+      },
+    }
+    expect(bundle.invoice?.invoice_date).toBe('2026-11-03')
+    expect(evaluate(bundle, { today: localDay(stamped) }, [future])).toEqual([])
+    expect(evaluate(bundle, { today: '2026-11-02' }, [future])).toHaveLength(1)
   })
 })
 
@@ -607,6 +666,9 @@ describe('evaluate', () => {
   })
 
   it('drops an exact ruleId and field duplicate a second rule produces', () => {
+    // Annotated on purpose: an unannotated extraction of this literal loses its contextual
+    // type, widens `severity` to `string`, and fails TS2322 against `out: Violation[]`. The
+    // annotation keeps the compiler checking the fixture instead of casting the widening away.
     const dup: Violation = { ruleId: 'd', field: 'total', severity: 'error', message: 'm' }
     expect(evaluate(invoice, CTX, [rule({ id: 'd' }, [dup]), rule({ id: 'd2' }, [dup])]).length).toBe(1)
   })
@@ -638,10 +700,21 @@ describe('evaluate', () => {
     expect(buildBundle('invoice', { meta: { a: 1 } }, [], []).invoice).toEqual({ meta: null })
   })
 
+  it('treats an undefined header like a null one instead of throwing', () => {
+    // The declared parameter type forbids `undefined`, so the only way here is the cast Task 8's
+    // call site already uses (`normalized` arrives through `as unknown as`, document-intake.ts).
+    // Without this case the `== null` guard survives as decoration: a mutation to `=== null`
+    // throws a TypeError only on a path no test can name.
+    const header = undefined as unknown as Record<string, unknown>
+    expect(buildBundle('invoice', header, [], []).invoice).toBeUndefined()
+  })
+
   it('renders a pg date Date as the stored calendar day, not the UTC-shifted one', () => {
     // pg builds a `date` column as a Date at local midnight. A toISOString() read here would
     // turn 2026-11-03 into 2026-11-02 on any machine east of UTC, which is where this project
-    // writes and reads. Built in local time on purpose so the case holds in any zone.
+    // writes and reads. The input is built in local time, so the case *passes* in any zone; it
+    // only *kills* a UTC implementation where the offset is not zero, which is true of this box
+    // and is measured in the localDay case above rather than hidden here.
     expect(buildBundle('invoice', { invoice_date: new Date(2026, 10, 3) }, [], []).invoice)
       .toEqual({ invoice_date: '2026-11-03' })
     expect(buildBundle('invoice', { invoice_date: new Date('not a date') }, [], []).invoice)
@@ -661,6 +734,23 @@ describe('evaluate', () => {
     // null is no record at all, and there is nothing here for any of the 19 rules to say.
     expect(evaluate(buildBundle('invoice', {}, [], []), CTX, [wouldFire]).length).toBe(1)
     expect(evaluate(buildBundle('invoice', null, [], []), CTX, [wouldFire])).toEqual([])
+  })
+
+  it('runs rules for a bundle that has rows even when its header is absent, in both kinds', () => {
+    const firesOnInvoice = rule({ id: 'invoice.needs_vendor', fields: ['vendor_name'] }, [
+      { ruleId: 'invoice.needs_vendor', field: 'vendor_name', severity: 'error', message: 'absent' },
+    ])
+    const firesOnContract = rule({ id: 'contract.needs_party', appliesTo: 'contract', fields: ['party'] }, [
+      { ruleId: 'contract.needs_party', field: 'party', severity: 'error', message: 'absent' },
+    ])
+    // A mutation check found the all-empty case above pins the guard in one direction only: a guard
+    // reading `header === undefined` on its own keeps every earlier test green while silencing the
+    // `*.present` rules for a record that does have rows. These three assertions each kill one term
+    // of the real condition, and the third is what exercises the `bundle.kind` selection, which is
+    // otherwise dead under test — hard-wiring it to `bundle.invoice` survives the first two.
+    expect(evaluate(buildBundle('invoice', null, [{ amount: '1' }], []), CTX, [firesOnInvoice])).toHaveLength(1)
+    expect(evaluate(buildBundle('contract', null, [], [{ description: 'x' }]), CTX, [firesOnContract])).toHaveLength(1)
+    expect(evaluate(buildBundle('contract', { total: '10' }, [], []), CTX, [firesOnContract])).toHaveLength(1)
   })
 
   it('orders by codepoint, not locale collation, so the order survives a locale change', () => {
@@ -1067,7 +1157,7 @@ git commit -m "feat(validation): thirteen invoice rules, each with the case that
 
 **Interfaces:**
 - Consumes: the same helpers Task 4 introduced: `make`, `header`, `present`, the `./values.js` primitives.
-- Produces: `RULES.length === 19`. Tasks 6 to 13 import only `RULES`, `evaluate`, `buildBundle`, `RULESET_VERSION` and `todayInUtc`.
+- Produces: `RULES.length === 19`. Tasks 6 to 13 import only `RULES`, `evaluate`, `buildBundle`, `RULESET_VERSION` and `localDay`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1690,7 +1780,7 @@ git commit -m "feat(db): findings persist one row per rule and field, and a waiv
 - Create: `tests/mastra/workflows/intake-validation.test.ts`
 
 **Interfaces:**
-- Consumes: `evaluate`, `buildBundle`, `todayInUtc`, `RULESET_VERSION` from Task 3; `replaceValidation` from Task 7; the `normalized` shape already produced by `normalizeAndResolveStep` (`{ header, lines }` or `{ header, terms }`, cast at `document-intake.ts:540-550`).
+- Consumes: `evaluate`, `buildBundle`, `localDay`, `RULESET_VERSION` from Task 3; `replaceValidation` from Task 7; the `normalized` shape already produced by `normalizeAndResolveStep` (`{ header, lines }` or `{ header, terms }`, cast at `document-intake.ts:540-550`).
 - Produces:
 
 ```ts
@@ -1846,7 +1936,7 @@ const bundle = inputData.normalized
     )
   : null
 const violations = bundle
-  ? evaluate(bundle, { today: todayInUtc() }).filter((v) => isCorrectable(v.field))
+  ? evaluate(bundle, { today: localDay(new Date()) }).filter((v) => isCorrectable(v.field))
   : []
 const openErrors = violations.filter((v) => v.severity === 'error').length
 const status = inputData.needsReview || openErrors > 0 ? 'needs_review' : 'ready'
@@ -1890,7 +1980,7 @@ git commit -m "feat(intake): a broken sum queues a document even at high confide
 - Create: `tests/api/document-validation.test.ts`
 
 **Interfaces:**
-- Consumes: `listViolations`, `waiveViolation`, `replaceValidation` from Task 7; `evaluate`, `buildBundle`, `todayInUtc`, `RULESET_VERSION` from Task 3; `INVOICE_FIELDS`, `CONTRACT_FIELDS` from Task 8; `getInvoice`, `getContract`, `getDocument` from `src/db/documents.ts`.
+- Consumes: `listViolations`, `waiveViolation`, `replaceValidation` from Task 7; `evaluate`, `buildBundle`, `localDay`, `RULESET_VERSION` from Task 3; `INVOICE_FIELDS`, `CONTRACT_FIELDS` from Task 8; `getInvoice`, `getContract`, `getDocument` from `src/db/documents.ts`.
 - Produces: `GET /api/documents/:id/validation`, `POST /api/documents/:id/validation`, `POST /api/documents/:id/validation/:violationId/waive`. Task 10 reuses the `runValidationForDocument` helper this task extracts.
 
 - [ ] **Step 1: Write the failing tests**
@@ -2010,7 +2100,7 @@ async function runValidationForDocument(
   const bundle = document.kind === 'invoice'
     ? toInvoiceBundle(await getInvoice(identity, documentId))
     : toContractBundle(await getContract(identity, documentId))
-  const violations = evaluate(bundle, { today: todayInUtc() }).filter((v) => isCorrectable(v.field))
+  const violations = evaluate(bundle, { today: localDay(new Date()) }).filter((v) => isCorrectable(v.field))
   const counts = await replaceValidation(
     getDbClient(), documentId, identity.tenantId, violations, RULESET_VERSION,
   )
@@ -2717,7 +2807,7 @@ git commit -m "feat(api): a prioritised review queue ordered by open errors then
 - Create: `tests/api/analytics.test.ts`
 
 **Interfaces:**
-- Consumes: `document_validation` (Task 6), `document_field_audit` (Phase 1), `documents`, `parseDate` from `src/validation/values.js`, `todayInUtc` from `src/validation/index.js`.
+- Consumes: `document_validation` (Task 6), `document_field_audit` (Phase 1), `documents`, `parseDate` from `src/validation/values.js`, `localDay` from `src/validation/index.js`.
 - Produces: `GET /api/documents/analytics/review` with the six spec-11 keys plus a `window` object the panel labels itself with. Task 16 consumes it.
 
 ```ts
@@ -3081,7 +3171,7 @@ function parseAnalyticsWindow(
   from: string | undefined,
   to: string | undefined,
 ): { ok: true; window: AnalyticsWindow } | { ok: false; error: string } {
-  const today = todayInUtc()
+  const today = localDay(new Date())
   const toDay = to === undefined || to === '' ? today : parseDate(to)
   if (toDay === null) return { ok: false, error: 'bad_range' }
   const fromDay = from === undefined || from === '' ? null : parseDate(from)
@@ -3111,7 +3201,9 @@ function dayLabel(ms: number): string {
 }
 ```
 
-`to` names the last day the reader wants, so `toExclusive` is that day plus one and `window.days` counts calendar days inclusively on both ends: `from=2026-09-01&to=2026-09-30` is a 30-day window, and the default is the 90 days ending today. `todayInUtc()` keeps the default window off the wall clock of the process, which is what Global Constraint 6 asked for by making `today` a parameter; the route is the boundary, so the route is where the clock is read.
+`to` names the last day the reader wants, so `toExclusive` is that day plus one and `window.days` counts calendar days inclusively on both ends: `from=2026-09-01&to=2026-09-30` is a 30-day window, and the default is the 90 days ending today. The default `today` is `localDay(new Date())`, read here because the route is the boundary and constraint 6 keeps the clock out of `src/validation/`; local, because the day an operator means by "today" is their own business day, not the UTC one. Window maths is the one place this plan renders a day in UTC deliberately: `parseDate` builds with `Date.UTC` and `dayLabel` reads it back with `toISOString()`, so build and render agree inside the same function and no stored `date` is ever compared against these labels.
+
+Two defects in the snippet above are measured and belong to Task 12, which is why they are recorded here rather than silently carried: `parseDate` returns `string | null` (`src/validation/values.ts:37`), so `toDay.getTime()` and `fromDay.getTime()` do not typecheck as written, and the fix is a `dayToMs(day: string)` helper that splits the three components and rebuilds them with `Date.UTC`, keeping that UTC pair intact. Separately, the resulting window edges are UTC midnights, which on this box (UTC+11) ends "the 90 days ending today" at 11:00 local on the last day and drops that afternoon's rows; if the analytics query filters `created_at` against these instants, Task 12 decides whether the edges are the operator's day boundaries instead, and says which it chose.
 
 ```ts
 app.get('/analytics/review', async (c) => {
@@ -3156,7 +3248,7 @@ git commit -m "feat(api): review analytics with one defined formula per reported
 - Create: `tests/api/audit-export.test.ts`
 
 **Interfaces:**
-- Consumes: `document_field_audit` (Phase 1), `documents.title`, `parseDate` from `src/validation/values.js`, `todayInUtc` from `src/validation/index.js`, the `parseAnalyticsWindow` helper Task 12 added (reused here unchanged).
+- Consumes: `document_field_audit` (Phase 1), `documents.title`, `parseDate` from `src/validation/values.js`, `localDay` from `src/validation/index.js`, the `parseAnalyticsWindow` helper Task 12 added (reused here unchanged).
 - Produces: `GET /api/documents/audit/export` returning `text/csv`. Task 16 puts a button on it.
 
 ```ts
@@ -4947,7 +5039,12 @@ function Bar({ value, max }: { value: number; max: number }) {
 }
 
 export function ReviewAnalytics({ kind }: { kind: 'invoice' | 'contract' | null }) {
-  const today = new Date().toISOString().slice(0, 10)
+  // Constraint 6's frame rule (R45), browser side: the day the operator means by "today" is their
+  // own local day. A `toISOString()` read here would show yesterday for the first 11 hours of every
+  // day on this machine, and the default window would silently stop a day short. `defaultFrom` below
+  // stays in UTC because it both builds and renders there, which is the pair rule, not a third frame.
+  const now = new Date()
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
   const [from, setFrom] = useState(defaultFrom(today))
   const [to, setTo] = useState(today)
   const [data, setData] = useState<Analytics | null>(null)
