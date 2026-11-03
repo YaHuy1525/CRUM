@@ -18,6 +18,10 @@ import {
   type ContractHeaderWrite,
   type ContractTermWrite,
 } from '../../db/documents'
+import { replaceValidation } from '../../db/validation'
+import { getDbClient } from '../../db/client'
+import { evaluate, buildBundle, localDay, RULESET_VERSION } from '../../validation/index'
+import { isCorrectable } from '../../validation/fields'
 import { ingestStep } from './ingest'
 
 
@@ -516,19 +520,20 @@ const normalizeAndResolveStep = createStep({
 const persistedSchema = normalizedSchema.extend({
   documentId: z.string().uuid(),
   status: z.enum(['ready', 'needs_review']),
+  validationCount: z.number().int().min(0),
+  openErrors: z.number().int().min(0),
   text: z.string(),
   contentType: z.string(),
   documentTitle: z.string(),
 })
 
-const persistStructuredStep = createStep({
+export const persistStructuredStep = createStep({
   id: 'persist-structured',
   inputSchema: normalizedSchema,
   outputSchema: persistedSchema,
   execute: async (context) => {
     const { inputData } = context
     const contentHash = await sha256Hex(inputData.text)
-    const status = inputData.needsReview ? 'needs_review' : 'ready'
 
     // The original bytes live only in parse-binary's step result; pulling them
     // back here keeps the base64 out of every relay schema in between.
@@ -541,6 +546,20 @@ const persistStructuredStep = createStep({
     const contractPart = inputData.kind === 'contract' && inputData.normalized
       ? (inputData.normalized as unknown as { header: ContractHeaderWrite; terms: ContractTermWrite[] })
       : null
+
+    const bundle = inputData.normalized
+      ? buildBundle(
+          inputData.kind as 'invoice' | 'contract',
+          (invoicePart?.header ?? contractPart?.header ?? null) as Record<string, unknown> | null,
+          (invoicePart?.lines ?? []) as unknown as Array<Record<string, unknown>>,
+          (contractPart?.terms ?? []) as unknown as Array<Record<string, unknown>>,
+        )
+      : null
+    const violations = bundle
+      ? evaluate(bundle, { today: localDay(new Date()) }).filter((v) => isCorrectable(v.field))
+      : []
+    const openErrors = violations.filter((v) => v.severity === 'error').length
+    const status: 'ready' | 'needs_review' = inputData.needsReview || openErrors > 0 ? 'needs_review' : 'ready'
 
     const created = await insertDocument({
       tenantId: inputData.tenantId,
@@ -574,13 +593,20 @@ const persistStructuredStep = createStep({
       fieldConfidence: inputData.fieldConfidence,
     })
 
-    const finalStatus: 'ready' | 'needs_review' =
-      created.status === 'needs_review' ? 'needs_review' : 'ready'
+    let openErrorCount = 0
+    if (bundle) {
+      const counts = await replaceValidation(
+        getDbClient(), created.id, inputData.tenantId, violations, RULESET_VERSION,
+      )
+      openErrorCount = counts.openErrors
+    }
 
     return {
       ...inputData,
       documentId: created.id,
-      status: finalStatus,
+      status,
+      validationCount: violations.length,
+      openErrors: openErrorCount,
       text: inputData.text,
       contentType: 'text',
       documentTitle: inputData.title,
