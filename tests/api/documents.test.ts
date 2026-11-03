@@ -51,7 +51,11 @@ vi.mock('../../src/db/marketing-assets', async (importOriginal) => ({
   listBundleIdsForDocument: assets.listBundleIdsForDocument,
 }))
 
-import { createDocumentsRouter, type DocumentIntakeWorkflowLike } from '../../src/api/documents'
+import {
+  createDocumentsRouter,
+  type DocumentJobSnapshot,
+  type DocumentQueueLike,
+} from '../../src/api/documents'
 import { parseEnv } from '../../src/config/env'
 
 const TENANT = '550e8400-e29b-41d4-a716-446655440000'
@@ -71,16 +75,20 @@ function sqlFor(needle: string): { sql: string; params: unknown[] } | undefined 
   return db.calls.find((call) => call.sql.includes(needle))
 }
 
-function workflowReturning(outcome: unknown): { fake: DocumentIntakeWorkflowLike; start: ReturnType<typeof vi.fn> } {
-  const start = vi.fn().mockResolvedValue(outcome)
-  const fake: DocumentIntakeWorkflowLike = { createRun: vi.fn().mockResolvedValue({ start }) }
-  return { fake, start }
+function queueFake(statusResult: DocumentJobSnapshot | null = null): {
+  fake: DocumentQueueLike
+  enqueue: ReturnType<typeof vi.fn>
+  status: ReturnType<typeof vi.fn>
+} {
+  const enqueue = vi.fn().mockResolvedValue('job-42')
+  const status = vi.fn().mockResolvedValue(statusResult)
+  return { fake: { enqueue, status }, enqueue, status }
 }
 
-function router(intake?: DocumentIntakeWorkflowLike | null): Hono {
+function router(queue?: DocumentQueueLike | null): Hono {
   return createDocumentsRouter({
     env: parseEnv({}),
-    ...(intake ? { getIntakeWorkflow: () => intake } : {}),
+    ...(queue !== undefined ? { queue } : {}),
   })
 }
 
@@ -88,11 +96,6 @@ function uploadForm(name = 'bill.pdf', type = 'application/pdf'): FormData {
   const form = new FormData()
   form.set('file', new File([new Uint8Array([0x25, 0x50, 0x44, 0x46])], name, { type }))
   return form
-}
-
-const SUCCESS = {
-  status: 'success',
-  result: { documentId: DOC, status: 'ready', kind: 'invoice', confidence: 0.9, chunkCount: 4, indexName: `tenant_${TENANT}` },
 }
 
 beforeEach(() => {
@@ -113,33 +116,30 @@ describe('identity gate', () => {
 })
 
 describe('POST /api/documents/upload', () => {
-  it('runs the intake workflow with the bytes, identity, and a tenant request context', async () => {
-    const { fake, start } = workflowReturning(SUCCESS)
+  it('queues the intake job with the bytes and the resolved identity', async () => {
+    const { fake, enqueue } = queueFake()
 
     const res = await router(fake).request('/api/documents/upload', { method: 'POST', headers: AUTH, body: uploadForm() })
 
-    expect(res.status).toBe(201)
-    expect((await json<{ documentId?: string; status?: string; kind?: string }>(res))).toMatchObject({
-      documentId: DOC,
-      status: 'ready',
-      kind: 'invoice',
+    expect(res.status).toBe(202)
+    expect((await json<{ jobId?: string; status?: string }>(res))).toMatchObject({
+      jobId: 'job-42',
+      status: 'queued',
     })
-    const args = start.mock.calls[0]![0] as { inputData: Record<string, unknown>; requestContext: { get: (k: string) => unknown } }
-    expect(args.inputData).toMatchObject({ tenantId: TENANT, ownerId: USER, source: 'upload', title: 'bill.pdf' })
+    const job = enqueue.mock.calls[0]![0] as Record<string, unknown>
+    expect(job).toMatchObject({ tenantId: TENANT, userId: USER, fileName: 'bill.pdf', source: 'upload' })
     // base64 of the three PDF header bytes, so the parse step can rebuild them.
-    expect(Buffer.from(String(args.inputData.dataBase64), 'base64')).toEqual(Buffer.from([0x25, 0x50, 0x44, 0x46]))
-    expect(args.requestContext.get('tenantId')).toBe(TENANT)
-    expect(args.requestContext.get('userId')).toBe(USER)
+    expect(Buffer.from(String(job.fileData), 'base64')).toEqual(Buffer.from([0x25, 0x50, 0x44, 0x46]))
   })
 
-  it('answers 503 when no intake workflow is wired', async () => {
-    const res = await router().request('/api/documents/upload', { method: 'POST', headers: AUTH, body: uploadForm() })
+  it('answers 503 when no queue is wired', async () => {
+    const res = await router(null).request('/api/documents/upload', { method: 'POST', headers: AUTH, body: uploadForm() })
     expect(res.status).toBe(503)
-    expect((await json<{ error?: string }>(res)).error).toBe('intake-not-wired')
+    expect((await json<{ error?: string }>(res)).error).toBe('queue-not-wired')
   })
 
   it('refuses a JSON body: upload is multipart only', async () => {
-    const res = await router().request('/api/documents/upload', {
+    const res = await router(null).request('/api/documents/upload', {
       method: 'POST',
       headers: { ...AUTH, 'content-type': 'application/json' },
       body: JSON.stringify({ title: 'x' }),
@@ -148,34 +148,30 @@ describe('POST /api/documents/upload', () => {
   })
 
   it('refuses an extension the parse step cannot turn into text', async () => {
-    const { fake, start } = workflowReturning(SUCCESS)
+    const { fake, enqueue } = queueFake()
     const res = await router(fake).request('/api/documents/upload', {
       method: 'POST',
       headers: AUTH,
       body: uploadForm('sheet.xlsx', 'application/vnd.ms-excel'),
     })
     expect(res.status).toBe(415)
-    expect(start).not.toHaveBeenCalled()
+    expect(enqueue).not.toHaveBeenCalled()
+  })
+})
+
+describe('GET /api/documents/status/:jobId', () => {
+  it('returns the queued job snapshot', async () => {
+    const { fake } = queueFake({ id: 'job-42', state: 'active', progress: 40 })
+    const body = await json<{ id?: string; state?: string; progress?: number }>(
+      router(fake).request('/api/documents/status/job-42', { headers: AUTH }),
+    )
+    expect(body).toMatchObject({ id: 'job-42', state: 'active', progress: 40 })
   })
 
-  it('surfaces a needs_review outcome with a 201 (a valid, gated result)', async () => {
-    const { fake } = workflowReturning({
-      status: 'success',
-      result: { documentId: DOC, status: 'needs_review', kind: 'invoice', confidence: 0.4, chunkCount: 2, indexName: 'idx' },
-    })
-    const res = await router(fake).request('/api/documents/upload', { method: 'POST', headers: AUTH, body: uploadForm() })
-    expect(res.status).toBe(201)
-    expect((await json<{ status?: string }>(res)).status).toBe('needs_review')
-  })
-
-  it('reports a failed run as a 502 with the workflow error', async () => {
-    const { fake } = workflowReturning({ status: 'failed', error: { message: 'model unavailable' } })
-    const res = await router(fake).request('/api/documents/upload', { method: 'POST', headers: AUTH, body: uploadForm() })
-    expect(res.status).toBe(502)
-    expect((await json<{ error?: string; detail?: string }>(res))).toMatchObject({
-      error: 'intake_failed',
-      detail: 'model unavailable',
-    })
+  it('answers 404 for a job the queue does not know', async () => {
+    const { fake } = queueFake(null)
+    const res = await router(fake).request('/api/documents/status/nope', { headers: AUTH })
+    expect(res.status).toBe(404)
   })
 })
 
@@ -213,6 +209,40 @@ describe('GET /api/documents', () => {
     const res = await router().request('/api/documents?kind=purchase_order', { headers: AUTH })
     expect(res.status).toBe(400)
     expect((await json<{ detail?: string }>(res)).detail).toContain('marketing_asset')
+  })
+
+  it('returns 400 when min_field_confidence is not a number', async () => {
+    const res = await router().request('/api/documents?min_field_confidence=abc', { headers: AUTH })
+    expect(res.status).toBe(400)
+    const body = await json<{ error?: string; detail?: string }>(res)
+    expect(body.error).toBe('invalid_query')
+    expect(body.detail).toContain('min_field_confidence')
+    expect(db.calls).toHaveLength(0)
+  })
+
+  it('passes the min_field_confidence filter to listDocuments as a NOT EXISTS clause', async () => {
+    db.results['FROM documents d'] = { rows: [], rowCount: 0 }
+    const res = await router().request('/api/documents?min_field_confidence=0.7', { headers: AUTH })
+    expect(res.status).toBe(200)
+    const list = sqlFor('FROM documents d')
+    expect(list).toBeDefined()
+    expect(list!.sql).toContain('NOT EXISTS')
+    expect(list!.sql).toContain('jsonb_each')
+    expect(list!.params).toContain(0.7)
+  })
+
+  it('returns all documents when min_field_confidence is not provided', async () => {
+    db.results['FROM documents d'] = {
+      rows: [{ id: DOC, kind: 'invoice', title: 'Bill', status: 'ready' }],
+      rowCount: 1,
+    }
+    const body = await json<{ documents: unknown[]; total: number }>(
+      router().request('/api/documents', { headers: AUTH }),
+    )
+    expect(body.total).toBe(1)
+    const list = sqlFor('FROM documents d')
+    expect(list!.sql).not.toContain('NOT EXISTS')
+    expect(list!.sql).not.toContain('jsonb_each')
   })
 })
 
