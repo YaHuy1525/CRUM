@@ -553,13 +553,13 @@ export async function resolveCustomerByEntity(
 export async function reviewDocument(
   context: TenantRequestContext,
   id: string,
-): Promise<{ id: string; status: string } | null> {
+): Promise<{ id: string; status: string; kind: string } | null> {
   const vis = docVisibility(context)
   const params = [...vis.params, id]
-  const rows = await queryRows<{ id: string; status: string }>(
+  const rows = await queryRows<{ id: string; status: string; kind: string }>(
     `UPDATE documents AS d SET status = 'ready', updated_at = now()
       WHERE d.id = $${params.length} AND ${vis.sql} AND d.status = 'needs_review'
-      RETURNING d.id, d.status`,
+      RETURNING d.id, d.status, d.kind`,
     params,
   )
   return rows[0] ?? null

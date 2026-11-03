@@ -16,6 +16,7 @@ const h = vi.hoisted(() => ({
   listImageProviders: vi.fn(),
   selectedImageProviderName: vi.fn(),
   generate: vi.fn(),
+  invalidateOpenStageDraft: vi.fn(),
 }))
 
 vi.mock('../../src/db/marketing', () => ({
@@ -44,7 +45,7 @@ vi.mock('../../src/marketing/image-spend', async () => {
   )
   return { ...actual, committedSpendMinor: h.committedSpendMinor, committedBundleSpendMinor: h.committedBundleSpendMinor, recordImageSpend: h.recordImageSpend }
 })
-vi.mock('../../src/db/pending-writes', () => ({ createHumanTask: h.createHumanTask }))
+vi.mock('../../src/db/pending-writes', () => ({ createHumanTask: h.createHumanTask, invalidateOpenStageDraft: h.invalidateOpenStageDraft }))
 vi.mock('../../src/marketing/image-provider', () => ({
   selectImageAdapter: h.selectImageAdapter,
   listImageProviders: h.listImageProviders,
@@ -380,6 +381,22 @@ describe('marketing.generate_assets spends', () => {
       bundleId: BUNDLE,
       artifacts: [{ role: 'creative-designer', kind: 'image', documentId: DOC, textContent: null }],
     })
+  })
+
+  // A generate run that attaches new bytes changes the proposal a reviewer was
+  // looking at. The invalidation is guarded on `inserted > 0`, not on
+  // `attached.length > 0`: a run that reused every asset wrote nothing new and
+  // must not disturb a mid-review approval.
+  it('invalidates the waiting approval when the run attached a picture', async () => {
+    h.insertMarketingArtifacts.mockResolvedValue(1)
+    await run({ bundleId: BUNDLE })
+    expect(h.invalidateOpenStageDraft).toHaveBeenCalledWith(TENANT, BUNDLE, 'assets_changed_after_staging')
+  })
+
+  it('does not invalidate a bundle whose run attached nothing, even when it reused assets', async () => {
+    h.insertMarketingArtifacts.mockResolvedValue(0)
+    await run({ bundleId: BUNDLE })
+    expect(h.invalidateOpenStageDraft).not.toHaveBeenCalled()
   })
 
   it('records the cost Replicate reported, not the admission estimate', async () => {

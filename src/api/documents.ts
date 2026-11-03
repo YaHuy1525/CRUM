@@ -12,6 +12,8 @@ import {
   getContract,
   reviewDocument,
 } from '../db/documents'
+import { invalidateOpenStageDraft } from '../db/pending-writes'
+import { listBundleIdsForDocument } from '../db/marketing-assets'
 import { MAX_DOCUMENT_BYTES } from '../mastra/workflows/document-intake'
 
 interface IntakeInput {
@@ -255,7 +257,24 @@ export function createDocumentsRouter(deps: DocumentsRouterDeps): Hono {
 
     const updated = await reviewDocument(gate.identity, id.data)
     if (!updated) return c.json({ error: 'not_found_or_not_pending' }, 404)
-    return c.json({ documentId: updated.id, status: updated.status })
+
+    // A flip from `needs_review` to `ready` changes whether a bundle carrying this
+    // picture can be staged at all (`marketing.stage_bundle` refuses on exactly this
+    // column, marketing-writes.ts:443-447), so an approval waiting on such a bundle
+    // is now about a proposal that does not exist. In the route and not inside
+    // `reviewDocument`: the data module would have to import `marketing-assets.ts`,
+    // which imports `documents.ts`, and the cycle is a worse price than one route
+    // that has to remember to call it. An invoice or contract document attaches to
+    // no bundle, so the name list is empty for those kinds and no write follows.
+    let invalidatedBundles = 0
+    if (updated.kind === 'marketing_asset') {
+      const bundleIds = await listBundleIdsForDocument(gate.identity.tenantId, updated.id)
+      for (const bundleId of bundleIds) {
+        const draftId = await invalidateOpenStageDraft(gate.identity.tenantId, bundleId, 'assets_changed_after_staging')
+        if (draftId !== null) invalidatedBundles += 1
+      }
+    }
+    return c.json({ documentId: updated.id, status: updated.status, invalidatedBundles })
   })
 
   return app

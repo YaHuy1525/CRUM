@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { TenantRequestContextSchema } from '../tenant-context'
 import { loadPolicy } from '../../governance/policy'
 import { scoreRisk } from '../../governance/risk'
-import { commitAutoWrite, createHumanTask, getOrCreateDraft } from '../../db/pending-writes'
+import { commitAutoWrite, createHumanTask, getOrCreateDraft, invalidateOpenStageDraft } from '../../db/pending-writes'
 import { getDbClient } from '../../db/client'
 import {
   ARTIFACT_KINDS,
@@ -280,6 +280,15 @@ export const saveBundleTool = createTool({
         bundleId,
         artifacts,
       })
+
+      // A save that writes new bytes moves the page the reviewer was shown, and a
+      // prediction written against the old ones is a statement about a proposal that
+      // no longer exists. `inserted > 0` rather than `artifacts.length > 0`: an
+      // idempotent replay of a save whose artifacts all exist changes nothing, and an
+      // approval killed over a no-op would teach agents to fear re-saves.
+      if (inserted > 0) {
+        await invalidateOpenStageDraft(rc.tenantId, bundleId, 'assets_changed_after_staging')
+      }
 
       if (pendingLeadToken !== null) {
         const stored = await setBundleLeadToken({
@@ -1533,11 +1542,14 @@ export const generateAssetsTool = createTool({
       }
 
       if (attached.length > 0 && bundle !== null) {
-        await insertMarketingArtifacts({
+        const inserted = await insertMarketingArtifacts({
           tenantId: rc.tenantId,
           bundleId: bundle.id,
           artifacts: attached,
         })
+        if (inserted > 0) {
+          await invalidateOpenStageDraft(rc.tenantId, bundle.id, 'assets_changed_after_staging')
+        }
       }
 
       let humanTaskId: string | null = null

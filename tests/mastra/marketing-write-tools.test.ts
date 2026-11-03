@@ -346,6 +346,8 @@ describe('marketing.save_bundle', () => {
       'INSERT INTO marketing_bundles': [{ id: BUNDLE_ID }],
       'UPDATE pending_writes SET committed_at': [{ id: DRAFT_ID }],
       'INSERT INTO marketing_artifacts': [{ id: 'a' }],
+      'SET rejected_at': [{ id: DRAFT_ID }],
+      'SET status': [{ id: BUNDLE_ID }],
     })
     const result = await save(
       bundleInput({
@@ -358,6 +360,40 @@ describe('marketing.save_bundle', () => {
     expect(result).toMatchObject({ artifactCount: 1 })
     expect(artifact?.params[1]).toBe(TENANT)
     expect(artifact?.params[2]).toBe(BUNDLE_ID)
+  })
+
+  // A save that writes new bytes moves the page the reviewer was shown, and a
+  // prediction written against the old ones is a statement about a proposal that
+  // no longer exists. `inserted > 0` rather than `artifacts.length > 0`: an
+  // idempotent replay of a save whose artifacts all exist changes nothing, and an
+  // approval killed over a no-op would teach agents to fear re-saves.
+  it('invalidates the open stage draft when a save writes new artifacts', async () => {
+    stubQueries({
+      'FROM marketing_bundles': [bundleRow()],
+      'INSERT INTO pending_writes': [pendingWriteRow({ committed_at: '2026-10-30T00:00:00.000Z', committed_record_id: BUNDLE_ID })],
+      'FROM pending_writes': [pendingWriteRow({ committed_at: '2026-10-30T00:00:00.000Z', committed_record_id: BUNDLE_ID })],
+      'INSERT INTO marketing_artifacts': [{ id: 'a1' }],
+      'SET rejected_at': [{ id: DRAFT_ID }],
+      'SET status': [{ id: BUNDLE_ID }],
+      'SELECT id, status, funnel_plan FROM marketing_bundles': [bundleRow()],
+    })
+    await save(bundleInput({ artifacts: [{ role: 'funnel-builder', kind: 'script', textContent: 'a script' }] }))
+    const reject = call('SET rejected_at = now(), rejection_reason = $3')
+    expect(reject?.params).toEqual([TENANT, BUNDLE_ID, 'assets_changed_after_staging'])
+  })
+
+  it('leaves the approval alone when the save wrote nothing new', async () => {
+    stubQueries({
+      'FROM marketing_bundles': [bundleRow()],
+      'INSERT INTO pending_writes': [pendingWriteRow({ committed_at: '2026-10-30T00:00:00.000Z', committed_record_id: BUNDLE_ID })],
+      'FROM pending_writes': [pendingWriteRow({ committed_at: '2026-10-30T00:00:00.000Z', committed_record_id: BUNDLE_ID })],
+      // Empty rows: insertMarketingArtifacts counts rows.length, so this makes
+      // `inserted === 0` and the invalidation branch is not entered.
+      'INSERT INTO marketing_artifacts': [],
+      'SELECT id, status, funnel_plan FROM marketing_bundles': [bundleRow()],
+    })
+    await save(bundleInput({ artifacts: [{ role: 'funnel-builder', kind: 'script', textContent: 'a script' }] }))
+    expect(call('SET rejected_at = now(), rejection_reason = $3')).toBeUndefined()
   })
 
   it('refuses an image artifact that names no document, before staging anything', async () => {
@@ -453,6 +489,8 @@ describe('marketing.save_bundle', () => {
       'FROM marketing_bundles': [bundleRow()],
       'INSERT INTO marketing_artifacts': [{ id: 'a' }],
       'SET lead_token': [{ id: BUNDLE_ID }],
+      'SET rejected_at': [{ id: DRAFT_ID }],
+      'SET status': [{ id: BUNDLE_ID }],
     })
     await save(
       bundleInput({
@@ -541,6 +579,8 @@ describe('marketing.save_bundle', () => {
       // Null at read time: the other save had not committed its token yet.
       'FROM marketing_bundles': [bundleRow()],
       'INSERT INTO marketing_artifacts': [{ id: 'a' }],
+      'SET rejected_at': [{ id: DRAFT_ID }],
+      'SET status': [{ id: BUNDLE_ID }],
       'SET lead_token': [],
     })
     await expect(

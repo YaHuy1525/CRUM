@@ -22,6 +22,12 @@ const db = vi.hoisted((): { calls: { sql: string; params: unknown[] }[]; results
   results: {},
 }))
 
+// The two marketing modules the review route calls when an asset flips to ready.
+// Mocked at the module seam so no route test opens a transaction or touches the
+// marketing-assets table; the assertions are on the calls the route makes.
+const writes = vi.hoisted(() => ({ invalidateOpenStageDraft: vi.fn() }))
+const assets = vi.hoisted(() => ({ listBundleIdsForDocument: vi.fn() }))
+
 vi.mock('../../src/db/client', () => ({
   getDbClient: () => ({
     query: (sql: string, params?: unknown[]): Promise<FakeResult> => {
@@ -35,12 +41,25 @@ vi.mock('../../src/db/client', () => ({
   closeDbClient: async () => {},
 }))
 
+vi.mock('../../src/db/pending-writes', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/db/pending-writes')>()),
+  invalidateOpenStageDraft: writes.invalidateOpenStageDraft,
+}))
+
+vi.mock('../../src/db/marketing-assets', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/db/marketing-assets')>()),
+  listBundleIdsForDocument: assets.listBundleIdsForDocument,
+}))
+
 import { createDocumentsRouter, type DocumentIntakeWorkflowLike } from '../../src/api/documents'
 import { parseEnv } from '../../src/config/env'
 
 const TENANT = '550e8400-e29b-41d4-a716-446655440000'
 const USER = '660e8400-e29b-41d4-a716-446655440009'
 const DOC = '770e8400-e29b-41d4-a716-446655440003'
+const BUNDLE = 'a1000000-0000-4000-8000-000000000099'
+const OTHER_BUNDLE = 'a2000000-0000-4000-8000-000000000099'
+const DRAFT = 'b1000000-0000-4000-8000-000000000099'
 
 const AUTH = { 'x-tenant-id': TENANT, 'x-user-id': USER, 'x-user-role': 'admin' }
 
@@ -80,6 +99,8 @@ beforeEach(() => {
   vi.clearAllMocks()
   db.calls.length = 0
   db.results = {}
+  writes.invalidateOpenStageDraft.mockReset()
+  assets.listBundleIdsForDocument.mockReset()
 })
 
 describe('identity gate', () => {
@@ -216,5 +237,49 @@ describe('POST /api/documents/:id/review', () => {
   it('answers 404 when the id is not a visible needs_review document', async () => {
     const res = await router().request(`/api/documents/${DOC}/review`, { method: 'POST', headers: AUTH })
     expect(res.status).toBe(404)
+  })
+
+  // A flip from `needs_review` to `ready` changes whether a bundle carrying this
+  // picture can be staged at all, so an approval waiting on such a bundle is now
+  // about a proposal that does not exist. An invoice or contract document attaches
+  // to no bundle, so the name list is empty for those kinds and no write follows.
+  it('invalidates every bundle a reviewed asset belongs to, and reports how many', async () => {
+    db.results['UPDATE documents AS d SET status'] = {
+      rows: [{ id: DOC, status: 'ready', kind: 'marketing_asset' }],
+      rowCount: 1,
+    }
+    assets.listBundleIdsForDocument.mockResolvedValue([BUNDLE, OTHER_BUNDLE])
+    writes.invalidateOpenStageDraft.mockResolvedValueOnce(DRAFT).mockResolvedValueOnce(null)
+
+    const res = await router().request(`/api/documents/${DOC}/review`, { method: 'POST', headers: AUTH })
+
+    expect(await json<{ status?: string; invalidatedBundles?: number }>(res)).toMatchObject({
+      status: 'ready',
+      invalidatedBundles: 1,
+    })
+    expect(assets.listBundleIdsForDocument).toHaveBeenCalledWith(TENANT, DOC)
+    expect(writes.invalidateOpenStageDraft.mock.calls.map((c: unknown[]) => c[1])).toEqual([BUNDLE, OTHER_BUNDLE])
+    expect(writes.invalidateOpenStageDraft.mock.calls[0]![2]).toBe('assets_changed_after_staging')
+  })
+
+  it('never reaches the marketing lane when an invoice is reviewed', async () => {
+    db.results['UPDATE documents AS d SET status'] = {
+      rows: [{ id: DOC, status: 'ready', kind: 'invoice' }],
+      rowCount: 1,
+    }
+    const res = await router().request(`/api/documents/${DOC}/review`, { method: 'POST', headers: AUTH })
+    expect((await json<{ invalidatedBundles?: number }>(res)).invalidatedBundles).toBe(0)
+    expect(assets.listBundleIdsForDocument).not.toHaveBeenCalled()
+  })
+
+  it('reports zero when the asset belongs to no bundle', async () => {
+    db.results['UPDATE documents AS d SET status'] = {
+      rows: [{ id: DOC, status: 'ready', kind: 'marketing_asset' }],
+      rowCount: 1,
+    }
+    assets.listBundleIdsForDocument.mockResolvedValue([])
+    const res = await router().request(`/api/documents/${DOC}/review`, { method: 'POST', headers: AUTH })
+    expect((await json<{ invalidatedBundles?: number }>(res)).invalidatedBundles).toBe(0)
+    expect(writes.invalidateOpenStageDraft).not.toHaveBeenCalled()
   })
 })
