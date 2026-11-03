@@ -1,7 +1,6 @@
 import { Hono } from 'hono'
 import type { Context } from 'hono'
 import { z } from 'zod'
-import { RequestContext } from '@mastra/core/request-context'
 import type { CrumEnv } from '../config/env'
 import type { TenantRequestContext } from '../mastra/tenant-context'
 import { IdentityError, resolveIdentity } from '../mastra/identity'
@@ -15,43 +14,48 @@ import {
 import { invalidateOpenStageDraft } from '../db/pending-writes'
 import { listBundleIdsForDocument } from '../db/marketing-assets'
 import { MAX_DOCUMENT_BYTES } from '../mastra/workflows/document-intake'
+import type { DocumentJobData } from '../queue/document-queue'
+import { getDbClient } from '../db/client'
 
-interface IntakeInput {
-  tenantId: string
-  ownerId: string
-  title: string
-  mime: string
-  source: 'upload' | 'email'
-  sourceRef: string | null
-  dataBase64: string
+/** The slice of the job queue the upload plane needs, injected so routes stay testable. */
+export interface DocumentJobSnapshot {
+  id?: string | null
+  state: string
+  progress?: unknown
+  data?: DocumentJobData
+  result?: unknown
+  failedReason?: string
+  timestamp?: number
+  processedOn?: number
+  finishedOn?: number
 }
 
-interface IntakeResult {
-  documentId: string
-  status: 'ready' | 'needs_review' | 'failed'
-  kind: 'invoice' | 'contract' | 'other'
-  confidence: number | null
-  chunkCount: number
-  indexName: string
-}
-
-type IntakeOutcome =
-  | { status: 'success'; result?: IntakeResult }
-  | { status: 'failed'; error?: { message?: string } }
-  | { status: 'tripwire' | 'suspended' | 'paused' }
-
-export interface DocumentIntakeWorkflowLike {
-  createRun(): Promise<{
-    start(args: {
-      inputData: IntakeInput
-      requestContext?: RequestContext
-    }): Promise<IntakeOutcome>
-  }>
+export interface DocumentQueueLike {
+  enqueue(data: DocumentJobData): Promise<string>
+  status(jobId: string): Promise<DocumentJobSnapshot | null>
 }
 
 export interface DocumentsRouterDeps {
   env: CrumEnv
-  getIntakeWorkflow?: () => DocumentIntakeWorkflowLike | null
+  /**
+   * `undefined` loads the BullMQ-backed queue on the first request that needs it,
+   * `null` means this plane has no queue and refuses uploads with 503, and a fake
+   * is what the route tests pass. The queue module is imported lazily because it
+   * opens a Redis connection as soon as it is loaded.
+   */
+  queue?: DocumentQueueLike | null
+}
+
+let defaultQueue: Promise<DocumentQueueLike> | null = null
+
+function loadDefaultQueue(): Promise<DocumentQueueLike> {
+  if (defaultQueue === null) {
+    defaultQueue = import('../queue/document-queue').then((mod) => ({
+      enqueue: mod.queueDocumentProcessing,
+      status: mod.getJobStatus,
+    }))
+  }
+  return defaultQueue
 }
 
 const IdSchema = z.string().uuid()
@@ -63,8 +67,13 @@ function extensionOf(name: string): string {
 }
 
 export function createDocumentsRouter(deps: DocumentsRouterDeps): Hono {
-  const { env } = deps
+  const { env, queue } = deps
   const app = new Hono().basePath('/api/documents')
+
+  async function resolveQueue(): Promise<DocumentQueueLike | null> {
+    if (queue !== undefined) return queue
+    return loadDefaultQueue()
+  }
 
   const auth = async (
     c: Context,
@@ -82,7 +91,7 @@ export function createDocumentsRouter(deps: DocumentsRouterDeps): Hono {
   app.post('/upload', async (c) => {
     const gate = await auth(c)
     if ('error' in gate) return gate.error
-    const { tenantId, userId, userRole } = gate.identity
+    const { tenantId, userId } = gate.identity
 
     if (!c.req.header('content-type')?.includes('multipart/form-data')) {
       return c.json(
@@ -115,71 +124,82 @@ export function createDocumentsRouter(deps: DocumentsRouterDeps): Hono {
       )
     }
 
-    const workflow = deps.getIntakeWorkflow?.() ?? null
-    if (!workflow) {
-      return c.json(
-        {
-          error: 'intake-not-wired',
-          detail: 'This router was created without getIntakeWorkflow, so the document cannot be processed.',
-        },
-        503,
-      )
-    }
-
     const bytes = new Uint8Array(await file.arrayBuffer())
     const dataBase64 = Buffer.from(bytes).toString('base64')
     const title =
       typeof form.title === 'string' && form.title.trim() ? form.title.trim() : file.name
 
-    const requestContext = new RequestContext()
-    requestContext.set('tenantId', tenantId)
-    requestContext.set('userId', userId)
-    requestContext.set('tenantContext', { tenantId, userId, userRole })
-
-    let outcome: IntakeOutcome
-    try {
-      const run = await workflow.createRun()
-      outcome = await run.start({
-        inputData: {
-          tenantId,
-          ownerId: userId,
-          title,
-          mime: file.type || '',
-          source: 'upload',
-          sourceRef: null,
-          dataBase64,
-        },
-        requestContext,
-      })
-    } catch (err) {
-      return c.json(
-        { error: 'intake_threw', detail: err instanceof Error ? err.message : String(err) },
-        502,
-      )
-    }
-
-    if (outcome.status === 'success' && outcome.result) {
+    const queueRef = await resolveQueue()
+    if (!queueRef) {
       return c.json(
         {
-          documentId: outcome.result.documentId,
-          status: outcome.result.status,
-          kind: outcome.result.kind,
-          confidence: outcome.result.confidence,
-          chunkCount: outcome.result.chunkCount,
-          indexName: outcome.result.indexName,
+          error: 'queue-not-wired',
+          detail: 'No document queue is attached to this plane, so intake cannot run.',
         },
-        201,
+        503,
       )
     }
 
-    return c.json(
-      {
-        error: 'intake_failed',
-        status: outcome.status,
-        detail: outcome.status === 'failed' ? outcome.error?.message : undefined,
-      },
-      502,
-    )
+    const fileId = `${tenantId}_${Date.now()}_${Math.random().toString(36).substring(7)}`
+
+    try {
+      const jobId = await queueRef.enqueue({
+        tenantId,
+        userId,
+        fileId,
+        fileName: title,
+        fileData: dataBase64,
+        mimeType: file.type || '',
+        source: 'upload',
+      })
+
+      return c.json(
+        {
+          jobId,
+          fileId,
+          status: 'queued',
+          message: 'Document queued for processing. Use GET /api/documents/status/:jobId to check progress.',
+        },
+        202,
+      )
+    } catch (err) {
+      return c.json(
+        { error: 'queue_failed', detail: err instanceof Error ? err.message : String(err) },
+        500,
+      )
+    }
+  })
+
+  app.get('/status/:jobId', async (c) => {
+    const gate = await auth(c)
+    if ('error' in gate) return gate.error
+
+    const jobId = c.req.param('jobId')
+    if (!jobId) {
+      return c.json({ error: 'jobId_required' }, 400)
+    }
+
+    const queueRef = await resolveQueue()
+    if (!queueRef) {
+      return c.json(
+        { error: 'queue-not-wired', detail: 'No document queue is attached to this plane.' },
+        503,
+      )
+    }
+
+    try {
+      const status = await queueRef.status(jobId)
+      if (!status) {
+        return c.json({ error: 'job_not_found' }, 404)
+      }
+
+      return c.json(status)
+    } catch (err) {
+      return c.json(
+        { error: 'status_check_failed', detail: err instanceof Error ? err.message : String(err) },
+        500,
+      )
+    }
   })
 
   app.get('/', async (c) => {
@@ -285,6 +305,45 @@ export function createDocumentsRouter(deps: DocumentsRouterDeps): Hono {
       }
     }
     return c.json({ documentId: updated.id, status: updated.status, invalidatedBundles })
+  })
+
+  app.get('/:id/audit', async (c) => {
+    const gate = await auth(c)
+    if ('error' in gate) return gate.error
+    const id = IdSchema.safeParse(c.req.param('id'))
+    if (!id.success) return c.json({ error: 'id must be a uuid' }, 400)
+
+    const docResult = await getDbClient().query<{ id: string }>(
+      `SELECT id FROM documents WHERE id = $1 AND tenant_id = $2`,
+      [id.data, gate.identity.tenantId],
+    )
+
+    if (docResult.rows.length === 0) {
+      return c.json({ error: 'not_found' }, 404)
+    }
+
+    const result = await getDbClient().query<{
+      document_id: string
+      tenant_id: string
+      table_name: string
+      field_name: string
+      action: string
+      old_value: unknown
+      new_value: unknown
+      changed_by: string | null
+      changed_at: string
+      change_source: string
+      reason: string | null
+    }>(
+      `SELECT document_id, tenant_id, table_name, field_name, action, old_value, new_value,
+              changed_by, changed_at, change_source, reason
+       FROM document_field_audit
+       WHERE document_id = $1 AND tenant_id = $2
+       ORDER BY changed_at DESC`,
+      [id.data, gate.identity.tenantId],
+    )
+
+    return c.json({ audit: result.rows })
   })
 
   return app
