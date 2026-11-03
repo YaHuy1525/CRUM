@@ -17,6 +17,7 @@ export interface DocumentRow {
   customer_id: string | null
   created_at: string
   updated_at: string
+  field_confidence?: Record<string, number> | null
 }
 
 export interface InvoiceRow {
@@ -383,7 +384,7 @@ export async function markDocumentFailed(id: string, tenantId: string): Promise<
 
 export async function listDocuments(
   context: TenantRequestContext,
-  filters: { kind?: string; customerId?: string; status?: string } = {},
+  filters: { kind?: string; customerId?: string; status?: string; minFieldConfidence?: number } = {},
   limit = 50,
 ): Promise<DocumentRow[]> {
   const vis = docVisibility(context)
@@ -411,13 +412,21 @@ export async function listDocuments(
     conditions.push(`d.customer_id = $${idx}`)
     params.push(filters.customerId)
   }
+  if (filters.minFieldConfidence !== undefined && !isNaN(filters.minFieldConfidence)) {
+    idx++
+    conditions.push(`NOT EXISTS (
+      SELECT 1 FROM jsonb_each(d.field_confidence) AS f(key, val)
+      WHERE (f.val)::numeric < $${idx}
+    )`)
+    params.push(filters.minFieldConfidence)
+  }
 
   idx++
   params.push(limit)
 
   return queryRows<DocumentRow>(
     `SELECT d.id, d.tenant_id, d.owner_id, d.kind, d.title, d.source, d.source_ref, d.content_hash,
-            d.mime, d.status, d.confidence, d.customer_id, d.created_at, d.updated_at
+            d.mime, d.status, d.confidence, d.customer_id, d.created_at, d.updated_at, d.field_confidence
        FROM documents d
       WHERE ${conditions.join(' AND ')}
       ORDER BY d.created_at DESC, d.id DESC
@@ -432,15 +441,28 @@ export async function getDocument(
 ): Promise<DocumentRow | null> {
   const vis = docVisibility(context)
   const params = [...vis.params, id]
-  const rows = await queryRows<DocumentRow>(
+  interface DocumentJoinRow extends DocumentRow {
+    invoice_field_confidence: Record<string, number> | null
+    contract_field_confidence: Record<string, number> | null
+  }
+  const result = await getDbClient().query<DocumentJoinRow>(
     `SELECT d.id, d.tenant_id, d.owner_id, d.kind, d.title, d.source, d.source_ref, d.content_hash,
-            d.mime, d.status, d.confidence, d.customer_id, d.created_at, d.updated_at
+            d.mime, d.status, d.confidence, d.customer_id, d.created_at, d.updated_at,
+            i.field_confidence as invoice_field_confidence,
+            c.field_confidence as contract_field_confidence
        FROM documents d
+       LEFT JOIN invoices i ON i.document_id = d.id
+       LEFT JOIN contracts c ON c.document_id = d.id
       WHERE d.id = $${params.length} AND ${vis.sql}
       LIMIT 1`,
     params,
   )
-  return rows[0] ?? null
+  if (result.rows.length === 0) return null
+  const row = result.rows[0]!
+  return {
+    ...row,
+    field_confidence: row.invoice_field_confidence || row.contract_field_confidence || null,
+  }
 }
 
 /**

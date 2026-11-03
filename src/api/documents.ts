@@ -229,6 +229,14 @@ export function createDocumentsRouter(deps: DocumentsRouterDeps): Hono {
     if (customerId && !IdSchema.safeParse(customerId).success) {
       return c.json({ error: 'invalid_query', detail: 'customerId must be a uuid' }, 400)
     }
+    const minFieldConfidenceRaw = c.req.query('min_field_confidence')
+    let minFieldConfidence: number | undefined
+    if (minFieldConfidenceRaw) {
+      minFieldConfidence = parseFloat(minFieldConfidenceRaw)
+      if (isNaN(minFieldConfidence)) {
+        return c.json({ error: 'invalid_query', detail: 'min_field_confidence must be a number' }, 400)
+      }
+    }
 
     const documents = await listDocuments(
       gate.identity,
@@ -236,6 +244,7 @@ export function createDocumentsRouter(deps: DocumentsRouterDeps): Hono {
         kind: kind || undefined,
         status: status || undefined,
         customerId: customerId || undefined,
+        minFieldConfidence,
       },
     )
     return c.json({ documents, total: documents.length })
