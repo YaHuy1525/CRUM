@@ -165,4 +165,62 @@ export const RULES: ValidationRule[] = [
           'A total was extracted but no line item was.')]
       : [],
   },
+  {
+    id: 'contract.counterparty.present', appliesTo: 'contract', fields: ['counterparty'],
+    run: (b) => present(header(b), 'counterparty') ? []
+      : [make('contract.counterparty.present', 'counterparty', 'error', 'No counterparty was extracted.')],
+  },
+  {
+    id: 'contract.currency.shape', appliesTo: 'contract', fields: ['currency'],
+    run: (b) => {
+      const h = header(b)
+      if (!present(h, 'currency') || isCurrencyShape(h.currency)) return []
+      return [make('contract.currency.shape', 'currency', 'warning',
+        'Currency is not a three-letter code.', { currency: String(h.currency) })]
+    },
+  },
+  {
+    id: 'contract.value.nonnegative', appliesTo: 'contract', fields: ['contract_value'],
+    run: (b) => {
+      const n = parseAmount(header(b).contract_value)
+      return n !== null && n < 0
+        ? [make('contract.value.nonnegative', 'contract_value', 'error', 'Contract value is negative.', { contract_value: n })]
+        : []
+    },
+  },
+  {
+    id: 'contract.date.order', appliesTo: 'contract', fields: ['expiry_date'],
+    run: (b) => {
+      const h = header(b)
+      const start = parseDate(h.effective_date)
+      const end = parseDate(h.expiry_date)
+      if (start === null || end === null) return []
+      return end < start
+        ? [make('contract.date.order', 'expiry_date', 'error',
+            'Expiry date precedes the effective date.', { effective_date: start, expiry_date: end })]
+        : []
+    },
+  },
+  {
+    id: 'contract.term.range', appliesTo: 'contract', fields: ['term_months'],
+    run: (b) => {
+      const raw = header(b).term_months
+      if (isAbsent(raw)) return []
+      const n = Number(raw)
+      if (!Number.isFinite(n)) return []
+      return n < 1 || n > 600
+        ? [make('contract.term.range', 'term_months', 'warning',
+            'Term is outside one to six hundred months.', { term_months: n })]
+        : []
+    },
+  },
+  {
+    id: 'contract.counterparty_email.format', appliesTo: 'contract', fields: ['counterparty_email'],
+    run: (b) => {
+      const h = header(b)
+      if (!present(h, 'counterparty_email') || isEmail(h.counterparty_email)) return []
+      return [make('contract.counterparty_email.format', 'counterparty_email', 'warning',
+        'Counterparty email is not a valid address.', { counterparty_email: String(h.counterparty_email) })]
+    },
+  },
 ]
