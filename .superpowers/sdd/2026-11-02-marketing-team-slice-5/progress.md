@@ -686,3 +686,41 @@ Carried to Task 14: `toIsoString` does not consume Task 13 directly, but it inhe
 
 
 
+
+## Task 14 preflight (controller, before implementation)
+
+Plan BASE for this task is `d1e7641` "docs(marketing): Task 13 review records the merged split and names two plan bugs". Brief extracted from the committed plan at `.superpowers/sdd/2026-11-02-marketing-team-slice-5/task-14-brief.md` (169 lines, plan `:3323-3491`).
+
+Ruling R-30: the Task 14 brief has one anchor drift worth editing for and two snippet-shape rulings. Nothing here changes the task's scope.
+
+First, the four production anchors are exact in HEAD: `src/db/reviewer-predictions.ts:26` (`createdAt: string` in `ReviewerPrediction`), `:29-35` (`PredictionSqlRow`), `:37-45` (`rowToPrediction`, ending `createdAt: row.created_at,` at `:43`), and `src/db/pending-writes.ts:86`, `:91`, `:92`, `:833`. No drift on the sites this task moves.
+
+Second, the drift: `:89-90` is cited as `committedAt` and `committedRecordId`. In HEAD they are at `:88-89` because the plan's line count predates Task 11's `invalidateOpenStageDraft` docstring. Off by one and it does not matter because the ruling is to leave those two alone, but the review must name the right lines. Verified they are `(row.committed_at as string | null | undefined) ?? null`, which is a nullable-column default rather than a timestamp-shaped lie, so leaving them is correct.
+
+Third, the comment inside the new helper cites `src/db/marketing-assets.ts:119` for the deleted silent fallback. In HEAD, `:119` is `mime: string`; the deleted-fallback comment is the block at `:120-127` inside the query's type literal at `:116-129`, and `getAssetBytes` itself starts at `:112`. Ruling: cite `src/db/marketing-assets.ts:112` (the function). A citation that points at a line inside an anonymous type literal drifts the moment a field is added; a citation that points at a named function does not. Same reasoning the slice applied when it moved from line cites to route-name cites in Task 12's comments.
+
+Fourth and fifth, the two test-snippet rulings. `tests/db/reviewer-predictions.test.ts` already has a `predictionRow()` builder (`:17-26`) that defaults `created_at` to an ISO string, and the plan's Step 2 snippet hand-writes the whole row literal instead. Ruling: call `predictionRow({ created_at: new Date(...) })`. One field override rather than a duplicated row, so a future column addition to the SELECT cannot silently leave this test asserting against a stale shape. `tests/db/open-stage-draft.test.ts` has the same builder, `draftRow()` (`:17-40`), defaulting `created_at` and `expires_at` to strings and `rejected_at` to null, so the Task 14 case is `draftRow({ created_at: new Date(...), expires_at: new Date(...), rejected_at: new Date(...) })` through `getOpenStageDraft`, plus a second assertion that the default `rejected_at: null` stays `null` rather than becoming the string `"null"`.
+
+Risk checked before implementing: a normaliser that throws where a cast silently produced `undefined` can turn a working read into a 500. All four `rowToPendingWrite` call sites (`:123`, `:721`, `:754`, `:791`) read `SELECT *` or `RETURNING *`, and both `rowToPrediction` sites (`:56-63` explicit column list, `:88-95` `RETURNING`) name `created_at`, so `created_at`, `expires_at` and `rejected_at` are present in every row the normaliser will see. The strict arm can only fire on a genuinely malformed driver value, which is the crash the plan wants.
+
+Mixed-file constraint: none of Task 14's six target files (`src/db/timestamps.ts`, `src/db/reviewer-predictions.ts`, `src/db/pending-writes.ts`, `tests/db/timestamps.test.ts`, `tests/db/reviewer-predictions.test.ts`, `tests/db/open-stage-draft.test.ts`) appear in `git status`'s concurrent-effort list, so no split commit is needed. `src/db/pending-writes.ts` does carry Task 11 and 12's committed additions; those are in HEAD and are not touched.
+
+Step 5's regression set exists: `tests/db/pending-writes-commit.test.ts` and `tests/api/marketing.test.ts` both present. Run them with the three Task 14 files because they consume these mappers.
+
+Carried to Task 15: `stageCampaignStatusChange` reads `expires_at` and writes receipts, so it lands on top of a mapper whose timestamp types now mean what they say. If Task 15 formats a timestamp itself, it should use `toIsoString` rather than add a fifth cast.
+
+## Task 14 review (independent subagent, dispatch succeeded)
+
+Commit `24a6da2` "fix(db): a row mapper's timestamps say what the driver actually returns" (6 files, +135/−6). Verdict: **DONE**, 0 Critical, 0 Important, 5 Minor. Recorded in full at `.superpowers/sdd/2026-11-02-marketing-team-slice-5/task-14-review-1.md`.
+
+This is the first genuine independent review since Task 7. The reviewer ran the gates itself and got the same numbers as the controller: 65 tests passing across the five named files, typecheck clean, lint clean. RED was captured before the helper existed with two failures of the exact form `expected 2026-11-02T04:00:00.000Z to be '2026-11-02T04:00:00.000Z'`, which is the driver's `Date` walking through the cast.
+
+**Correction to R-30, from the reviewer.** The preflight said "all four `rowToPendingWrite` call sites" and checked `:129`, `:727`, `:760`, `:797`. The real count is six: `listPendingWrites` (`:994`) and `listDecidedWrites` (`:1009`) pass the mapper to `.map()` by name, so a grep for `rowToPendingWrite(` with a trailing paren misses them. Re-verified in the tree: both read `SELECT * FROM pending_writes`, so `created_at`, `expires_at` and `rejected_at` are present and the strict arm cannot fire. The safety conclusion is unchanged, the evidence line was wrong, and the count is corrected so the final review does not repeat it. A grep for a function used as a callback must search for the bare name.
+
+Minor items parked for the final review: `committedAt` (`src/db/pending-writes.ts:94`) keeps the same type fiction by the brief's own ruling, so one column in the file still says `string` and gets a `Date`. `tests/db/open-stage-draft.test.ts:102` was never a red test and is a forward guard only. `approval-flow.ts:39` now interpolates an ISO string in its expiry error rather than a `Date.toString()`, with no test asserting the old form.
+
+**New finding the controller added after the review, and the one thing this task left genuinely inconsistent:** `src/api/message-mapping.ts:69` declares a private `toIso` that handles `Date` and `string` identically to `toIsoString`, then accepts a number as epoch ms and returns `new Date(0).toISOString()` for anything else. The repo now has a strict normaliser and a lenient one that answers 1970-01-01 for a malformed column, which is the same silent-fallback class the new helper's own docstring cites `getAssetBytes` for deleting. Out of Task 14's scope. Task 19 or the final review should either route it through `toIsoString` or write down why the message lane is allowed to be lenient. `src/db/alerts.ts:280`'s `toIsoDate(d: Date)` is not a normaliser and is not part of this.
+
+Both R-30 deviations (the `:112` citation, the row-builder reuse) were verified against the tree by the reviewer. No split commit was needed: none of Task 14's files were in the concurrent queue refactor's set, and that effort's unstaged edits are still unstaged after `24a6da2`.
+
+Carried to Task 15: it reads `expires_at` and writes receipts, so any timestamp it formats should call `toIsoString` instead of adding a fifth cast. Postgres 5455 is still down and Task 12's integration file is still parked for Task 19.
