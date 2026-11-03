@@ -104,6 +104,34 @@ git commit -m "feat(marketing): the campaign status decision becomes callable, a
 
 `tests/mastra/marketing-publish-tools.test.ts` joins that list only if you had to change it, and say so in the report. Stage nothing else, and confirm with `git status --short` immediately before committing that the other effort's paths are still unstaged. Do not amend any commit. Do not dispatch subagents, and do not spawn a reviewer; the controller does that.
 
+## Addendum A7. Round 2 ruling on the blocker you reported
+
+Your report is accepted in full: seven files done, RED captured, every unit gate green, one typecheck error, one integration failure, and both traced to the same line in a file this brief had put off limits. Stopping rather than editing it was the right call, and the ruling is that the fix travels in your commit. A change to a return type owns the adaptation of its consumers, because a commit that leaves HEAD failing typecheck is a commit the next reader has to debug.
+
+`tests/integration/marketing-campaign-status.test.ts` is therefore yours for exactly one line, and nothing else in it.
+
+`:118` currently reads `const draftId = await stageCampaignStatusChange({`. Replace the binding with a destructuring rename so the rest of the case, including `:128`'s `getPendingWrite(draftId, TENANT)`, is untouched:
+
+```ts
+const { pendingWriteId: draftId } = await stageCampaignStatusChange({
+```
+
+Do not add an assertion about `riskScore` there, do not restructure the case, and do not rename the variable. The unit file already pins the pair, and an integration test that re-pins a unit's job is a second place for the same fact to go stale.
+
+The eighth path joins the A6 `git add` list, and the subject line stays as written. Add a body line naming the integration file and saying why it is in the commit, so the ownership question cannot be asked again by a reader of `git log`.
+
+Then re-run, in this order, with the URL exported in the same shell for the integration step:
+
+```bash
+cd D:/Code/CRUM
+npm run typecheck
+npx vitest run --project integration tests/integration/analyst-cron.test.ts tests/integration/marketing-campaign-status.test.ts
+```
+
+Typecheck must be clean across the whole repo, and the integration run must be `Test Files 2 passed (2)` with `Tests 13 passed (13)`, 12 plus 1, and no skip line. Quote both. The five unit files and the two repo gates you already ran do not need re-running unless this one line somehow changes them; if you do re-run them, report the counts.
+
+One hazard, because the tree has moved since you started. The controller has landed `b817df7`, which reorders the assertions in `tests/marketing/publish-drain.test.ts`'s campaign drain case and corrects three comment anchors. That file is still not yours. Verify with `git diff --stat` before staging that your diff is still the eight paths you expect, and report anything else you find modified rather than staging it.
+
 ## Report back
 
 Return the commit hash, the file count and the insert count, the RED you captured, every gate with its per-file counts, any deviation from the plan with the reason, and anything you found that belongs to Task 18 or Task 19 rather than here.

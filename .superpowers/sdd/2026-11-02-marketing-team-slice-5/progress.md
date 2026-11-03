@@ -1031,9 +1031,24 @@ The R-39 ruling at line 855 said "registers `makeSetCampaignStatusAdapter` and `
 
 `registerDrainAdapters` returns a record with `pageHostConfigured` and `metaConfigured` rather than a bare handle list, because the defect lives exactly at the point where a single boolean cannot say which lane is missing. "no Pages config" and "no Meta config" are two operators' problems, and main's two warnings are the observable. The page block was also restructured out of `main()` into the exported function: `main()` is behind an entry guard and no test can reach it, which is why R-39 survived three slices of tests. The precedent is the deleted `statusAdapterConfigFromEnv`, exported from a script for exactly this reason.
 
-### The mutation that proves the new block
+### The mutation that proves the new block, measured twice because the first measurement was wrong
 
-`tests/marketing/publish-drain.test.ts` gains four `registerDrainAdapters` cases and a `fakeClient(failOn?, row?)` second parameter so the claim can return a campaign row. Deleting `handles.push(...metaLane)` gives `Tests 3 failed | 5 passed (8)`, naming `maps all four queued actions`, `drains a campaign row rather than recording no_adapter`, and `reports the page lane as missing when only Meta is configured`. Restoring both lines returns 8 passed. The drain case stubs `globalThis.fetch` (the adapters fall back to `config.fetchImpl ?? fetch`, `src/marketing/meta-ads.ts:59`) and asserts the single request is `https://graph.facebook.com/v18.0/act_111/campaigns`, so nothing left the process and the map entry is proven to be the adapter the config built rather than a name with nothing under it.
+Round 1 of this section claimed that deleting `handles.push(...metaLane)` failed the drain case. It did not, and the Task 16 review round 2 re-ran both mutants and said so.
+
+Measured, in `tests/marketing/publish-drain.test.ts` alone (8 cases):
+
+| Mutant | Result | Cases that fail |
+| --- | --- | --- |
+| delete `handles.push(...metaLane)` only | `Tests 3 failed \| 5 passed (8)` | `maps all four queued actions` (expected the array to have length 4 but it got 2), `reports the page lane as missing when only Meta is configured` (expected `[]` to have length 2 but it got 0), and `says which lane a half-configured host is missing, and registers only the other` (expected true to be false, which is leakage from the case above rather than a real guard on this one). The drain case passes. |
+| delete the whole `const metaLane = registerMetaLane(env, 'publish-drain')` statement | `Tests 3 failed \| 5 passed (8)` | includes `drains a campaign row rather than recording no_adapter`, with `expected { ran: 1, succeeded: +0, failed: 1 }` to equal `{ ran: 1, succeeded: 1, failed: 0 }` |
+
+So the push governs the returned undo handles, and the R-39 guard is the `registerMetaLane` call. Both statements are now measured, and the honest summary is that the second mutant is the one that reproduces the defect.
+
+That left a real weakness in the case that is supposed to reproduce it, which the review named as its Important finding: `drains a campaign row` asserted `registration.metaConfigured` before it ran the drain, so under the push-only mutant the case stopped at the flag and reported a bookkeeping change instead of the row that never ran. The flag is a proxy for the registration and has two cases of its own below it. `b817df7` moves the flag assertion to the end, keeps the behaviour assertions first with a comment saying why, and re-runs both mutants. This is controller-authored code producing a weak test, which is the same failure the review exists to catch, so the round is recorded rather than quietly repaired.
+
+The same commit carries the three anchor corrections the review found: `src/marketing/meta-ads-config.ts:9` cites the drainer's lookup at `outbox.ts:91` rather than `:90`, `:16` cites the boot parse pin at `tests/mastra/marketing-boot.test.ts:54` rather than `:50`, and `tests/marketing/meta-ads-config.test.ts:5` cites the adapter map at `outbox.ts:70` rather than `:74`. The `:74` citation further down that file is about `registerActionAdapter` and was already right.
+
+The drain case stubs `globalThis.fetch` (the adapters fall back to `config.fetchImpl ?? fetch`, `src/marketing/meta-ads.ts:59`) and asserts the single request is `https://graph.facebook.com/v18.0/act_111/campaigns`, so nothing left the process and the map entry is proven to be the adapter the config built rather than a name with nothing under it.
 
 The RED that preceded the implementation was the expected module-not-found for a test written first: `Failed to load url ../../src/marketing/meta-ads-config ... Does the file exist?` with `Test Files 1 failed (1)` and `Tests no tests`.
 
@@ -1051,10 +1066,32 @@ The typecheck red recorded against Task 16 round 1 is gone, and not because I to
 
 ### What A1 does not close
 
-`src/mastra/index.ts:158` still holds a third inline copy of the same parse. It stays, because `tests/mastra/marketing-boot.test.ts:50` pins the warning inside a once-per-change log and folding boot in would move a pinned message without moving what the test is about. Parked for the final review.
+`src/mastra/index.ts:158` still holds a third inline copy of the same parse. It stays, because `tests/mastra/marketing-boot.test.ts:54` pins the warning inside a once-per-change log and folding boot in would move a pinned message without moving what the test is about. Parked for the final review.
 
 The cron's `main()` call site is still untested, and was before. The read is covered by nine cases in `tests/marketing/meta-ads-config.test.ts`, the call is two lines, and `main()` is behind the same entry guard, so the reachability problem is unchanged rather than improved. What did change in the cron's behaviour is that it now registers `create_campaign` as well as `set_campaign_status`. An adapter the cron will never execute costs a map entry, and a per-process subset for each entrypoint is the shape that produced R-39, so the pair is registered everywhere the pair is configured.
 
 ### A workspace fact, because it will confuse the next reader
 
 The `git mv` of the config test is in history under someone else's commit. `4079d2d`, the other effort's "test(documents): add coverage for field_confidence filtering and resolution", contains the line `.../meta-ads-config.test.ts}` with zero content changes, which is git reporting a pure rename: their `git add` swept my staged index entry, and `a573a1f` carries the rewritten content. Nothing was mangled, and the tree is consistent at both commits. The hazard is real and cheap to respect: keep the window between `git add` and `git commit` short on a branch another effort is committing to.
+
+## Task 16 review round 2, and what it closed
+
+The reviewer returned **Approve with nits**, 0 Critical, 1 Important, 3 Minor, in `task-16-review-2.md`. It ran read-only except its own report file, confined its mutations to `scripts/publish-drain.ts`, and proved the restore with an empty `git diff` on that path. It also confirmed both deferred items from round 1 are resolved: the cron's registration now has three unit cases in `tests/marketing/meta-ads-config.test.ts:98-136`, and the accounts half of both-or-nothing is pinned by the case at `:59-69`, whose comment names the mutant it guards.
+
+The Important finding is recorded in full in the mutation section above, and the correction is committed at `b817df7`, three files, 8 insertions and 4 deletions. That round is the controller's own code failing its own proof, which is the reason the review is dispatched rather than skipped.
+
+All three Minors are anchor citations and are all applied in the same commit. The reviewer's fourth suggestion, rewording `a573a1f`'s commit message, cannot be followed, because amending is forbidden on this branch and the next commit says the true thing instead.
+
+One extra fact the review produced that is worth keeping. Under the push-only mutant, the third failing case is cross-case leakage rather than a real guard: `maps all four queued actions` throws at its `toHaveLength(4)` while `handles` holds only the two page closures, so `afterEach` cannot undo the two Meta registrations the mutant still performs, and the next case inherits them. In a green tree the handles cover all four and the leak cannot happen, so this is mutant-specific, but it is the mechanism a future reader needs if that describe block ever starts failing in a strange order.
+
+Gates re-run by the controller after the fix, before committing: `tests/marketing/publish-drain.test.ts` plus `tests/marketing/meta-ads-config.test.ts` gave `Test Files 2 passed (2)` and `Tests 17 passed (17)`, 8 plus 9. `npm run lint` exited 0 repo-wide. `npm run typecheck` exited with one error, in `tests/integration/marketing-campaign-status.test.ts:128`, which is Task 17's in-flight return-shape change landing on a Task 16 line, ruled below.
+
+**Task 16 is closed.** Round 1's findings are fixed and reviewed, round 2's nits are fixed, R-39 is closed and independently verified.
+
+## Task 17 round 1 returned NEEDS_CONTEXT, and the ruling
+
+The implementer completed all seven owned files test-first, captured the RED, ran every gate, and withheld the commit because the plan's new return shape breaks one line in a file the brief put off limits. Their report is `task-17-report.md`, and the diagnosis is exact: `stageCampaignStatusChange` now answers `{ pendingWriteId, riskScore }`, and `tests/integration/marketing-campaign-status.test.ts:128` still passes the old bare string to `getPendingWrite`, which produces the single repo-wide typecheck error and one integration failure whose own message proves staging worked against the real database.
+
+Ruled: the fix travels in Task 17's commit, as Addendum A7 in the brief. A commit that changes a return type owns the adaptation of its consumers, because a commit leaving HEAD failing typecheck becomes the next reader's bug. The edit is one line, a destructuring rename `const { pendingWriteId: draftId } = await stageCampaignStatusChange({` at `:118`, so `:128` and the rest of the case stay untouched. No new assertion about `riskScore`, since the unit file already pins the pair.
+
+Round 2 is dispatched to a fresh implementer carrying the round 1 report, because resume is not available here. Its brief says the tree has moved under it, names `b817df7`, and forbids touching anything outside the eight paths.
