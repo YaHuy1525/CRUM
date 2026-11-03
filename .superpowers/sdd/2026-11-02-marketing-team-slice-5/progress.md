@@ -885,3 +885,97 @@ Inside `applyDraft` the payload is already hoisted at `:406` as `(draft.payload 
 ### Dependency on Task 15's rulings
 
 R-35 matters here in both directions: Task 16's insert is what finally makes `stageCampaignStatusChange`'s already-active read return rows, and the branch's own no-op rule (Step 3, latest succeeded status equals the asked status) is the same question asked one step later under the transaction. The two reads stay tenant-wide together, which is what `src/db/marketing.ts:499-508` does, so the pair should not be made bundle-scoped by accident in one place only.
+
+## Task 16 round 1 landed, and what the controller re-measured
+
+`slice5-task16-impl` returned commit `19fdcee`, three files, +434, and reported its gates. Nothing in that report was accepted until it was run again here.
+
+| Gate | Command | My own result |
+| --- | --- | --- |
+| Unit | `npx vitest run tests/db/marketing-commit.test.ts tests/db/pending-writes-commit.test.ts` | `marketing-commit` 12 passed, `pending-writes-commit` 37 passed, `Tests 49 passed (49)` |
+| Integration | `npx vitest run --project integration tests/integration/marketing-campaign-status.test.ts` with the 5455 URL exported | `integration` 1 test, `Tests 1 passed (1)`, no skip line and no skipped count, so the file really ran |
+| Lint | `npm run lint` | clean, zero diagnostics |
+| Typecheck | `npm run typecheck` | one error, `src/api/documents.ts(372,33)`, and it is not ours |
+
+The typecheck error was attributed by file rather than absorbed. `git log -1 -- src/api/documents.ts` answers `c56c123` ("feat(api): add manual correction endpoints for invoice and contract fields"), four minutes old, and `git blame -L 370,374` marks the failing line "Not Committed Yet", so the red is the other effort's live work in progress sitting on top of a commit it landed mid-round. The implementer reported both repo gates clean, which was true when it ran them, before `c56c123`. Its work stays untouched and unstaged.
+
+### Two implementer claims checked against the source rather than trusted
+
+The first deviation it reported was that the brief's comment, copied from `marketing_promote`, says the drainer back-fills `receipt_id`, and nothing does. That was verified independently: every `UPDATE marketing_actions` in the tree is at `scripts/publish-drain.ts:69`, `:79`, `:100`, `:112` and `:137`, which are claim, success, failure and reap, and none of the five names `receipt_id`; `src/marketing/outbox.ts:312` only inserts the column; and the sole trigger in `migrations/0018_crum_marketing.sql` is `trg_marketing_bundles_touch` at `:47`, on the bundles table, not on actions. So `receipt_id` on a Meta work order is NULL for life, `audit_receipts.committed_record_id` is the only durable link, and the committed comment tells the truth instead of repeating the inherited fiction. This is a fact Tasks 17 to 19 must respect, and the implementer named it as a hand-over.
+
+The second was that `reapStaleRunning` is not bundle-scoped, so even a scoped drain retires other tenants' stale `running` rows. Read `scripts/publish-drain.ts:137` and confirmed: the `WHERE` is `status = 'running'` plus the age test, with no tenant and no bundle predicate. It is pre-existing, it is shared with `marketing-publish.test.ts`, and it is not made worse here.
+
+### Handed to the independent reviewer rather than pre-answered
+
+The branch has six refusal conditions and the plan prescribed five tests, so the payload-with-no-campaign-id guard is uncovered. That was left for `slice5-task16-reviewer-1` to find on its own, because a finding the controller already knew about and withheld is a finding the review does not make. The reviewer was told only what had been verified (the two claims above), that A1 is deliberately out of this commit, and to attribute repo-wide gate failures file by file.
+
+### Why A1 has not landed yet
+
+Addendum A1 edits `scripts/publish-drain.ts`, `scripts/analyst-cron.ts` and moves `tests/scripts/analyst-cron-config.test.ts`, and `slice5-task15-reviewer-2` is reading exactly those files right now. Editing them mid-review would leave that reviewer quoting line numbers that no longer exist, so A1 waits for its report. The same logic made the implementer defer it, and it recorded that reason in the commit message rather than silently omitting the work.
+
+## Task 17 pre-flight (controller, before briefing)
+
+Task 17 is `marketing.set_campaign_status` joining the registry, which means it edits `src/mastra/tools/marketing-writes.ts`, the file Task 15 rewrote, and `src/mastra/agent.ts` plus two test files. Every anchor in plan lines 3948 to 4155 was re-read against the tree before the brief is written.
+
+### Anchors that are still exact
+
+| Plan anchor | Status |
+| --- | --- |
+| `src/mastra/agent.ts:36` import from `./tools/marketing-writes` | exact, and it names five tools today |
+| `src/mastra/agent.ts:89` `'marketing.generate_assets'` | exact, and it is the last marketing key, so "insert after it" needs no re-reading |
+| 41 keys in `crumToolRegistry` | exact, counted by pattern over the object body |
+| `tests/mastra/agent.test.ts:50-53` | exact, and its title is `has 41 tools configured (22 read + 7 auto + 12 approval)` |
+| `tests/mastra/active-tools.test.ts:12`, `:38`, `:49`, `:72` | exact: the three lists start there and `ADMIN_EXPECTED` is commented `// 42` |
+| `policy/tools.yaml:281` | exact, with `scope: marketing:status`, `class: approval`, `idempotent: true`, `idempotency_key: draftHash` |
+| `tests/governance/conformance.test.ts:56` | exact, `['marketing.set_campaign_status', 'approval', 'draftHash']`, which is why the plan says no conformance change is needed |
+| `tests/mastra/marketing-publish-tools.test.ts:33` | exact, and it is the `context` object Step 5 copies |
+| `src/mastra/instructions.ts` marketing section | the section runs `:80` to `:100` and Step 4's paragraph goes before the closing `</section>`, so "after `:99`" is right in substance |
+
+### Six anchors that moved, all inside `marketing-writes.ts`, because Task 15 grew that file
+
+| Plan says | Tree says |
+| --- | --- |
+| `StageOutputSchema` at `:305-312` | `:314`, and its `riskScore` line is `:316` |
+| `stageCampaignStatusChange` return type at `:818` | function opens at `:852`, signature `Promise<string>` |
+| the inline payload literal at `:866` | `:957` |
+| `return draft.id` | `:988` |
+| `REFUSAL_PROSE` at `:899-905`, `readableReason` at `:906` | `:1000` to `:1005`, `:1007` |
+| `promoteBundleTool` at `:910-978` and its `requireApproval` payload site at `:927-936` | `:1011` onward, `promotePayload(...)` inside `requireApproval` at `:1031` |
+
+`scripts/analyst-cron.ts:314` for the stage call is another drift: the call is `const draftId = await stageStatus({...})` at `:372` and `stagedDrafts.push(...)` at `:381`, with the `stagedDrafts` element type declared at `:246` and again at `:350`.
+
+### R-40. The return shape Step 2 asks for is a third convention in this file, and it stays
+
+`stagePromotion` and `stageRetry` return discriminated envelopes, `StagePromotionResult` at `:621-626` and `StageRetryResult` at `:748-751`, both `| { ok: true; pendingWriteId: string; riskScore: number } | { ok: false; reason: ...; message?: string }`, because their refusals are values that the tool renders. `stageCampaignStatusChange` refuses by throwing tokens, a shape Task 15 fixed and Task 15's tests assert on, and its four throws are `campaign_status_actor_required` at `:874`, `provider_not_configured` at `:886`, `campaign_not_found` at `:907` and `campaign_already_active` at `:948`. Step 2 asks for a bare `Promise<{ pendingWriteId: string; riskScore: number }>`, which is neither the envelope nor today's string.
+
+Ruled to keep the plan's shape. Turning throws into an envelope would rewrite Task 15's four throw sites, its twelve unit cases and the cron's error handling for no benefit: the only thing missing today is the score, and the only consumer that needs it is the new tool. Recorded so that a reviewer who notices the inconsistency can see it was chosen, not missed. The brief will state it.
+
+### One plan sentence that is not true, and what to do about it
+
+Step 3 says `campaign_status_actor_required` "cannot reach a chat turn". It can. The new tool takes `userId` from `context.requestContext.all` and passes it to `stageCampaignStatusChange` without validating it, and nothing in this plan adds that validation, so a request context carrying a non-uuid user id throws the token, the tool's `catch` turns it into a refusal human task, and `readableReason(tokenOf(why))` falls through the map to the underscore replacement, giving the owner "campaign status actor required". That is an honest sentence, so no prose entry is needed, but a comment must not claim the path is unreachable. Noted for the brief, and worth a unit case if the reviewer for Task 17 thinks the fallthrough deserves pinning.
+
+## Task 15 review round 2, and the fix wave it produced
+
+`slice5-task15-reviewer-2` returned DONE WITH FINDINGS against `45a0f75`: zero Critical, one Important, five Minor, in `task-15-review-2.md`, 376 lines, uncommitted when it reported. It also flagged that HEAD drifted five commits clear of the commit under review while it worked, so it anchored every claim to `git show 45a0f75:...` rather than to the worktree. That is the right instinct in a shared tree and worth carrying forward as the default for every review in this run.
+
+### C-1 was re-tested rather than re-read, and it holds
+
+The round-1 Critical was that the analyst cron staged an action its own process could not run. The round-2 reviewer did not settle for reading the code: it observed that registration lives in `main()`, behind the argv run guard at `scripts/analyst-cron.ts:477-483`, so importing the module leaves `isExecutable('set_campaign_status')` false, exactly how round 1 killed it. Driving `main()` with the argv shape the file's header documents, against the 5455 cluster with a dummy token and dummy accounts, flipped that to true, `create_campaign` correctly stayed false, and the real `stageCampaignStatusChange` then got past the executability guard and failed for an honest downstream reason (`campaign_not_found`). Half-configured, token with no accounts, warns and stays false and refuses with `provider_not_configured`. That is a closed Critical on the terms this run requires, and this is the record of how it was proven.
+
+### R-41. M-2 reopened, because the reviewer read the column and I had not
+
+The Important finding was that I had marked M-2 closed when it was not. The `targetId` comment called `payload.campaignId` "the one field of the row that carries it in the clear". It does not. `src/db/pending-writes.ts:124` binds `params.idempotencyKey` straight into `draft_hash`, `migrations/0003_crum_add_draft_hash.sql:10` makes that column `text` and `:21` makes it NOT NULL, and the `sha256` at `:13` is a backfill for rows that predate the column, not the insert path. So the status draft stores `campaign_status:23842653876:PAUSED`, campaign id included, in plain text, which `:986` is what builds.
+
+The reviewer is right and my earlier acceptance was wrong: I checked that the payload carried the id, and did not check what else on the same row carried it. Fixed in `253ce21` by naming the second copy rather than denying it. Nothing in the behaviour changes, and this does not weaken spec section 5, because the id is an identifier and the rule is about prose. It does mean a reader tracing where a campaign id appears must look at `draft_hash` too, so the comment is the right place for the fact.
+
+### The four findings that landed, and the two that went to A1 on purpose
+
+Taken now, in `253ce21`: the `draft_hash` comment above, the second overstated comment at `marketing-writes.ts:926` which still claimed nothing in `src/` writes a `set_campaign_status` row when Task 16's `19fdcee` is exactly such a writer, and the finding that both actor-guard cases asserted only the token, so a guard reporting a near-miss actor as a missing one stayed green. Each case now pins its half of the sentence, and the fact that both pass proves the wording matched, because a guard that dropped the ternary would have made one of them fail.
+
+Deferred to the A1 round, deliberately, with the reason recorded so nothing is lost. The reviewer noted that `scripts/analyst-cron.ts:442-449`, the new registration, has no test, and that the accounts half of "both-or-nothing" is unpinned by a mutant. Both live in the region A1 rewrites and in the test file A1 moves, so a test written now would be written twice. It also noted that "the way boot reads it" holds for the parse and not for the registration, since boot maps two Meta adapters and the cron one: A1 resolves that by behaviour rather than prose, because `registerMetaLane` registers both. Two rulings to carry: A1's round must test the registration, and must pin the accounts half.
+
+### Gates for the fix wave, run here
+
+`npx vitest run tests/mastra/marketing-campaign-status-tool.test.ts tests/scripts/analyst-cron-config.test.ts tests/mastra/marketing-boot.test.ts` gives 12 plus 5 plus 8, `Tests 25 passed (25)`, three files passed, and the only stderr is boot's own `MCP_REQUEST_STATE_KEY` warning, which is the message under test rather than a failure. `npx eslint` on the two changed files exits 0. No integration run was needed for a comment and a regex, and the round-2 reviewer's own gate record stands as the integration evidence for `45a0f75`.
+
+Task 15 is closed at `253ce21`. Tracker #104 can move to done once this round's docs are committed.
