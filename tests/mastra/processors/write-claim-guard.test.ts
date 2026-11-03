@@ -6,6 +6,25 @@ import {
   claimsWrite,
 } from '../../../src/mastra/processors/write-claim-guard'
 import { providerToolName } from '../../../src/mastra/active-tools'
+import { crumToolRegistry } from '../../../src/mastra/agent'
+import { loadPolicy } from '../../../src/governance/policy'
+
+// The policy is read through the same loader the runtime uses, so this file and
+// src/mastra/processors/write-claim-guard.ts ask one source one question rather
+// than maintaining a second parser that can disagree with the first.
+const REGISTERED = Object.keys(crumToolRegistry)
+const DECLARED_MUTATING = loadPolicy()
+  .tools.tools.filter((tool) => tool.class !== 'read-only')
+  .map((tool) => tool.name)
+
+/**
+ * Declared mutating, not callable. run.side-effect is a workflow label whose scope
+ * is resolved at run time, and crm.bulk_import is declared in the policy and
+ * implemented nowhere. Both belong in a test as a named backlog: a gap that is
+ * written down stays a known hole, and a gap that disappears behind a filter nobody
+ * checks becomes a blind spot.
+ */
+const DECLARED_BUT_NOT_CALLABLE = ['crm.bulk_import', 'run.side-effect']
 
 describe('WriteClaimGuardProcessor', () => {
   it('has the correct id', () => {
@@ -33,29 +52,25 @@ describe('WriteClaimGuardProcessor', () => {
     expect(MUTATING_TOOLS.has(providerToolName('knowledge.retrieve'))).toBe(false)
   })
 
-  it('MUTATING_TOOL_IDS lists every write tool by registry id', () => {
-    // The governance vocabulary (policy/tools.yaml and tests) uses dotted ids.
-    expect(MUTATING_TOOL_IDS).toContain('crm.create_customer')
-    expect(MUTATING_TOOL_IDS).toContain('crm.update_customer')
-    expect(MUTATING_TOOL_IDS).toContain('crm.delete_customer')
-    expect(MUTATING_TOOL_IDS).toContain('crm.create_contact')
-    expect(MUTATING_TOOL_IDS).toContain('crm.create_schedule')
-    expect(MUTATING_TOOL_IDS).toContain('crm.transfer_owner')
-    expect(MUTATING_TOOL_IDS).toContain('mail.send')
-    expect(MUTATING_TOOL_IDS).toContain('crm.log_followup')
-    expect(MUTATING_TOOL_IDS).toContain('crm.create_task')
-    expect(MUTATING_TOOL_IDS).toContain('mail.draft')
-    expect(MUTATING_TOOL_IDS).toContain('marketing.save_bundle')
-    expect(MUTATING_TOOL_IDS).toContain('marketing.stage_bundle')
-    expect(MUTATING_TOOL_IDS).toContain('marketing.promote_bundle')
-    expect(MUTATING_TOOL_IDS).toContain('marketing.retry_publish')
-    expect(MUTATING_TOOL_IDS).toContain('marketing.set_campaign_status')
-    expect(MUTATING_TOOL_IDS).toContain('marketing.generate_assets')
-    // Every id in src/mastra/processors/write-claim-guard.ts:8-25, and this count
-    // is the set's size, so a new write tool must be named here as well as added
-    // to the array: the title promises "every write tool", and a bare number that
-    // nobody re-derived let two marketing ids pass unlisted.
-    expect(MUTATING_TOOL_IDS).toHaveLength(16)
+  it('guards exactly the mutating tools the agent can actually call', () => {
+    expect(MUTATING_TOOL_IDS.slice().sort()).toEqual(
+      DECLARED_MUTATING.filter((name) => REGISTERED.includes(name)).sort(),
+    )
+  })
+
+  it('guards nothing the registry does not hold', () => {
+    // The assertion that would have caught R6 on its own. A guarded id that is not
+    // a tool is not a bug in the guard, it is a bug in the lane it names, and this
+    // makes that unmissable.
+    for (const id of MUTATING_TOOL_IDS) {
+      expect(REGISTERED).toContain(id)
+    }
+  })
+
+  it('names every declared mutating tool the registry is missing', () => {
+    expect(DECLARED_MUTATING.filter((name) => !REGISTERED.includes(name)).sort()).toEqual(
+      DECLARED_BUT_NOT_CALLABLE.slice().sort(),
+    )
   })
 })
 
@@ -116,6 +131,20 @@ describe('claimsWrite', () => {
     const args = {
       text: '| Scheduled | Email | 2026-10-28T09:00:00Z |',
       toolCalls: [{ toolName: providerToolName('crm.my_open_items') }],
+      steps: [],
+      retryCount: 0,
+      messages: [],
+      abort: (reason: string) => calls.push(reason),
+    } as never
+    new WriteClaimGuardProcessor().processOutputStep(args)
+    expect(calls).toEqual([])
+  })
+
+  it('leaves a true report of a send alone now that crm.send_outreach is guarded', () => {
+    const calls: string[] = []
+    const args = {
+      text: "I've sent the outreach to Nordwind.",
+      toolCalls: [{ toolName: providerToolName('crm.send_outreach') }],
       steps: [],
       retryCount: 0,
       messages: [],

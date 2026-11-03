@@ -52,7 +52,7 @@ import { funnelBuilderSubagent } from './agents/funnel-builder'
 import { campaignAnalystSubagent } from './agents/campaign-analyst'
 import type { TenantRequestContext } from './tenant-context'
 
-const crumToolRegistry = {
+export const crumToolRegistry = {
   'crm.list_customers': listCustomersTool,
   'crm.get_customer': getCustomerTool,
   'crm.find_contacts': findContactsTool,

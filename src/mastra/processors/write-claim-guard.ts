@@ -15,6 +15,13 @@ export const MUTATING_TOOL_IDS = [
   'crm.create_contact',
   'crm.create_schedule',
   'crm.transfer_owner',
+  // Prospect-lane writes. Each one mutates, each is callable today, and none was
+  // here: a turn that genuinely sent an outreach and reported the send read, to
+  // this processor, exactly like a turn that invented it.
+  'crm.draft_outreach',
+  'crm.send_outreach',
+  'crm.save_prospect_snapshot',
+  'crm.resolve_merge_candidate',
   'mail.send',
   'marketing.save_bundle',
   'marketing.generate_assets',
