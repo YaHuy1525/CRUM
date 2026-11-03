@@ -118,6 +118,15 @@ describe('evaluate', () => {
     expect(buildBundle('invoice', { meta: { a: 1 } }, [], []).invoice).toEqual({ meta: null })
   })
 
+  it('treats an undefined header like a null one instead of throwing', () => {
+    // The declared parameter type forbids `undefined`, so the only way here is the cast Task 8's
+    // call site already uses (`normalized` arrives through `as unknown as`, document-intake.ts).
+    // Without this case the `== null` guard survives as decoration: a mutation to `=== null`
+    // throws a TypeError only on a path no test can name.
+    const header = undefined as unknown as Record<string, unknown>
+    expect(buildBundle('invoice', header, [], []).invoice).toBeUndefined()
+  })
+
   it('renders a pg date Date as the stored calendar day, not the UTC-shifted one', () => {
     // pg builds a `date` column as a Date at local midnight. A toISOString() read here would
     // turn 2026-11-03 into 2026-11-02 on any machine east of UTC, which is where this project
