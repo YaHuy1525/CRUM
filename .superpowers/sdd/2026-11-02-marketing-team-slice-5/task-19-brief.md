@@ -142,3 +142,95 @@ Do not repair either one. Fixing them means editing an integration file this tas
 The controller fixed R-45 at `151722e`, so `npx vitest run tests/mastra` gives `Test Files 56 passed (56)` and `Tests 518 passed (518)` against a slice 4 baseline of 496. Three cases in `tests/mastra/prospect-merge-tools.test.ts` were failing because Task 14's row-mapper normaliser refuses a `created_at` that is neither a `Date` nor a string, while that file's stub of `INSERT ... RETURNING *` answered with only an id.
 
 Report it that way. It is a red this slice caused and this slice fixed, not one inherited from slice 4, and the difference matters to anyone reading the counts later. The only inherited failures in this slice's gate are the two in `tests/integration/migrations.test.ts` named in C5.
+
+## Addendum C7: the final measured numbers, taken at HEAD `8186b8b` by the controller
+
+These supersede the counts in C2 and C6. Every figure below is a run the controller performed at
+the HEAD the report describes, so the report can state them as measured rather than as expected.
+Do not re-derive them from a different commit, and do not round a `1 todo` into a pass.
+
+### What landed after C6, and therefore what the report must cover
+
+Three commits the C series did not know about. `a345ab8` is Task 17 round 2 and carries Addendum
+A8.1 to A8.5: a required `origin: 'cron' | 'chat'` on `stageCampaignStatusChange` so a chat-staged
+draft stops carrying the cron's `run_id`, a rebuilt `requireApproval` case that records what the
+hook was handed instead of trusting a stub that answers `approval` to anything, the computed gate
+reported rather than a literal, `tokenOf` refusing to invent a token out of a Windows path, and two
+sentences made true. `8629be5` is round 3 and adds the branch that matters most to the governance
+story: when `gateFor` answers `refuse`, `stageCampaignStatusChange` throws
+`campaign_status_refused` before the insert, because the review round measured that neither the
+approval route nor `applyDraft` reads the `gate` column, so a stored `refuse` was an approvable
+draft wearing a warning label. `1d85f96` is Task 18: `MUTATING_TOOL_IDS` goes from 16 to 20, the
+four prospect-lane ids arrive, `toHaveLength(16)` is deleted, and no case states the list's size.
+
+### The unit counts
+
+- `npx vitest run tests/marketing tests/db tests/api tests/config tests/governance` at
+  `8186b8b`: `Test Files  70 passed (70)`, `Tests  1091 passed | 1 todo (1092)`.
+- `npx vitest run tests/mastra`: `Test Files  56 passed (56)`, `Tests  527 passed (527)`. The
+  slice 4 baseline was 496. The path is 496, plus 13 from Tasks 14 to 17 round 1 (518 after the
+  R-45 fix at `151722e`), plus 4 from round 2, plus 2 from round 3, plus 3 from Task 18.
+- `cd console && npx vitest run`: `Test Files  26 passed (26)`, `Tests  223 passed (223)`. Slice 4
+  recorded 24 files and 210 tests. Six of the 223 belong to another effort's
+  `console/tests/DocumentProcessingDashboard.test.tsx` and are not slice 5's; say that in the
+  report and do not claim them.
+- `npm run typecheck` exits 0. `npm run lint` exits 0. Both measured at `8186b8b`.
+
+### The integration counts, with the inherited pair named again
+
+All ten files ran; none skipped. `npx vitest run --project integration` over
+`marketing-asset-page`, `marketing-asset-invalidation`, `marketing-image-spend`,
+`marketing-generate-assets`, `marketing-campaign-status`, `analyst-cron`, `marketing-publish`,
+`reviewer-predictions`, `pending-writes` and `migrations`, with the URL exported in the same shell:
+`Test Files  1 failed | 9 passed (10)`, `Tests  2 failed | 49 passed (51)`. The two failures are
+`migrations against a real database > boots through main(), which runs storage.init() and then the
+spine`, failing `AssertionError: expected [] to include '0002_crum_spine.sql'`, and `migrations
+against a real database > refuses a second receipt for the same staged draft`. Both predate this
+slice, both are unchanged, and per C5 the report names them and does not repair them.
+
+### The decisions a later reader wants recorded, in addition to the ones Step 6 already lists
+
+1. A draft now names the lane that staged it, and the field is required rather than defaulted
+   because the lane that forgot to say would otherwise inherit the other lane's label.
+2. A policy answer of `refuse` stores no draft. The rejected alternative was to keep storing and
+   clamp the reported gate, and the reason it was rejected is the finding itself: nothing
+   downstream reads the gate.
+3. The guard list stays hand-written in `src/mastra/processors/write-claim-guard.ts` and is bound
+   by derivation in its test, because `src/mastra/agent.ts:8` imports `./processors`, which
+   imports the guard module, so a guard that imported the registry would close a cycle through the
+   module that owns it. This is a layering constraint, not a preference.
+4. `POLICY_DIR` is documented at `.env.example:90` and is decorative in production. The only reader
+   that honours it is `src/governance/index.ts:6`, no `src/` module imports that singleton, and 38
+   direct `loadPolicy()` calls across the tool files ignore it. Slice 5 found it while reviewing
+   Task 18 and does not own it.
+5. `campaignExternalId` is free text up to 64 characters with no shape validation, which is how a
+   prose-bearing id could reach a `refuse` score in the first place. Parked. The refuse branch
+   removes the consequence, not the cause.
+6. No approval path in this repository reads `gate`. Enforcement at the approval boundary is the
+   largest hole slice 5 leaves, and it is a governance change with its own blast radius.
+
+### Deviations to list in the report, each with its reason
+
+`tests/mastra/prospect-merge-tools.test.ts` at `151722e`, a slice-5-caused red closed in the
+prospect lane's test because Task 14's timestamp normaliser refused a stub that described a row no
+driver can return. `tests/integration/marketing-campaign-status.test.ts:118`, one line owned by
+Addendum A7 so the tree could typecheck. The two reviewers of Task 17 that wrote the same file,
+where one review's body was lost and restored from its returned summary. The Task 17 round 2
+implementer reaching the harness turn limit after writing the code but before running the gate,
+whose work was kept and whose gate and mutation evidence the controller measured. The clamp that
+round 2 shipped being replaced by a throw in round 3, because its stated justification was false.
+`tests/evals/golden-gate.test.ts` never run, so the golden gate is unproven in this slice by
+choice, and `npm run verify` never run because it chains `npm run test` and exits non-zero by
+design. Step 5 not done for want of owner credentials, so R1 remains open as a live-environment
+fact rather than a claim.
+
+### Carry forward, unchanged, the holes the plan already names
+
+The pixel's post-hash deviation. `reason` living only in chat rather than in the draft. The missing
+`users` table behind `pending_writes.requested_by`. `npm run verify` staying red by design. Add to
+that list the register entries above and the parked items from Tasks 16 and 17: boot's duplicated
+Meta parse at `src/mastra/index.ts:158`, the `marketing_stage` and `marketing_promote` "drainer
+back-fills it" wording, `commitWithReceipt` approval-race hardening, payload-hygiene coverage for
+the campaign-status payload, four unchecked `requestedBy` sites, the golden gate's seven dataset
+defects, `src/api/message-mapping.ts:69`, `pending-writes.ts:97`, `tests/db/open-stage-draft.test.ts:102`,
+`approval-flow.ts:39`, the cron's untested `main()`, and the analyst's self-invisibility.
