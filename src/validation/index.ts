@@ -17,14 +17,16 @@ export function buildBundle(
   lines: Array<Record<string, unknown>>,
   terms: Array<Record<string, unknown>>,
 ): DocumentRecordBundle {
+  const coerce = (value: unknown): string | null => {
+    if (value === null || value === undefined) return null
+    if (typeof value === 'string') return value
+    if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+      return String(value)
+    }
+    return null
+  }
   const toRow = (row: Record<string, unknown>): Record<string, string | null> =>
-    Object.fromEntries(
-      Object.entries(row).map(([key, value]) => [
-        key,
-        // eslint-disable-next-line @typescript-eslint/no-base-to-string -- R38 hands this boundary `unknown`; every call site supplies scalars, never a nested row
-        value === null || value === undefined ? null : String(value),
-      ]),
-    )
+    Object.fromEntries(Object.entries(row).map(([key, value]) => [key, coerce(value)]))
   const head = header === null ? null : toRow(header)
   return kind === 'invoice'
     ? { kind, invoice: head ?? undefined, lines: lines.map(toRow), terms: [] }

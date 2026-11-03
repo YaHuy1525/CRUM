@@ -63,4 +63,8 @@ describe('evaluate', () => {
     expect(b.invoice).toEqual({ total: '12', auto_renewal: 'true', blank: null })
     expect(b.lines).toEqual([{ qty: '3' }])
   })
+
+  it('reads an object-valued column as absent rather than as [object Object]', () => {
+    expect(buildBundle('invoice', { meta: { a: 1 } }, [], []).invoice).toEqual({ meta: null })
+  })
 })
