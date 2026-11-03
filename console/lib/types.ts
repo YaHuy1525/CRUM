@@ -136,7 +136,7 @@ export interface CrmDocument {
   id: string
   tenant_id: string
   owner_id: string
-  kind: 'invoice' | 'contract' | 'other'
+  kind: 'invoice' | 'contract' | 'other' | 'marketing_asset'
   title: string
   source: 'upload' | 'email'
   source_ref: string | null

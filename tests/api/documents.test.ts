@@ -196,7 +196,23 @@ describe('GET /api/documents', () => {
   it('rejects an unknown kind filter', async () => {
     const res = await router().request('/api/documents?kind=receipt', { headers: AUTH })
     expect(res.status).toBe(400)
+    expect((await json<{ detail?: string }>(res)).detail).toContain('marketing_asset')
     expect(db.calls).toHaveLength(0)
+  })
+
+  it('admits marketing_asset and asks the data layer for exactly that kind', async () => {
+    db.results['FROM documents d'] = { rows: [], rowCount: 0 }
+    const res = await router().request('/api/documents?kind=marketing_asset', { headers: AUTH })
+    expect(res.status).toBe(200)
+    const list = sqlFor('FROM documents d')
+    expect(list?.sql).toContain('d.kind = $')
+    expect(list?.params).toContain('marketing_asset')
+  })
+
+  it('still refuses a kind that is not one of the four', async () => {
+    const res = await router().request('/api/documents?kind=purchase_order', { headers: AUTH })
+    expect(res.status).toBe(400)
+    expect((await json<{ detail?: string }>(res)).detail).toContain('marketing_asset')
   })
 })
 

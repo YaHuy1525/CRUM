@@ -187,8 +187,18 @@ export function createDocumentsRouter(deps: DocumentsRouterDeps): Hono {
     if ('error' in gate) return gate.error
 
     const kind = c.req.query('kind')
-    if (kind && !['invoice', 'contract', 'other'].includes(kind)) {
-      return c.json({ error: 'invalid_query', detail: 'kind must be invoice, contract or other' }, 400)
+    // Assets are admitted to a whitelist that already does the filtering, which is
+    // the smallest change that makes a paid-for picture findable. An unfiltered
+    // list still excludes them (`src/db/documents.ts:389`), so the owner's invoice
+    // view does not fill up with PNGs: whoever wants renders has to say so. A new
+    // browse-only byte route was refused, because an ungated thumbnail of a bundle
+    // nobody has predicted for would undo the cognitive forcing gate (spec section
+    // 10.2).
+    if (kind && !['invoice', 'contract', 'other', 'marketing_asset'].includes(kind)) {
+      return c.json(
+        { error: 'invalid_query', detail: 'kind must be invoice, contract, other or marketing_asset' },
+        400,
+      )
     }
     const status = c.req.query('status')
     if (status && !['ready', 'needs_review'].includes(status)) {

@@ -28,6 +28,7 @@ describe('KnowledgePage tabs', () => {
     const knowledgeTab = screen.getByRole('tab', { name: 'Knowledge' })
     expect(screen.getByRole('tab', { name: 'Invoices' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'Contracts' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Campaign images' })).toBeInTheDocument()
     expect(knowledgeTab).toHaveAttribute('aria-selected', 'true')
     await waitForRead('/api/knowledge/documents')
   })
@@ -43,6 +44,19 @@ describe('KnowledgePage tabs', () => {
 
     await waitForRead('/api/documents?kind=invoice')
     expect(screen.getByLabelText('Upload a invoice')).toBeInTheDocument()
+  })
+
+  it('switching to Campaign images reads the asset kind and nothing else', async () => {
+    const user = userEvent.setup()
+    mountWith([
+      route('/api/knowledge/documents', { status: 200, body: { documents: [], total: 0 } }, 'GET'),
+      route('/api/documents?kind=marketing_asset', { status: 200, body: { documents: [], total: 0 } }, 'GET'),
+    ])
+
+    await user.click(screen.getByRole('tab', { name: 'Campaign images' }))
+
+    await waitForRead('/api/documents?kind=marketing_asset')
+    expect(server.count('/api/documents?kind=invoice')).toBe(0)
   })
 })
 
