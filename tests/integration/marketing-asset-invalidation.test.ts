@@ -18,6 +18,8 @@ import {
   stageBundleTool,
 } from '../../src/mastra/tools/marketing-writes'
 import { getOpenStageDraft } from '../../src/db/pending-writes'
+import { registerActionAdapter } from '../../src/marketing/outbox'
+import { reviewDocument } from '../../src/db/documents'
 import { insertPrediction } from '../../src/db/reviewer-predictions'
 import { registerImageAdapter, __imageProviderRegistry, setSelectedImageProvider, type ImageAdapter } from '../../src/marketing/image-provider'
 
@@ -26,6 +28,7 @@ if (url) process.env.DATABASE_URL = url
 process.env.APPROVAL_HMAC_SECRET ??= 'crum-integration-receipt-secret-0123456789'
 
 let pool: Pool
+let unregisterPublish: () => void = () => {}
 
 // …043 is private to this file; no other integration file uses it.
 const TENANT = 'a1000000-0000-4000-8000-000000000043'
@@ -122,9 +125,21 @@ beforeAll(async () => {
   await resetTenant()
   registerImageAdapter(stubAdapter())
   setSelectedImageProvider('stub')
+  // `stage_bundle` refuses a bundle whose derived actions have no adapter in this
+  // process (`no adapter for publish_page`), and a real page-host adapter needs
+  // Cloudflare credentials this test must not want. This file never drains an
+  // approval, so the question it asks is only "does a landed picture kill the
+  // waiting draft", and a named stub answers that. Same shape as
+  // tests/mastra/marketing-publish-tools.test.ts:71. The unregister is kept so a
+  // later file in the same worker does not find the lane open.
+  unregisterPublish = registerActionAdapter({
+    name: 'publish_page',
+    execute: () => Promise.resolve({ externalId: 'invalidation-test-stub' }),
+  })
 })
 
 afterAll(async () => {
+  unregisterPublish()
   __imageProviderRegistry.clear()
   if (url !== '') {
     await closeDbClient()
@@ -140,7 +155,15 @@ describe.skipIf(url === '')('marketing asset invalidation against Postgres', () 
         funnelPlan: { page: { slug: 'physio-invalidation' } },
         artifacts: [
           { role: 'creative-designer', kind: 'script', documentId: null, textContent: ASSET_TEXT },
-          { role: 'funnel-builder', kind: 'page_html', documentId: null, textContent: '<h1>Book in</h1><img src="{{ASSET:hero-image}}" alt="Clinic">' },
+          // No `{{ASSET:hero-image}}` here, which is what makes this look odd at
+          // first read. Slice 5 Task 6 made `stage_bundle` refuse a page whose
+          // named asset has no document behind it, so a bundle that names
+          // hero-image cannot be staged before the picture lands, and the case
+          // this file exists for (a picture arriving after an approval is already
+          // waiting) would be unreachable. The picture still arrives the same way
+          // a real one does: from the designer's prompt list in the script
+          // artifact above, which is the asset move the invalidation is about.
+          { role: 'funnel-builder', kind: 'page_html', documentId: null, textContent: '<h1>Book in</h1><p>Same-day assessments for owner-led clinics.</p>' },
         ],
       } as never,
       context,
@@ -150,8 +173,14 @@ describe.skipIf(url === '')('marketing asset invalidation against Postgres', () 
     const staged = (await stageBundleTool.execute!(
       { bundleId, requestedCeilingMinor: 2500 },
       context,
-    )) as { pendingWriteId: string; proceed?: boolean; reason?: string; message?: string }
-    console.log('STAGED RESULT:', JSON.stringify(staged, null, 2))
+    )) as { pendingWriteId: string; reason?: string; message?: string }
+    // `reason` and `message` are in the cast above because when this case first
+    // ran it refused, and a refusal is only readable if the assertion that fails
+    // can name what was refused. A console.log of the whole result was here and is
+    // gone: the throw below carries the same two fields now.
+    if (staged.reason !== undefined) {
+      throw new Error(`stage_bundle refused a bundle that should stage: ${staged.reason} / ${staged.message}`)
+    }
     expect(await statusOf(bundleId)).toBe('staged')
 
     // The reviewer's prediction, written against the bytes they were shown.
@@ -166,7 +195,7 @@ describe.skipIf(url === '')('marketing asset invalidation against Postgres', () 
     const generated = (await generateAssetsTool.execute!(
       { bundleId },
       context,
-    )) as { assets: Array<{ name: string }>; refused: unknown[] }
+    )) as { assets: Array<{ name: string; documentId: string; status: string }>; refused: unknown[] }
     expect(generated.assets).toHaveLength(1)
     expect(generated.refused).toEqual([])
 
@@ -185,7 +214,19 @@ describe.skipIf(url === '')('marketing asset invalidation against Postgres', () 
     expect(await getOpenStageDraft(TENANT, bundleId)).toBeNull()
 
     // Re-staging is a new draft, and reviewer_predictions is keyed
-    // UNIQUE (pending_write_id), so the old prediction cannot anchor it.
+    // UNIQUE (pending_write_id), so the old prediction cannot anchor it. The
+    // picture that just landed is `needs_review`, and slice 4 Task 8 makes
+    // `stage_bundle` refuse a bundle with an unreviewed image by name, so the
+    // confirm has to happen first. It goes through `reviewDocument`, the same
+    // call the console's Assets tab makes, because a hand-written UPDATE would
+    // prove the re-stage against a status the product cannot produce. Without it
+    // this last assertion would be measuring a refusal rather than a new draft.
+    const reviewed = await reviewDocument(
+      { tenantId: TENANT, userId: USER, userRole: 'admin' },
+      generated.assets[0]!.documentId,
+    )
+    expect(reviewed?.status).toBe('ready')
+
     const again = (await stageBundleTool.execute!(
       { bundleId, requestedCeilingMinor: 2500 },
       context,
