@@ -671,6 +671,16 @@ describe('evaluate', () => {
     // localeCompare in en-US puts 'a' before 'B'; a codepoint compare puts 'B' (66) first.
     expect(evaluate(invoice, CTX, [r]).map((v) => v.field)).toEqual(['B', 'a'])
   })
+
+  it('orders ruleIds by codepoint too, so the arm that picks between rules is covered', () => {
+    const lower = rule({ id: 'a.r' }, [{ ruleId: 'a.r', field: 'total', severity: 'error', message: '1' }])
+    const upper = rule({ id: 'B.r' }, [{ ruleId: 'B.r', field: 'total', severity: 'error', message: '2' }])
+    // This case exists because a mutation check caught the gap: reverting the ruleId arm to
+    // localeCompare left every earlier test green, because the field arm is a separate line
+    // of the comparator and only the field arm had a discriminating case. Measured:
+    // 'a.r'.localeCompare('B.r') is -1, codepoint puts 'B.r' first.
+    expect(evaluate(invoice, CTX, [lower, upper]).map((v) => v.ruleId)).toEqual(['B.r', 'a.r'])
+  })
 })
 ```
 
