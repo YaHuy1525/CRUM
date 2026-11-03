@@ -26,6 +26,10 @@ vi.mock('../../src/config/env', () => ({
 const TENANT = '11111111-1111-4111-8111-111111111111'
 const APPROVER = '22222222-2222-4222-8222-222222222222'
 const BUNDLE = '33333333-3333-4333-8333-333333333333'
+// The id the queued marketing_actions row answers with, and the id the receipt
+// row answers with, both in this file's id style.
+const ACTION = '88888888-8888-4888-8888-888888888888'
+const RECEIPT = '99999999-9999-4999-8999-999999999999'
 
 // The one-page fixture the page-bundle drafts below stage against, and the hash
 // a stage would have recorded for those bytes. Since the approval compares
@@ -67,6 +71,25 @@ function stageDraft(payload: Record<string, unknown>): PendingWrite {
     requestedBy: APPROVER,
     createdAt: '2026-10-30T00:00:00.000Z',
     expiresAt: '2026-10-30T01:00:00.000Z',
+  }
+}
+
+// A Meta campaign id. It is a decimal string, not a uuid, which is why the draft
+// carries it in payload.campaignId and target_id holds Task 15's derived uuid.
+const CAMPAIGN = '23842653876'
+
+/**
+ * A draft as `stageCampaignStatusChange` now writes it: the object type the
+ * analyst cron stages, the `update` operation the branch requires, and the
+ * derived target id. The branch never reads target_id — the campaign lives at
+ * Meta and the payload names it — so the value here is scenery.
+ */
+function statusDraft(payload: Record<string, unknown>): PendingWrite {
+  return {
+    ...stageDraft(payload),
+    objectType: 'marketing_set_campaign_status',
+    operation: 'update',
+    targetId: '77777777-7777-4777-8777-777777777777',
   }
 }
 
@@ -308,5 +331,133 @@ describe('the review-to-commit byte re-check', () => {
     })
     await expect(attempt).rejects.toThrow(/no longer hashes/)
     await expect(attempt).rejects.toThrow(/nothing now/)
+  })
+})
+
+/**
+ * Approving a `marketing_set_campaign_status` draft has to queue the work order
+ * instead of 500ing. Until Task 16 the type fell through every branch of
+ * applyDraft into `requireTarget`, which throws `UnsupportedCommitError` for
+ * 'no CRM table commits object_type', so the owner's click failed and the
+ * campaign never changed. These cases are what the new branch answers, and the
+ * last assertion in each is the one that matters: a refusal that signs a receipt
+ * is not a refusal.
+ *
+ * Stub-ordering note for every case below: `status = 'succeeded'` appears in
+ * both the create_campaign existence read and the latest-status read, so
+ * keying on it would let the first handler answer both. `stubQueries` matches
+ * in insertion order, so these use the fragments that differ —
+ * `"action = 'create_campaign'"` for the origin read, `"action = 'set_campaign_status'"`
+ * for the latest-status read, and the INSERT last.
+ */
+describe('approving a campaign status draft', () => {
+  it('refuses a status draft that is not an update', async () => {
+    const { commitWithReceipt, UnsupportedCommitError } = await import('../../src/db/pending-writes')
+    stubQueries({
+      'SELECT receipt_id, rejected_at, committed_at FROM pending_writes': [
+        { receipt_id: null, rejected_at: null, committed_at: null },
+      ],
+    })
+    const draft = { ...statusDraft({ campaignId: CAMPAIGN, status: 'ACTIVE' }), operation: 'create' as const }
+    const attempt = commitWithReceipt(draft, { approvedBy: APPROVER, scope: 'marketing:status' })
+    await expect(attempt).rejects.toThrow(UnsupportedCommitError)
+    // The refusal says which operation it wants, so the reviewer learns the
+    // draft is the wrong shape rather than reading a generic commit failure.
+    await expect(attempt).rejects.toThrow(/update/)
+    expect(calls('INSERT INTO marketing_actions')).toEqual([])
+    expect(calls('INSERT INTO audit_receipts')).toEqual([])
+  })
+
+  it('refuses a status draft whose payload status Meta would reject', async () => {
+    const { commitWithReceipt, UnsupportedCommitError } = await import('../../src/db/pending-writes')
+    stubQueries({
+      'SELECT receipt_id, rejected_at, committed_at FROM pending_writes': [
+        { receipt_id: null, rejected_at: null, committed_at: null },
+      ],
+    })
+    const attempt = commitWithReceipt(
+      statusDraft({ campaignId: CAMPAIGN, status: 'ARCHIVED' }),
+      { approvedBy: APPROVER, scope: 'marketing:status' },
+    )
+    await expect(attempt).rejects.toThrow(UnsupportedCommitError)
+    // The value it was given is in the sentence: 'ARCHIVED' is a real Meta
+    // status, and the reader has to be able to tell it from a typo.
+    await expect(attempt).rejects.toThrow(/ARCHIVED/)
+    expect(calls('INSERT INTO marketing_actions')).toEqual([])
+    expect(calls('INSERT INTO audit_receipts')).toEqual([])
+  })
+
+  it('refuses a status draft for a campaign this tenant never created', async () => {
+    const { commitWithReceipt, UnsupportedCommitError } = await import('../../src/db/pending-writes')
+    stubQueries({
+      'SELECT receipt_id, rejected_at, committed_at FROM pending_writes': [
+        { receipt_id: null, rejected_at: null, committed_at: null },
+      ],
+      // The origin read finds no succeeded create_campaign for this id.
+      "action = 'create_campaign'": [],
+    })
+    const attempt = commitWithReceipt(
+      statusDraft({ campaignId: CAMPAIGN, status: 'ACTIVE' }),
+      { approvedBy: APPROVER, scope: 'marketing:status' },
+    )
+    await expect(attempt).rejects.toThrow(UnsupportedCommitError)
+    await expect(attempt).rejects.toThrow(new RegExp(CAMPAIGN))
+    expect(calls('INSERT INTO marketing_actions')).toEqual([])
+    expect(calls('INSERT INTO audit_receipts')).toEqual([])
+  })
+
+  it('refuses a status draft that repeats the last succeeded status change', async () => {
+    const { commitWithReceipt, UnsupportedCommitError } = await import('../../src/db/pending-writes')
+    stubQueries({
+      'SELECT receipt_id, rejected_at, committed_at FROM pending_writes': [
+        { receipt_id: null, rejected_at: null, committed_at: null },
+      ],
+      "action = 'create_campaign'": [{ bundle_id: BUNDLE }],
+      // The campaign is already ACTIVE as far as CRUM knows, so approving this
+      // would queue a work order that changes nothing.
+      "action = 'set_campaign_status'": [{ status: 'ACTIVE' }],
+    })
+    const attempt = commitWithReceipt(
+      statusDraft({ campaignId: CAMPAIGN, status: 'ACTIVE' }),
+      { approvedBy: APPROVER, scope: 'marketing:status' },
+    )
+    await expect(attempt).rejects.toThrow(UnsupportedCommitError)
+    await expect(attempt).rejects.toThrow(new RegExp(CAMPAIGN))
+    expect(calls('INSERT INTO marketing_actions')).toEqual([])
+    expect(calls('INSERT INTO audit_receipts')).toEqual([])
+  })
+
+  it('queues the work order and returns the action row as the committed record', async () => {
+    const { commitWithReceipt } = await import('../../src/db/pending-writes')
+    stubQueries({
+      'SELECT receipt_id, rejected_at, committed_at FROM pending_writes': [
+        { receipt_id: null, rejected_at: null, committed_at: null },
+      ],
+      "action = 'create_campaign'": [{ bundle_id: BUNDLE }],
+      "action = 'set_campaign_status'": [],
+      'INSERT INTO marketing_actions': [{ id: ACTION }],
+      'INSERT INTO audit_receipts': [{ id: RECEIPT }],
+      'UPDATE pending_writes SET receipt_id': [],
+    })
+    const result = await commitWithReceipt(
+      statusDraft({ campaignId: CAMPAIGN, status: 'ACTIVE' }),
+      { approvedBy: APPROVER, scope: 'marketing:status' },
+    )
+    expect(result.committedId).toBe(ACTION)
+    expect(result.receiptId).toBe(RECEIPT)
+    const insert = calls('INSERT INTO marketing_actions').at(-1)!
+    expect(insert.sql).toContain(`'set_campaign_status'`)
+    // The bundle comes from the origin row, not the payload, and the params are
+    // what proves it: a fragment stub answers any params, so read the call.
+    expect(insert.params[0]).toBe(TENANT)
+    expect(insert.params[1]).toBe(BUNDLE)
+    expect(JSON.parse(insert.params[2] as string)).toEqual({ campaignId: CAMPAIGN, status: 'ACTIVE' })
+    // NULL, not draft.receiptId: the receipt does not exist at this instant.
+    expect(insert.sql).toMatch(/'queued', NULL\)/)
+    // The receipt has to point at the row it signed, or a reviewer cannot trace
+    // an approval to the work order it authorised. committed_record_id is sixth
+    // in the INSERT column list at src/db/pending-writes.ts:693.
+    const receipt = calls('INSERT INTO audit_receipts').at(-1)!
+    expect(receipt.params[5]).toBe(ACTION)
   })
 })

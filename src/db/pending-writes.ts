@@ -635,6 +635,95 @@ async function applyDraft(
     return row.bundle_id
   }
 
+  // A campaign status change is a work order against an identity CRUM does not
+  // own, so it is shaped exactly like marketing_promote above: one queued action
+  // row, no content change, and no COMMIT_TARGETS entry, because a Meta campaign
+  // is not a row in a CRM table. Without this branch the draft fell through every
+  // marketing case into requireTarget below and the owner's approval 500ed.
+  //
+  // Everything the payload asserts about another row is re-read under this
+  // transaction, because the payload is a claim, and a receipt signed over a
+  // campaign that has gone would attest to work the drainer can only fail.
+  if (draft.objectType === 'marketing_set_campaign_status') {
+    if (draft.operation !== 'update') {
+      throw new UnsupportedCommitError(
+        `marketing_set_campaign_status supports only the update operation, not ${draft.operation}`,
+      )
+    }
+    const campaignId = payload['campaignId']
+    const status = payload['status']
+    if (typeof campaignId !== 'string' || campaignId.length === 0) {
+      throw new UnsupportedCommitError(
+        'marketing_set_campaign_status must name a campaign in its payload, so the adapter has an id to address',
+      )
+    }
+    if (status !== 'ACTIVE' && status !== 'PAUSED') {
+      throw new UnsupportedCommitError(
+        `marketing_set_campaign_status carries status ${String(status)}, which is neither ACTIVE nor PAUSED, so approving it would send Meta a value its own API rejects`,
+      )
+    }
+    // The campaign must still be the product of a succeeded create_campaign in
+    // this tenant, and this read also supplies what the payload deliberately does
+    // not carry: the bundle the action row belongs to. `marketing_actions.bundle_id`
+    // is `uuid NOT NULL REFERENCES marketing_bundles` (migrations/0018:88), and
+    // prose in a scored payload moves the gate (spec section 5), so the bundle
+    // travels by reference rather than by assertion.
+    const origin = await client.query<{ bundle_id: string }>(
+      `SELECT bundle_id FROM marketing_actions
+        WHERE tenant_id = $1
+          AND action = 'create_campaign'
+          AND status = 'succeeded'
+          AND result ->> 'externalId' = $2`,
+      [draft.tenantId, campaignId],
+    )
+    const created = origin.rows[0]
+    if (!created) {
+      throw new UnsupportedCommitError(
+        `marketing_set_campaign_status names campaign ${campaignId}, which this tenant has no succeeded create_campaign action for, so there is no campaign here to change`,
+      )
+    }
+    // The no-op rule was asked at staging time. A campaign's state lives at Meta,
+    // so this is the last moment on the CRUM side that the question can still be
+    // answered, and the answer here is the one the receipt is signed over. Both
+    // this read and the staging-time one stay tenant-wide, the way
+    // listActiveCampaigns reads the same table (src/db/marketing.ts:499-508):
+    // Meta's ids are globally unique, so a status row for this id describes this
+    // campaign whichever bundle asked about it, and the wider read refuses a
+    // no-op rather than staging one.
+    const latest = await client.query<{ status: string }>(
+      `SELECT payload ->> 'status' AS status FROM marketing_actions
+        WHERE tenant_id = $1
+          AND action = 'set_campaign_status'
+          AND payload ->> 'campaignId' = $2
+          AND status = 'succeeded'
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [draft.tenantId, campaignId],
+    )
+    if (latest.rows[0]?.status === status) {
+      throw new UnsupportedCommitError(
+        `marketing_set_campaign_status asks for ${status}, but campaign ${campaignId} was last set to ${status} by an action that succeeded, so approving it would queue nothing`,
+      )
+    }
+    // receipt_id is NULL for the reason marketing_stage and marketing_promote
+    // both give: commitWithReceipt signs its receipt after applyDraft returns, so
+    // no receipt id exists to write yet. Nothing writes one afterwards either — no
+    // code path updates marketing_actions.receipt_id today — so the durable link
+    // from this work order to the approval that caused it is
+    // audit_receipts.committed_record_id, which commitWithReceipt fills with the
+    // id returned here.
+    const queued = await client.query<{ id: string }>(
+      `INSERT INTO marketing_actions (tenant_id, bundle_id, action, payload, status, receipt_id)
+       VALUES ($1, $2, 'set_campaign_status', $3, 'queued', NULL)
+       RETURNING id`,
+      [draft.tenantId, created.bundle_id, JSON.stringify({ campaignId, status })],
+    )
+    // The committed record is the work order, because the work order is what the
+    // receipt covers. marketing_promote returns a bundle id instead, since its
+    // receipt is a decision about a bundle.
+    return queued.rows[0]!.id
+  }
+
   const target = requireTarget(draft.objectType)
 
   switch (draft.operation) {
