@@ -52,6 +52,24 @@ function candidateRow(): Row {
   }
 }
 
+/**
+ * The row `getOrCreateDraft` gets back from its `INSERT ... RETURNING *`, which
+ * `rowToPendingWrite` then maps. Two of its columns are `timestamptz`, and the
+ * mapper normalises them through `toIsoString`, which refuses a value that is
+ * neither a `Date` nor a string rather than coercing it (`src/db/timestamps.ts:27`).
+ * A stub that returned only the id therefore claimed the insert worked while
+ * describing a row the driver cannot produce, and the tool threw on the way out.
+ * The dates are `Date` objects on purpose, because that is the shape the real
+ * driver hands back and the point of the normaliser is to accept it.
+ */
+function stagedRow(): Row {
+  return {
+    id: PENDING,
+    created_at: new Date('2026-11-03T00:00:00.000Z'),
+    expires_at: new Date('2026-11-03T01:00:00.000Z'),
+  }
+}
+
 type ExecuteFn = (input: Record<string, unknown>, context: unknown) => Promise<{
   status: string
   pendingWriteId: string | null
@@ -86,7 +104,7 @@ describe('crm.resolve_merge_candidate', () => {
   it('stages a dismissal instead of applying it', async () => {
     stubQueries({
       'FROM prospect_merge_candidates m': [candidateRow()],
-      'INSERT INTO pending_writes': [{ id: PENDING }],
+      'INSERT INTO pending_writes': [stagedRow()],
     })
 
     const result = await runResolve(resolution())
@@ -113,7 +131,7 @@ describe('crm.resolve_merge_candidate', () => {
   it('stages a merge as a prospect_merge update keyed on the decision triple', async () => {
     stubQueries({
       'FROM prospect_merge_candidates m': [candidateRow()],
-      'INSERT INTO pending_writes': [{ id: PENDING }],
+      'INSERT INTO pending_writes': [stagedRow()],
     })
 
     const result = await runResolve(resolution({ decision: 'merge' }))
@@ -141,7 +159,7 @@ describe('crm.resolve_merge_candidate', () => {
   it('derives the duplicate when the survivor is the right-hand prospect', async () => {
     stubQueries({
       'FROM prospect_merge_candidates m': [candidateRow()],
-      'INSERT INTO pending_writes': [{ id: PENDING }],
+      'INSERT INTO pending_writes': [stagedRow()],
     })
 
     const result = await runResolve(resolution({ survivorId: DUPLICATE, decision: 'merge' }))
