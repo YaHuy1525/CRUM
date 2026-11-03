@@ -4,6 +4,7 @@ import { dismissMergeCandidate, mergeProspects } from './prospect-merge'
 import { BundleNotApprovableError, commitBundleApproval, pageSlugOf } from '../marketing/outbox'
 import { SlugProblemError } from '../marketing/site'
 import { siteHashInTransaction } from './marketing'
+import { isoOrNull, toIsoString } from './timestamps'
 
 export interface PendingWrite {
   id: string
@@ -83,13 +84,18 @@ function rowToPendingWrite(row: Record<string, unknown>): PendingWrite {
     gate: row.gate as string,
     draftHash: row.draft_hash as string,
     receiptId: row.receipt_id as string | null,
-    rejectedAt: row.rejected_at as string | null,
+    // The three columns below are the timestamps this table has. They go through
+    // the normaliser rather than a cast so `PendingWrite`'s `string` annotations
+    // mean what the driver returns. `committedAt` and `committedRecordId` stay as
+    // they are: their `?? null` is a nullable-column default, not a shape claim,
+    // and the read paths that need them write the value themselves.
+    rejectedAt: isoOrNull(row.rejected_at, 'pending_writes.rejected_at'),
     rejectionReason: row.rejection_reason as string | null,
     committedAt: (row.committed_at as string | null | undefined) ?? null,
     committedRecordId: (row.committed_record_id as string | null | undefined) ?? null,
     requestedBy: row.requested_by as string,
-    createdAt: row.created_at as string,
-    expiresAt: row.expires_at as string,
+    createdAt: toIsoString(row.created_at, 'pending_writes.created_at'),
+    expiresAt: toIsoString(row.expires_at, 'pending_writes.expires_at'),
   }
 }
 
@@ -830,7 +836,10 @@ export async function getReceipt(id: string, tenantId: string): Promise<Receipt 
     scope: row.scope as string,
     decision: row.decision as 'approved' | 'rejected',
     reason: (row.reason as string | null) ?? null,
-    createdAt: row.created_at as string,
+    // The fourth site. A receipt is the artifact a reviewer's decision becomes,
+    // and the same false annotation on one column of it is the drift this task
+    // exists to end.
+    createdAt: toIsoString(row.created_at, 'audit_receipts.created_at'),
     payload: row.payload,
   }
 }

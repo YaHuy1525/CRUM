@@ -79,6 +79,35 @@ describe('getOpenStageDraft', () => {
     })
   })
 
+  it('normalises the three timestamps the driver actually returns as Dates', async () => {
+    // A `timestamptz` column arrives as a `Date`, and the mapper used to write
+    // `row.created_at as string` over it. That pair only agrees by accident, so
+    // this row is the driver's real shape rather than the builder's default.
+    mockQuery.mockResolvedValue({
+      rows: [
+        draftRow({
+          rejected_at: new Date('2026-11-01T12:00:00.000Z'),
+          created_at: new Date('2026-11-01T00:00:00.000Z'),
+          expires_at: new Date('2026-11-02T00:00:00.000Z'),
+        }),
+      ],
+    })
+    const { getOpenStageDraft } = await load()
+    const draft = await getOpenStageDraft(TENANT, BUNDLE)
+    expect(draft?.rejectedAt).toBe('2026-11-01T12:00:00.000Z')
+    expect(draft?.createdAt).toBe('2026-11-01T00:00:00.000Z')
+    expect(draft?.expiresAt).toBe('2026-11-02T00:00:00.000Z')
+  })
+
+  it('keeps a null rejected_at null rather than the string "null"', async () => {
+    // The one nullable column in this set is null for the row the gate cares
+    // about, which is also the row's whole meaning: an un-rejected approval.
+    mockQuery.mockResolvedValue({ rows: [draftRow()] })
+    const { getOpenStageDraft } = await load()
+    const draft = await getOpenStageDraft(TENANT, BUNDLE)
+    expect(draft?.rejectedAt).toBeNull()
+  })
+
   it('returns null rather than an empty object when nothing is open', async () => {
     mockQuery.mockResolvedValue({ rows: [] })
     const { getOpenStageDraft } = await load()

@@ -17,6 +17,7 @@
  */
 import { getDbClient } from './client'
 import { getOpenStageDraft } from './pending-writes'
+import { toIsoString } from './timestamps'
 
 export interface ReviewerPrediction {
   id: string
@@ -31,7 +32,12 @@ interface PredictionSqlRow {
   tenant_id: string
   pending_write_id: string
   predicted_outcome: string
-  created_at: string
+  // `unknown`, not `string`, because the driver answers a `timestamptz` with a
+  // `Date`. An annotation saying `string` here is the fiction `rowToPrediction`
+  // used to complete with a cast, and it is also why the `RETURNING` list and
+  // this shape have to be read together: `insertPrediction` maps the same column
+  // through the same normaliser.
+  created_at: unknown
 }
 
 function rowToPrediction(row: PredictionSqlRow): ReviewerPrediction {
@@ -40,7 +46,7 @@ function rowToPrediction(row: PredictionSqlRow): ReviewerPrediction {
     tenantId: row.tenant_id,
     pendingWriteId: row.pending_write_id,
     predictedOutcome: row.predicted_outcome,
-    createdAt: row.created_at,
+    createdAt: toIsoString(row.created_at, 'reviewer_predictions.created_at'),
   }
 }
 

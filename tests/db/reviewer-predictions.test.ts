@@ -84,6 +84,19 @@ describe('insertPrediction', () => {
   })
 })
 
+describe('getPredictionForDraft', () => {
+  it('hands back an ISO string for the Date the driver returns', async () => {
+    // The row builder defaults `created_at` to a string, which is the shape a
+    // `created_at: string` annotation wants and the shape node-pg never sends on
+    // a `timestamptz` column. This row carries the real one.
+    mockQuery.mockResolvedValue({ rows: [predictionRow({ created_at: new Date('2026-11-02T04:00:00.000Z') })] })
+    const { getPredictionForDraft } = await load()
+    const prediction = await getPredictionForDraft(TENANT, DRAFT)
+    expect(prediction?.createdAt).toBe('2026-11-02T04:00:00.000Z')
+    expect(typeof prediction?.createdAt).toBe('string')
+  })
+})
+
 describe('bundlePredictionGate', () => {
   it('is not required, and reports no prediction, when the bundle has no open stage draft', async () => {
     mockQuery.mockResolvedValue({ rows: [] })
