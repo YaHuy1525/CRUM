@@ -27,7 +27,8 @@ const BUNDLE_ID = '33333333-3333-4333-8333-333333333333'
 const CAMPAIGN_ID = '23842653876'
 const DRAFT_ID = '44444444-4444-4444-8444-444444444444'
 // requested_by is a uuid column that means "who asked", so every call below has
-// to name a person. The cron gets its from CRUM_ANALYST_USER_ID.
+// to name a person. The cron gets that id from CRUM_ANALYST_USER_ID, and a chat
+// caller gets it from the request context.
 const USER = '55555555-5555-4555-8555-555555555555'
 
 type Row = Record<string, unknown>
@@ -296,5 +297,36 @@ describe('stageCampaignStatusChange', () => {
       }),
     ).rejects.toThrow(/provider_not_configured/)
     expect(mockGetOrCreateDraft).not.toHaveBeenCalled()
+  })
+
+  it('refuses a malformed actor as well as a missing one', async () => {
+    // The task this file belongs to is "the insert always died on 22P02", so the
+    // guard has to close the whole bug class rather than the empty case: a
+    // near-miss actor is the same rejected cast with a different spelling, and
+    // Task 17 forwards a request-context value without parsing it.
+    stubQueries([
+      { fragment: "action = 'create_campaign'", rows: [{ id: 'act1' }] },
+    ])
+    await expect(
+      stageCampaignStatusChange({
+        tenantId: TENANT,
+        userId: 'analyst-cron',
+        bundleId: BUNDLE_ID,
+        campaignExternalId: CAMPAIGN_ID,
+        status: 'PAUSED',
+        reason: 'cost_per_lead_above_10',
+        userRole: 'admin',
+      }),
+    ).rejects.toThrow(/campaign_status_actor_required/)
+    expect(mockQuery).not.toHaveBeenCalled()
+    expect(mockGetOrCreateDraft).not.toHaveBeenCalled()
+  })
+
+  it('pins the derived target id to a literal, not only to a recomputation', () => {
+    // Every other assertion compares call.targetId against uuidFromSeed(...)
+    // recomputed in the test, so a seed-format change would move both sides
+    // together and stay green. This is the one place the format itself is nailed
+    // down; the value was measured in two separate processes.
+    expect(uuidFromSeed(`campaign:${CAMPAIGN_ID}`)).toBe('ff96fb60-5cb9-8d7d-b265-918605379b58')
   })
 })

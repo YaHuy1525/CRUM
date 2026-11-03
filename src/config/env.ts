@@ -237,10 +237,17 @@ export const EnvSchema = z.object({
   // every other credential here, so an `CRUM_ANALYST_USER_ID=` placeholder line
   // cannot fail a boot. Unset means the cron reports its recommendations and
   // stages nothing, because inventing a synthetic person to satisfy a column that
-  // means "who asked" would put a fiction in the audit trail.
+  // means "who asked" would put a fiction in the audit trail. Shape is as far as a
+  // config file can reach: pending_writes.requested_by carries no foreign key
+  // (migrations/0002_crum_spine.sql:158), so nothing here can tell a uuid that
+  // names a user from one that does not, and `.env.example` states the operator's
+  // half of that bargain instead of implying a check this file does not perform.
   CRUM_ANALYST_USER_ID: z.preprocess(
     blankAsUnset,
-    z.string().uuid('CRUM_ANALYST_USER_ID must be the uuid of a real user').optional(),
+    z
+      .string()
+      .uuid('CRUM_ANALYST_USER_ID must be a uuid, the shape pending_writes.requested_by needs')
+      .optional(),
   ),
 })
 

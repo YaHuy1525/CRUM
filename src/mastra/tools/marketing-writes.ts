@@ -844,10 +844,10 @@ export async function stageRetry(params: {
  * is harmless and the owner may still want the audit trail. Spec section 9.4.
  *
  * Like `stagePromotion`, the function validates before it stages: an action this
- * process cannot run, a call with no owner named, a campaign that does not exist
- * on the bundle it is claimed to belong to, or a scale against a campaign that is
- * already active is refused before any row is written. The caller (the analyst
- * cron) logs the refusal and moves on.
+ * process cannot run, a call that cannot name a uuid owner, a campaign that does
+ * not exist on the bundle it is claimed to belong to, or a scale against a
+ * campaign that is already active is refused before any row is written. The
+ * caller (the analyst cron) logs the refusal and moves on.
  */
 export async function stageCampaignStatusChange(args: {
   tenantId: string
@@ -864,10 +864,17 @@ export async function stageCampaignStatusChange(args: {
   // column means who asked. 'analyst-cron' is a label, not a person, and Postgres
   // refused it at the insert, so every draft this function staged since slice 3
   // failed to exist. A call that cannot name an owner refuses here, in words,
-  // before it spends a query on 22P02.
-  if (!args.userId) {
+  // before it spends a query on 22P02. The shape is checked alongside the
+  // presence because the caller after this one is Task 17's chat tool, which
+  // forwards a request-context value without parsing it, and a near-miss string
+  // is the same 22P02 wearing a different hat. ID_SHAPE (:631) is already the
+  // repo's answer to "is this a uuid", so this borrows it rather than writing a
+  // second one.
+  if (!args.userId || !ID_SHAPE.safeParse(args.userId).success) {
     throw new Error(
-      `campaign_status_actor_required: no user id was supplied for the status change on ${args.campaignExternalId}`,
+      `campaign_status_actor_required: the status change on ${args.campaignExternalId} needs a uuid actor and received ${
+        args.userId ? 'a value that is not one' : 'nothing'
+      }`,
     )
   }
 
@@ -906,6 +913,23 @@ export async function stageCampaignStatusChange(args: {
   // already active, the draft would change nothing, so refuse before staging.
   // A kill recommendation pauses a campaign regardless of its current state,
   // so no status check is needed for PAUSED.
+  //
+  // This read stays tenant-wide where the existence read above it gained a bundle
+  // filter, and the asymmetry is deliberate. Meta campaign ids are globally
+  // unique, so a status row for this id describes this campaign whichever bundle
+  // asked about it, and src/db/marketing.ts:499 reads the same table with the same
+  // two filters: the data lane's rule and this one agree. Bundle scope belongs on
+  // the existence check because that is where the caller's claim ("this bundle's
+  // campaign") is what is being tested. The wider read is also the safer one: if
+  // the data ever did disagree, it refuses a no-op rather than staging one.
+  //
+  // What the comment would be hiding if it did not say it: nothing in src/ writes
+  // a set_campaign_status row yet. deriveActions (src/marketing/outbox.ts:141)
+  // inserts create_campaign only, and the writer for status rows is Task 16's
+  // applyDraft branch. Until that lands this query returns zero rows in
+  // production, so campaign_already_active is a forward guard rather than a live
+  // refusal, and the unit case that exercises it passes a row the database cannot
+  // yet contain.
   if (args.status === 'ACTIVE') {
     const latest = await db.query<{ status: string }>(
       `SELECT payload ->> 'status' AS status
@@ -947,9 +971,13 @@ export async function stageCampaignStatusChange(args: {
     // Meta's campaign id is not a uuid and target_id is one
     // (migrations/0002_crum_spine.sql:149), which is the second half of why this
     // insert has always failed. uuidFromSeed gives the same external identity the
-    // same derived id every time, so a re-ask still lands on the existing draft
-    // rather than a second approval, and the real id stays in the payload, which
-    // is the only copy of it the draft keeps.
+    // same derived id in every process, so the target column is a stable pointer
+    // to one campaign instead of a fresh random uuid per draft. The dedupe is a
+    // different mechanism and should not be credited to this line: a re-ask lands
+    // on the existing draft through ON CONFLICT (tenant_id, draft_hash), where
+    // draft_hash is the idempotencyKey below (src/db/pending-writes.ts:111). The
+    // real id stays in payload.campaignId, the one field of the row that carries
+    // it in the clear, and Task 16's applyDraft branch has to read it from there.
     targetId: uuidFromSeed(`campaign:${args.campaignExternalId}`),
     payload,
     riskScore: assessment.score,

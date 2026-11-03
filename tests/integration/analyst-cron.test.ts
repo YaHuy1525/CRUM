@@ -92,6 +92,16 @@ async function insertSnapshot(params: {
   // window_start past the boundary, so the aggregation case was asserting totals
   // over rows the query could not return and read zero. A one-day window that ends
   // daysAgo days ago stays inside for every daysAgo this file uses.
+  //
+  // The green case below is not evidence that the lookback is right. Production
+  // writes a seven-day window (analyst-cron.ts:251 computes start as now - 7d and
+  // :283 inserts it), so a run's own fresh snapshot starts seconds outside the
+  // filter and is invisible to the run that wrote it; that is a defect in the query
+  // or the stamp, not in this fixture, and fixing it would change what the analyst
+  // sees. It is carried to the final review, and this file deliberately keeps a
+  // window shape production does not write so that the aggregation logic has
+  // something visible to aggregate. Read the passing case as "totals add up", not
+  // "the lookback works".
   const windowEnd = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000)
   const windowStart = new Date(windowEnd.getTime() - 24 * 60 * 60 * 1000)
 
@@ -125,9 +135,16 @@ afterAll(async () => {
 
 describe.skipIf(!url)('analyst cron', () => {
   beforeAll(async () => {
-    // Staging a status draft now asks whether this process can run the action, so
-    // the two staging cases need an adapter registered. Nothing here reaches Meta:
-    // the drainer never runs in this file and the stub answers without a network.
+    // Staging a status draft asks whether this process can run the action, so the
+    // staging cases need an adapter registered. The cron gets its own in main(),
+    // built from CRUM_META_ADS_ACCESS_TOKEN and CRUM_META_AD_ACCOUNTS by
+    // statusAdapterConfigFromEnv (scripts/analyst-cron.ts:206, unit-covered in
+    // tests/scripts/analyst-cron-config.test.ts), which this file does not run: the
+    // cases call runAnalystCron directly with an injected agent, so the
+    // registration here stands in for main()'s. It is a stub on purpose, and
+    // nothing reaches Meta: the drainer never runs in this file and the stub answers
+    // without a network. The case below that unregisters again is what pins the
+    // difference between "registered" and "refused".
     unregisterStatus = registerActionAdapter({
       name: 'set_campaign_status',
       execute: () => Promise.resolve({ externalId: 'analyst-cron-test-stub' }),
@@ -324,6 +341,46 @@ describe.skipIf(!url)('analyst cron', () => {
     expect(await countPendingWrites(uuidFromSeed(`campaign:${CAMPAIGN_A}`))).toBe(0)
 
     logSpy.mockRestore()
+  })
+
+  it('reports a recommendation it cannot stage because this process cannot run the action', async () => {
+    // The other half of the actor refusal: an owner named is not enough if the
+    // action has no adapter here, because the drainer would then be handed work it
+    // records as no_adapter. The cron clears this door only because main()
+    // registers the Meta adapter from its own env, so the refusal is pinned in the
+    // shape a reader can run: a real recommendation, a real actor, nothing
+    // registered, and a counted error rather than a draft nobody can approve.
+    const db = getDbClient()
+    await db.query(`DELETE FROM pending_writes WHERE tenant_id = $1 AND target_id = $2`, [
+      TENANT,
+      uuidFromSeed(`campaign:${CAMPAIGN_B}`),
+    ])
+
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    unregisterStatus()
+
+    try {
+      const { runAnalystCron } = await import('../../scripts/analyst-cron')
+      const result = await runAnalystCron({
+        tenantId: TENANT,
+        analystUserId: ANALYST,
+        invokeAgent: () =>
+          Promise.resolve('{"recommendation":"kill","threshold":"cost_per_lead_above_20","message":"Kill it","campaigns":[{"bundleId":"' + BUNDLE_B + '","campaignId":"' + CAMPAIGN_B + '","recommendation":"kill","reason":"cost_per_lead_above_20"}]}'),
+      })
+
+      expect(result.stagedDrafts).toEqual([])
+      expect(result.errors.filter((entry) => entry.includes('provider_not_configured')).length).toBe(1)
+      expect(result.errors[0]).toContain(CAMPAIGN_B)
+      expect(await countPendingWrites(uuidFromSeed(`campaign:${CAMPAIGN_B}`))).toBe(0)
+    } finally {
+      // Restore what the cases after this one depend on, and leave the single
+      // cleanup in afterAll holding the current handle.
+      unregisterStatus = registerActionAdapter({
+        name: 'set_campaign_status',
+        execute: () => Promise.resolve({ externalId: 'analyst-cron-test-stub' }),
+      })
+      errSpy.mockRestore()
+    }
   })
 
   it('logs message for "hold" recommendation without staging a draft', async () => {
