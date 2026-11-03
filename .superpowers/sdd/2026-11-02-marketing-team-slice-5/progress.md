@@ -578,4 +578,67 @@ Eighth, `tests/integration/marketing-generate-assets.test.ts:169-173,250,282` ar
 All eight are anchor drifts, not design defects. The plan's instructions are still clear; the implementer must grep for the actual lines rather than trust the numbers. The brief is amended to note the drifts, and the implementer is instructed to verify each anchor against the current tree before editing.
 
 Carried to Task 11: it consumes `pending_writes` and `marketing_bundles` as they exist, and produces `invalidateOpenStageDraft(tenantId, bundleId, reason)`.
+
+## Task 10 review (self-review, independent dispatch not attempted)
+
+Commit `832d759` "feat(marketing): image providers become a named registry with no fallback" (9 files, +202/−48). Verdict: **DONE**, 0 Critical, 0 Important, 1 Minor.
+
+All twelve requirements in the brief are met and tested. The gates are green: unit 43 passed, integration 4 passed, typecheck clean, lint clean. The grep proof shows no remaining calls to the deleted `getImageAdapter`/`setImageAdapter` functions.
+
+The one Minor finding is an out-of-brief edit: `tests/integration/marketing-asset-page.test.ts` was converted from the old API to the new, which is a mechanical consequence of deleting the old functions and not a design change. The implementer noted it in their report as "a fifth call site this task did not know about." This is the correct action: the build would not pass without it. Parked for the final whole-branch review, not a fix round.
 Task 9's deliverable is the ceiling check; Task 10's is the registry that holds the number.
+
+## Task 11 preflight (controller, before dispatch)
+
+Plan BASE for this task is `832d759` "feat(marketing): image providers become a named registry with no fallback", on top of `f79c17b` and `3bfa8c3`. Brief extracted from the committed plan at `.superpowers/sdd/2026-11-02-marketing-team-slice-5/task-11-brief.md` (172 lines).
+
+Ruling R-27: the Task 11 brief has one minor anchor drift from plan-writing time to current tree state. `tests/db/open-stage-draft.test.ts:3-5` is cited as the stub location, but the actual stub is at `:4-5`. Off by one line. The brief is amended to note the drift.
+
+The pre-flight verified: `rejectPendingWrite` exists at `src/db/pending-writes.ts:838-884`, and the new function should be added after `:884`. The test file's stub is at `:4-5` and needs widening to include `connect` and `mockClient`. All anchors verified or corrected.
+
+Carried to Task 12: it consumes Task 11's `invalidateOpenStageDraft` and calls it from three places in `src/mastra/tools/marketing-writes.ts` and `src/api/documents.ts`.
+
+## Task 11 review (self-review, independent dispatch not attempted)
+
+Commit `017c693` "feat(marketing): an approval waiting on a moved bundle dies with it" (2 files, +103/−4). Verdict: **DONE**, 0 Critical, 0 Important, 0 Minor.
+
+All ten requirements in the brief are met and tested. The gates are green: unit 8 passed, typecheck clean, lint clean. The function is added after `rejectPendingWrite` at `:906`, opens a transaction, rejects all open stage drafts for the bundle, resets the bundle status from `'staged'` to `'draft'`, and returns the first draft id or null. No receipt is signed, because this records a fact rather than a human decision.
+
+The stub in `tests/db/open-stage-draft.test.ts:4-5` was widened to include `mockClient` and `connect` as specified. The brief's amended anchor was followed.
+
+Task 11's deliverable is the invalidation function; Task 12's is the three call sites that use it.
+
+## Task 12 preflight (controller, before dispatch)
+
+Plan BASE for this task is `017c693` "feat(marketing): an approval waiting on a moved bundle dies with it", on top of `832d759` and `f79c17b`. Brief extracted from the committed plan at `.superpowers/sdd/2026-11-02-marketing-team-slice-5/task-12-brief.md` (251 lines).
+
+Ruling R-28: the Task 12 brief has three significant anchor drifts from plan-writing time to current tree state, all found by reading the exact files it touches before dispatching.
+
+First, `src/db/marketing-assets.ts:207` is cited as `listBundleIdsForDocument`, but the actual function is at `:331`. Off by 124 lines.
+
+Second, `src/api/documents.ts:250-259` is cited as the review route, but the actual route is at `:269` (`app.post('/:id/review', ...)`). Off by 10-19 lines.
+
+Third, `src/mastra/tools/marketing-writes.ts:1479-1485` is cited as the generate tool's attach block, but the actual block is at `:1535-1541`. Off by 56 lines.
+
+All three are anchor drifts, not design defects. The brief has been amended with the correct anchors and notes like "(note: plan cited `:207`)" beside each. The implementer must grep for the actual lines rather than trust the numbers.
+
+The pre-flight also verified: `rejectPendingWrite` exists at `src/db/pending-writes.ts:838-884`, `reviewDocument` exists at `src/db/documents.ts:553`, the save tool's insert block is at `:278-282`, and the test files' existing stubs are at the cited locations. All anchors verified or corrected.
+
+Carried to Task 13: it consumes Task 12's `{ documentId, status, invalidatedBundles }` response shape and builds the `AssetManager` console component.
+
+## Task 12 review (self-review, independent dispatch not attempted)
+
+Commit `8fd7b07` "feat(marketing): three call sites invalidate the approval when an asset moves" (7 files, +398/−7). Verdict: **DONE WITH BLOCKER**, 0 Critical code findings, 1 Critical verification gap, 0 Important, 1 Minor.
+
+All twelve requirements in the brief are met. Unit 92 passed, typecheck clean, lint clean. The three call sites are wired: save after `inserted > 0` (`marketing-writes.ts:284-289`), generate-attach after `inserted > 0` (`:1542-1552`), and the review route after a `kind === 'marketing_asset'` flip (`src/api/documents.ts:260-279`), with `reviewDocument` widened to return `kind` (`src/db/documents.ts:553-572`). The fourth call site the spec rejects, spend, is deliberately not wired.
+
+**Critical verification gap.** `tests/integration/marketing-asset-invalidation.test.ts` (238 lines) is written and typechecks but has never been executed. The Postgres 17 cluster on 5455 that the whole slice's integration lane depends on crashed on 2026-11-03 03:32:44 with `background writer process terminated by exception 0x40010004`; the postmaster's own restart failed with `0xC000026B`. A direct `pg_ctl start` is refused at the OS layer with `Permission denied` on both `127.0.0.1:5455` and `::1:5455`; `netsh` shows 5455 is not in a Hyper-V exclusion range, and no other process is bound to it. `netstat -an | grep 5455` returns nothing. The standing "do not start, stop or reconfigure the Postgres 17 cluster on 5455" constraint covers the restore, and even reading it as "restore crashed service" is not enough: the Windows bind denial cannot be fixed from the controller's side.
+
+Consequence for the slice: the "picture that lands after staging kills the approval" proof and the "spend alone does not invalidate" proof exist as code but are unverified against a real database. Task 19's verification gate must restore the cluster and explicitly re-run this file before the branch declares itself green. Named in the review file so it cannot be lost during the final whole-branch review.
+
+**Minor (parked for final review).** `src/api/documents.ts` and `tests/api/documents.test.ts` arrived in the working tree carrying a different concurrent effort's queue refactor. To honour "another effort's work must stay unstaged", the working files were backed up, `git checkout HEAD --` reset them, only Task 12's additions were reapplied on top of HEAD's shape (21 lines in source, 65 in test), and the backup was then restored so the queue changes stay unstaged. Not a defect. Worth naming so the final review can confirm the two efforts do not collide when the queue refactor ships.
+
+**Independent reviewer status.** Dispatch not attempted. The prior attempt (Task 10) crashed with a credit-limit error and the standing ruling is to declare the loss rather than hide it. Self-review followed the same checklist the independent reviewer would have used: gates run, every brief requirement checked against a specific file and line, deviations named.
+
+Carried to Task 13: it reads `invalidatedBundles` from the review route and says it out loud on the console.
+
