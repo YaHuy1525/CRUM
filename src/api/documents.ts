@@ -16,7 +16,7 @@ import { listBundleIdsForDocument } from '../db/marketing-assets'
 import { MAX_DOCUMENT_BYTES } from '../mastra/workflows/document-intake'
 import type { DocumentJobData } from '../queue/document-queue'
 import { getDbClient } from '../db/client'
-import { setAuditContext } from '../db/audit-context.js'
+import type { PoolClient } from 'pg'
 
 /** The slice of the job queue the upload plane needs, injected so routes stay testable. */
 export interface DocumentJobSnapshot {
@@ -355,79 +355,71 @@ export function createDocumentsRouter(deps: DocumentsRouterDeps): Hono {
     reason?: string
   }
 
-  app.patch('/:id/invoices/:field', async (c) => {
+  async function handleCorrection(
+    c: Context,
+    allowedFields: string[],
+    tableName: 'invoices' | 'contracts',
+    docKind: 'invoice' | 'contract',
+  ) {
     const gate = await auth(c)
     if ('error' in gate) return gate.error
+
     const docId = c.req.param('id')
     const field = c.req.param('field')
     const body = await c.req.json<CorrectionBody>()
+    const identity = gate.identity
 
-    if (!ALLOWED_INVOICE_FIELDS.includes(field)) {
+    if (!field || !allowedFields.includes(field)) {
       return c.json({ error: `Field not correctable: '${field}'` }, 400)
     }
 
-    const docResult = await getDbClient().query(
-      `SELECT id FROM documents WHERE id = $1 AND tenant_id = $2 AND kind = 'invoice'`,
-      [docId, gate.identity.tenantId],
+    // Verify document exists and belongs to tenant
+    const docResult = await getDbClient().query<{ id: string }>(
+      `SELECT id FROM documents WHERE id = $1 AND tenant_id = $2 AND kind = $3`,
+      [docId, identity.tenantId, docKind],
     )
 
     if (docResult.rows.length === 0) {
       return c.json({ error: 'Document not found' }, 404)
     }
 
-    await setAuditContext({ userId: gate.identity.userId, changeSource: 'manual_correction' })
+    // Use a dedicated connection so set_config + UPDATE share the same session,
+    // guaranteeing the audit trigger sees the correct changed_by / change_source.
+    const client: PoolClient = await getDbClient().connect()
+    try {
+      await client.query('BEGIN')
+      await client.query('SELECT set_config($1, $2, false)', ['app.current_user_id', identity.userId])
+      await client.query('SELECT set_config($1, $2, false)', ['app.change_source', 'manual_correction'])
 
-    await getDbClient().query(
-      `UPDATE invoices SET ${field} = $1 WHERE document_id = $2`,
-      [body.value, docId],
-    )
-
-    if (body.reason) {
-      await getDbClient().query(
-        `UPDATE document_field_audit SET reason = $1 WHERE document_id = $2 AND field_name = $3 AND changed_at = (SELECT MAX(changed_at) FROM document_field_audit WHERE document_id = $2 AND field_name = $3)`,
-        [body.reason, docId, field],
+      await client.query(
+        `UPDATE ${tableName} SET ${field} = $1 WHERE document_id = $2`,
+        [body.value, docId],
       )
+
+      if (body.reason) {
+        await client.query(
+          `UPDATE document_field_audit SET reason = $1 WHERE document_id = $2 AND field_name = $3 AND changed_at = (SELECT MAX(changed_at) FROM document_field_audit WHERE document_id = $2 AND field_name = $3)`,
+          [body.reason, docId, field],
+        )
+      }
+
+      await client.query('COMMIT')
+      return c.json({ success: true })
+    } catch (error) {
+      await client.query('ROLLBACK')
+      throw error
+    } finally {
+      client.release()
     }
+  }
 
-    return c.json({ success: true })
-  })
+  app.patch('/:id/invoices/:field', (c) =>
+    handleCorrection(c, ALLOWED_INVOICE_FIELDS, 'invoices', 'invoice'),
+  )
 
-  app.patch('/:id/contracts/:field', async (c) => {
-    const gate = await auth(c)
-    if ('error' in gate) return gate.error
-    const docId = c.req.param('id')
-    const field = c.req.param('field')
-    const body = await c.req.json<CorrectionBody>()
-
-    if (!ALLOWED_CONTRACT_FIELDS.includes(field)) {
-      return c.json({ error: `Field not correctable: '${field}'` }, 400)
-    }
-
-    const docResult = await getDbClient().query(
-      `SELECT id FROM documents WHERE id = $1 AND tenant_id = $2 AND kind = 'contract'`,
-      [docId, gate.identity.tenantId],
-    )
-
-    if (docResult.rows.length === 0) {
-      return c.json({ error: 'Document not found' }, 404)
-    }
-
-    await setAuditContext({ userId: gate.identity.userId, changeSource: 'manual_correction' })
-
-    await getDbClient().query(
-      `UPDATE contracts SET ${field} = $1 WHERE document_id = $2`,
-      [body.value, docId],
-    )
-
-    if (body.reason) {
-      await getDbClient().query(
-        `UPDATE document_field_audit SET reason = $1 WHERE document_id = $2 AND field_name = $3 AND changed_at = (SELECT MAX(changed_at) FROM document_field_audit WHERE document_id = $2 AND field_name = $3)`,
-        [body.reason, docId, field],
-      )
-    }
-
-    return c.json({ success: true })
-  })
+  app.patch('/:id/contracts/:field', (c) =>
+    handleCorrection(c, ALLOWED_CONTRACT_FIELDS, 'contracts', 'contract'),
+  )
 
   return app
 }
