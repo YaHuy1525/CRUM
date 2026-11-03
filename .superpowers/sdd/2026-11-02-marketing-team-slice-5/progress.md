@@ -1139,3 +1139,54 @@ Attribution is not a guess. `git log -S` on the throw message returns one commit
 Fixed at `151722e`, one file, 21 insertions and 3 deletions, in the prospect lane's test rather than in slice 5's own files, because the defect this slice caused has to be repaired where it shows. A local `stagedRow()` builder now returns the id plus `created_at` and `expires_at` as `Date` objects, following the file's existing `candidateRow()` shape and the `draftRow()` precedent in `tests/db/open-stage-draft.test.ts:17`. The RED is the run above, and the GREEN is `tests/mastra/prospect-merge-tools.test.ts` at `Tests 7 passed (7)` and the directory at `Test Files 56 passed (56)`, `Tests 518 passed (518)`. `npm run typecheck` and `npm run lint` both exit 0 after it.
 
 Two consequences to carry. Task 19's `tests/mastra` directory count is 518 against a slice 4 baseline of 496, and its report should name `151722e` as the closing of a slice-5-caused red rather than list three inherited ones. And a row mapper that starts refusing bad shapes is a breaking change to every stub of a `RETURNING *` in the repository, which is worth saying out loud before any later task adds a second normaliser.
+
+## Task 17 round 1 came back twice, and the collision is my fault
+
+Two independent reviews of `667384e` now exist. `task-17-review-1.md` is the background
+reviewer that was dispatched before the context compaction and finished at 17:20 after
+roughly 23 minutes. `task-17-review-2.md` is a fresh reviewer I dispatched at 17:05 because
+no review file had appeared and I believed the first one was lost. I gave both the same output
+path, the second wrote first, and the second was overwritten. The first reviewer returned its
+full findings to me in its completion summary, so nothing substantive is gone, and I restored
+its review by writing that summary back to `task-17-review-1.md` with a provenance note rather
+than pretending the file had survived intact. The rule going forward is one path per reviewer,
+named before the review exists.
+
+The verdicts differ, and the difference is instructive rather than a problem. Review 1 returned
+changes with 0 critical, 2 important and 7 minor. Review 2 approved with 2 should-fix and 2
+nits. The overlap is real: review 2 independently flagged that `requireApproval` is only driven
+with `PAUSED`, and that the success path hardcodes `gate: 'approval'` while the stored gate is
+computed. Review 1 went further and found the mechanism, the `gateFor: () => 'approval'` stub at
+`tests/mastra/marketing-campaign-status-tool.test.ts:89` makes the hook's return value a
+property of the stub rather than of the hook, so two source mutants die in nothing. That is
+exactly the fragment-stub collision this plan already names twice in its self-review notes, and
+it reached a review round anyway.
+
+## The rulings, verified against the source rather than taken from either reviewer
+
+I re-measured the load-bearing claims by reading the code, and both hold.
+
+I2 is true and the mechanism is exactly as reported. `stageCampaignStatusChange` hardcodes
+`runId: 'analyst-cron'` at `src/mastra/tools/marketing-writes.ts:982`, and the chat tool calls
+that same function at `:1152`, so a draft a person staged in conversation is stored with the
+cron's label. It reaches a human verbatim at `src/api/approvals.ts:74` and is fed to
+`matchSuspension` at `:172`. The repo already has the honest label: every other marketing
+staging tool passes `runId: 'pending'` (`:549`, `:717`, `:826`), and `'pending'` sits in
+`UNMATCHABLE_RUN_IDS` at `approvals.ts:95`, which is what a draft with no resumable run is
+supposed to look like. So the fix is an explicit origin at the call site, `'analyst-cron'` from
+the cron and `'pending'` from chat, not a default that hides the difference.
+
+I1 is true and the fix is a stronger test rather than a different stub. The hook must assert
+what it hands to `gateFor`, not what `gateFor` answers: capture the scored payload and the
+score, drive both statuses, and require both to return true. That kills the prose mutant,
+because the captured payload changes, and it kills `&& input.status === 'PAUSED'`, because the
+ACTIVE case then returns false.
+
+Of the seven minors, four are in this round and two are parked. In: the `campaign_not_found`
+prose states something that can be false; the comment at `:1136` claims the declared class holds
+"whatever the placeholder holds", which is true of the hook and misleading about `execute`; the
+score-carried-out assertions cannot fail; and the hardcoded `gate` should be the gate that was
+actually computed. Also in: `tokenOf` truncates a Windows path at the drive-letter colon, so
+`D:` is treated as a token. Parked, because both are wider than a nit round: `campaignExternalId`
+carries no shape validation at all, and the instructions paragraph names an admin-only tool to
+roles that cannot reach it.
