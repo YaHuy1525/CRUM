@@ -34,7 +34,7 @@ export interface DocumentBlock {
 }
 
 export interface ParseRun {
-  parser: 'docling' | 'unpdf' | 'mammoth' | 'plain'
+  parser: 'docling' | 'unpdf' | 'mammoth' | 'plain' | 'tesseract'
   parser_version: string
   status: 'ok' | 'failed'
   duration_ms: number | null

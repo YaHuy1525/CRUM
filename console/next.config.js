@@ -16,7 +16,12 @@
  * `MASTRA_BASE_URL`/`MASTRA_API_PREFIX` are gone rather than wired: this app has
  * no use for a browser-side base URL when every request is same-origin, and a
  * variable nobody reads is how a console ends up pointing at a port nobody
- * started. Identity is not handled here — see `middleware.ts`.
+ * started. One exception: `/ws/documents` cannot ride a rewrite, because Next
+ * proxies HTTP and not WebSocket upgrades, so the processing dashboard reads
+ * `NEXT_PUBLIC_CRUM_WS_ORIGIN` to dial the REST plane directly. Unset, it assumes
+ * the page origin, which is right for a reverse proxy that terminates WebSocket
+ * and wrong for plain `npm run dev:console`. Identity is not handled here — see
+ * `middleware.ts`.
  *
  * @type {import('next').NextConfig}
  */

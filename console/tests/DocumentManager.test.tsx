@@ -88,9 +88,10 @@ describe('DocumentManager', () => {
       route('/api/documents?kind=invoice', () => list([]), 'GET'),
       route(
         '/api/documents/upload',
-        { status: 201, body: { documentId: DOC_READY, status: 'ready', kind: 'invoice', confidence: 0.9, chunkCount: 4, indexName: 'idx' } },
+        { status: 202, body: { jobId: 'job-1', fileId: DOC_READY, status: 'queued', message: 'queued' } },
         'POST',
       ),
+      route('/api/documents/status/job-1', { status: 200, body: { id: 'job-1', state: 'active', progress: 40 } }, 'GET'),
     ])
 
     await screen.findByText(/No invoices uploaded yet/)
@@ -99,7 +100,43 @@ describe('DocumentManager', () => {
 
     await waitFor(() => expect(server.last('/api/documents/upload')?.method).toBe('POST'))
     expect(server.count('/api/documents/upload')).toBe(1)
-    expect(await screen.findByRole('status')).toHaveTextContent('4 chunks indexed')
+    // The upload plane answers 202 with a job id, not a finished document: the
+    // intake now runs in a BullMQ worker, so the console has nothing to report
+    // yet except that the file is queued.
+    expect(await screen.findByRole('status')).toHaveTextContent('bill.pdf queued for processing. Job ID: job-1')
+    expect(await screen.findByText('bill.pdf')).toBeInTheDocument()
+  })
+
+  it('reports the stored document once the queued job completes', async () => {
+    const user = userEvent.setup()
+    mountWith([
+      route('/api/documents?kind=invoice', () => list([]), 'GET'),
+      route(
+        '/api/documents/upload',
+        { status: 202, body: { jobId: 'job-2', fileId: DOC_READY, status: 'queued', message: 'queued' } },
+        'POST',
+      ),
+      route(
+        '/api/documents/status/job-2',
+        {
+          status: 200,
+          body: { id: 'job-2', state: 'completed', progress: 100, result: { documentId: DOC_READY, status: 'ready', kind: 'invoice' } },
+        },
+        'GET',
+      ),
+    ])
+
+    await screen.findByText(/No invoices uploaded yet/)
+    const file = new File([new Uint8Array([0x25, 0x50, 0x44, 0x46])], 'bill.pdf', { type: 'application/pdf' })
+    await user.upload(screen.getByLabelText('Upload a invoice'), file)
+
+    // pollJobStatus sleeps two seconds before its first read, so the wait is for
+    // that interval rather than for the render. findByRole would resolve on the
+    // queued notice and assert once; waitFor keeps checking until the job lands.
+    await waitFor(
+      () => expect(screen.getByRole('status')).toHaveTextContent(DOC_READY),
+      { timeout: 6000 },
+    )
   })
 
   it('renders the typed invoice header and line items on View', async () => {

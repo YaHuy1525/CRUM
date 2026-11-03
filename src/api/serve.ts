@@ -3,6 +3,7 @@ import { basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { serve } from '@hono/node-server'
 import type { ServerType } from '@hono/node-server'
+import type { Server } from 'node:http'
 import { Hono } from 'hono'
 import type { Mastra } from '@mastra/core/mastra'
 import type { CrumEnv } from '../config/env'
@@ -10,6 +11,10 @@ import { parseEnv } from '../config/env'
 import { createCrumMastra } from '../mastra'
 import { isMastraServerProcess } from '../mastra/boot'
 import { createApiRouter } from './index'
+import { startDocumentWorker, stopDocumentWorker } from '../queue/document-worker'
+import { startBatchWorker, stopBatchWorker } from '../queue/batch-worker'
+import { createWebSocketServer } from '../queue/websocket-server'
+import type { WebSocketServer as WebSocketServerType } from 'ws'
 
 
 export const MAX_BODY_BYTES = 8 * 1024 * 1024
@@ -25,6 +30,7 @@ export interface ApiServerOptions {
 export interface ApiServerHandle {
   port: number
   server: ServerType
+  wss: WebSocketServerType
   close(): Promise<void>
 }
 
@@ -76,10 +82,12 @@ export function startApiServer(options: ApiServerOptions): Promise<ApiServerHand
     let settled = false
     const server = serve({ fetch: app.fetch, port, hostname }, (info) => {
       settled = true
+      const wss = createWebSocketServer(server as Server, env)
       resolve({
         port: info.port,
         server,
-        close: () => closeServer(server),
+        wss,
+        close: () => closeServer(server, wss),
       })
     })
 
@@ -94,11 +102,19 @@ export function startApiServer(options: ApiServerOptions): Promise<ApiServerHand
   })
 }
 
-async function closeServer(server: ServerType): Promise<void> {
+async function closeServer(
+  server: ServerType,
+  wss?: ReturnType<typeof createWebSocketServer>
+): Promise<void> {
   await new Promise<void>((resolve) => {
     if ('closeAllConnections' in server) server.closeAllConnections()
     server.close(() => resolve())
   })
+  if (wss) {
+    await new Promise<void>((resolve) => {
+      wss.close(() => resolve())
+    })
+  }
 }
 
 async function main(): Promise<void> {
@@ -113,9 +129,17 @@ async function main(): Promise<void> {
     `[CRUM] The Mastra server is a separate process here (CRUM_API_PORT=${env.CRUM_API_PORT}), so /api/signals/* can only reach a session started in this one.`,
   )
 
+  startDocumentWorker()
+  console.log('[CRUM] Document processing worker started')
+
+  startBatchWorker()
+  console.log('[CRUM] Batch document worker started')
+
   for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     process.once(signal, () => {
-      void handle.close().then(() => process.exit(0))
+      void Promise.allSettled([stopDocumentWorker(), stopBatchWorker()])
+        .then(() => handle.close())
+        .then(() => process.exit(0))
     })
   }
 }

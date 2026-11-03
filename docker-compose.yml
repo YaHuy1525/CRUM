@@ -1,12 +1,14 @@
-# CRUM local stack. Four core services plus an optional parse sidecar on one
-# bridge network:
+# CRUM local stack. Core services plus optional sidecars on one bridge network:
 #
 #   db        pgvector Postgres (mirrors the CI service image + password)
 #   migrate   one-shot: applies migrations/ then exits (runtime never CREATEs)
+#   redis     BullMQ backing store for the document queues
 #   api       the Mastra server + in-process REST plane (4111 / 4113)
+#   worker    the queue consumer (document intake + batch intake)
 #   console   the Next.js console (:3000); its server-side rewrites reach api
 #   docling   optional document parse sidecar (profile: parse) — heavy image,
 #             only starts with `--profile parse`
+#   ocr       optional OCR sidecar (profile: ocr) — Tesseract-based image OCR
 #
 # Development shape, deliberately: NODE_ENV=development and CRUM_AUTH_MODE=dev so
 # the stack boots with no Supabase. parseEnv refuses production+dev (§13.2), so a
@@ -36,6 +38,18 @@ services:
       test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
       interval: 5s
       timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # No persistence: a queue backlog is not the source of truth, the documents
+    # table is, so a restart that loses delayed retries is acceptable locally.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
       retries: 10
 
   migrate:
@@ -76,6 +90,7 @@ services:
       CRUM_REST_HOST: "0.0.0.0"
       CRUM_API_PORT: "4111"
       CRUM_REST_PORT: "4113"
+      REDIS_URL: redis://redis:6379
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       CRUM_MODEL_MAIN: ${CRUM_MODEL_MAIN:-}
       CRUM_MODEL_LIGHT: ${CRUM_MODEL_LIGHT:-}
@@ -93,6 +108,10 @@ services:
       # `docker compose --profile parse up` AND set DOCLING_URL=http://docling:8090
       # in .env.compose (or this literal here).
       DOCLING_URL: ${DOCLING_URL:-}
+      # OCR sidecar, off by default: empty keeps image intake on the in-process
+      # fallback path. To enable, run `docker compose --profile ocr up` AND set
+      # OCR_URL=http://ocr:8091 in .env.compose (or this literal here).
+      OCR_URL: ${OCR_URL:-}
       # Dev-only signing fallbacks so the planes boot with no host .env. Both
       # must be >= 32 bytes (env.ts). Override with your own for anything real.
       APPROVAL_HMAC_SECRET: ${APPROVAL_HMAC_SECRET:-dev-only-approval-hmac-secret-change-me-0123}
@@ -107,6 +126,45 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  worker:
+    # BullMQ consumer for the document and batch queues. In this stack the api
+    # container boots the REST plane from src/mastra/boot.ts, which calls
+    # startApiServer but never serve.ts's `main()` — the only place the in-process
+    # workers start — so uploads would sit in the queue forever without this
+    # service. Same image, different entrypoint.
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["npm", "run", "queue:worker"]
+    environment:
+      NODE_ENV: development
+      CRUM_AUTH_MODE: dev
+      DATABASE_URL: postgresql://postgres:changeme@db:5432/postgres
+      MASTRA_PG_SSL: "false"
+      MASTRA_DB_DISABLE_INIT: "true"
+      MASTRA_PG_POOL_MAX: "4"
+      REDIS_URL: redis://redis:6379
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      CRUM_MODEL_MAIN: ${CRUM_MODEL_MAIN:-}
+      CRUM_MODEL_LIGHT: ${CRUM_MODEL_LIGHT:-}
+      EMBEDDING_MODEL_ID: ${EMBEDDING_MODEL_ID:-}
+      EMBEDDING_BASE_URL: https://openrouter.ai/api/v1
+      EMBEDDING_API_KEY: ${OPENROUTER_API_KEY:-}
+      DOCLING_URL: ${DOCLING_URL:-}
+      OCR_URL: ${OCR_URL:-}
+      APPROVAL_HMAC_SECRET: ${APPROVAL_HMAC_SECRET:-dev-only-approval-hmac-secret-change-me-0123}
+      MCP_REQUEST_STATE_KEY: ${MCP_REQUEST_STATE_KEY:-dev-only-mcp-request-state-key-change-me-01}
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
 
   docling:
     # Optional heavyweight parse sidecar (docling pulls torch + model files).
@@ -115,6 +173,16 @@ services:
     profiles: ["parse"]
     build:
       context: ./services/docling
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    # No host port: only the api container talks to it over the network.
+
+  ocr:
+    # Optional OCR sidecar (Tesseract). Behind a profile so the default stack
+    # never pays for it. Lighter than docling, focused on image-only documents.
+    profiles: ["ocr"]
+    build:
+      context: ./services/ocr
       dockerfile: Dockerfile
     restart: unless-stopped
     # No host port: only the api container talks to it over the network.
@@ -136,6 +204,11 @@ services:
         NEXT_PUBLIC_CRUM_DEV_TENANT_ID: ${CRUM_DEV_TENANT_ID:-00000000-0000-4000-8000-000000000001}
         NEXT_PUBLIC_CRUM_DEV_USER_ID: ${CRUM_DEV_USER_ID:-00000000-0000-4000-8000-000000000002}
         NEXT_PUBLIC_CRUM_DEV_USER_ROLE: ${CRUM_DEV_USER_ROLE:-admin}
+        # The live document-processing lane. Next rewrites carry HTTP, not
+        # WebSocket upgrades, so the browser cannot reach /ws/documents through
+        # :3000 and has to be pointed at the REST plane directly. Baked at build
+        # time; keep it in step with CRUM_REST_HOST_PORT if you move that.
+        NEXT_PUBLIC_CRUM_WS_ORIGIN: ${CRUM_WS_ORIGIN:-ws://127.0.0.1:4113}
     restart: unless-stopped
     environment:
       CRUM_MASTRA_ORIGIN: http://api:4111

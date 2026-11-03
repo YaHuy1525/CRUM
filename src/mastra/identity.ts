@@ -1,4 +1,5 @@
 import { jwtVerify, createRemoteJWKSet } from 'jose'
+import { z } from 'zod'
 import type { CrumEnv } from '../config/env'
 import { TenantRequestContextSchema, type TenantRequestContext } from './tenant-context'
 
@@ -87,15 +88,20 @@ async function claimsFromJwt(
   }
 }
 
+function identityRejection(issues: z.ZodIssue[]): IdentityError {
+  const allMissing = issues.every(
+    (issue) => issue.code === 'invalid_type' && issue.input === undefined,
+  )
+  return new IdentityError(
+    allMissing ? 'missing-claim' : 'invalid-claim',
+    `Identity claims failed validation: ${issues.map((i) => i.path.join('.') || '(root)').join(', ')}`,
+  )
+}
+
 function validateContext(candidate: Record<string, unknown>): TenantRequestContext {
   const parsed = TenantRequestContextSchema.safeParse(candidate)
   if (parsed.success) return parsed.data
-
-  const allMissing = parsed.error.issues.every((issue) => issue.code === 'invalid_type' && issue.input === undefined)
-  throw new IdentityError(
-    allMissing ? 'missing-claim' : 'invalid-claim',
-    `Identity claims failed validation: ${parsed.error.issues.map((i) => i.path.join('.') || '(root)').join(', ')}`,
-  )
+  throw identityRejection(parsed.error.issues)
 }
 
 let cachedJwks: ReturnType<typeof createRemoteJWKSet> | undefined
@@ -119,4 +125,43 @@ export function claimsFromSupabasePayload(payload: Record<string, unknown>): Ver
     userId: payload.sub,
     userRole: payload.user_role ?? appMeta.role,
   }
+}
+
+const SocketIdentitySchema = z.object({
+  tenantId: z.string().uuid('tenantId must be a valid UUID'),
+  userId: z.string().uuid('userId must be a valid UUID'),
+})
+
+export type SocketIdentity = z.infer<typeof SocketIdentitySchema>
+
+/**
+ * Identity for a WebSocket handshake, which is not an HTTP request: a browser
+ * cannot attach `Authorization` or `x-tenant-id` to an upgrade, so the only
+ * places identity can come from are the query string and the subprotocol.
+ *
+ * dev mode reads the query string, the same unverified trust the dev headers
+ * already carry (§13.2). jwt mode refuses rather than reading a token off the
+ * URL — a bearer token in a query string is a bearer token in every proxy,
+ * access log, and browser history between the page and this port, which is a
+ * weaker guarantee than the REST plane already gives.
+ */
+export function resolveSocketIdentity(
+  searchParams: URLSearchParams,
+  env: CrumEnv,
+): SocketIdentity {
+  if (env.CRUM_AUTH_MODE === 'jwt') {
+    throw new IdentityError(
+      'missing-token',
+      'The live document lane cannot verify identity on a WebSocket handshake, so it is ' +
+        'only served in CRUM_AUTH_MODE="dev". Poll /api/documents/status/:jobId from the ' +
+        'bearer-authenticated REST plane instead.',
+    )
+  }
+
+  const parsed = SocketIdentitySchema.safeParse({
+    tenantId: searchParams.get('tenantId') ?? undefined,
+    userId: searchParams.get('userId') ?? undefined,
+  })
+  if (!parsed.success) throw identityRejection(parsed.error.issues)
+  return parsed.data
 }

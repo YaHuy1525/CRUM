@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { parseEnv } from '../../src/config/env'
 import {
   resolveIdentity,
+  resolveSocketIdentity,
   IdentityError,
   claimsFromSupabasePayload,
   type HeaderReader,
@@ -115,6 +116,43 @@ describe('resolveIdentity — jwt mode', () => {
     await expect(
       resolveIdentity(headers({ authorization: 'Bearer a.b.c' }), jwtEnv, { verifyJwt: verify }),
     ).rejects.toMatchObject({ reason: 'missing-claim' })
+  })
+})
+
+describe('resolveSocketIdentity', () => {
+  function rejection(build: () => void): IdentityError {
+    let thrown: unknown
+    try {
+      build()
+    } catch (err) {
+      thrown = err
+    }
+    expect(thrown).toBeInstanceOf(IdentityError)
+    return thrown as IdentityError
+  }
+
+  it('reads the pair off the query string in dev mode', () => {
+    const params = new URLSearchParams({ tenantId: TENANT, userId: USER })
+    expect(resolveSocketIdentity(params, devEnv)).toEqual({ tenantId: TENANT, userId: USER })
+  })
+
+  it('refuses a tenant id that is not a UUID', () => {
+    const params = new URLSearchParams({ tenantId: 'acme', userId: USER })
+    expect(rejection(() => resolveSocketIdentity(params, devEnv)).reason).toBe('invalid-claim')
+  })
+
+  it('refuses a handshake with no user id', () => {
+    const params = new URLSearchParams({ tenantId: TENANT })
+    expect(rejection(() => resolveSocketIdentity(params, devEnv)).reason).toBe('missing-claim')
+  })
+
+  it('refuses jwt mode even when both ids are present, because nothing verified them', () => {
+    const params = new URLSearchParams({ tenantId: TENANT, userId: USER })
+    const err = rejection(() => resolveSocketIdentity(params, jwtEnv))
+    expect(err.reason).toBe('missing-token')
+    // The refusal names the plane that still answers, so an operator is not left
+    // hunting for the fallback.
+    expect(err.message).toContain('/api/documents/status/')
   })
 })
 
