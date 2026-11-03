@@ -2,7 +2,7 @@
 //
 // The Meta Ads lane's config read and its registration, in one module, because
 // more than one process has to answer the same question the same way. The adapter
-// map is per process (src/marketing/outbox.ts:74, and `isExecutable` at :81 reads
+// map is per process (src/marketing/outbox.ts:70, and `isExecutable` at :81 reads
 // exactly that map), so a lane that parses its accounts in one process and gives up
 // in the next produces refusals nobody can reproduce from the deployment. This file
 // moved here from tests/scripts/analyst-cron-config.test.ts when the read stopped

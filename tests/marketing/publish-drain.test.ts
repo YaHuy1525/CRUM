@@ -269,11 +269,14 @@ describe('registerDrainAdapters', () => {
   it('drains a campaign row rather than recording no_adapter against it', async () => {
     const registration = registerDrainAdapters({ ...PAGES, ...META })
     handles = registration.handles
-    expect(registration.metaConfigured).toBe(true)
 
     const { client, recorded } = fakeClient(undefined, CREATE_ROW)
     const counts = await drainOnce({ pool: client })
 
+    // Behaviour first, on purpose, ahead of the flag. The flag is a proxy for the
+    // registration and has two cases of its own below; asserted early it would be
+    // the thing that fails when the wiring breaks, and this case would report a
+    // bookkeeping change instead of the row that never ran.
     expect(counts).toEqual({ ran: 1, succeeded: 1, failed: 0 })
     expect(requested).toEqual(['https://graph.facebook.com/v18.0/act_111/campaigns'])
     const statements = recorded.map((entry) => entry.text)
@@ -281,6 +284,7 @@ describe('registerDrainAdapters', () => {
     // The reap statement also writes 'failed', so the assertion is about the
     // recordFailure shape, which is what a no_adapter refusal would have produced.
     expect(statements.some((text) => /SET status = 'failed', last_error = \$2/.test(text))).toBe(false)
+    expect(registration.metaConfigured).toBe(true)
   })
 
   it('says which lane a half-configured host is missing, and registers only the other', () => {

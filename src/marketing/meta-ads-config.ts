@@ -6,14 +6,14 @@
  * whether the current process can run the action at all, and the publisher
  * (`scripts/publish-drain.ts`) is the process that runs the queued Meta actions the
  * approvals produce. The adapter map is per process (`src/marketing/outbox.ts:70`,
- * read by `isExecutable` at `:81` and by the drainer's own lookup at `:90`), so a
+ * read by `isExecutable` at `:81` and by the drainer's own lookup at `:91`), so a
  * deployment whose two entrypoints parse the same settings differently yields
  * refusals that cannot be reproduced from the host's environment. That is the whole
  * reason one module holds both halves.
  *
  * Boot is deliberately not a caller. `src/mastra/index.ts:158` keeps its own inline
  * parse because it interleaves a once-per-change log, and
- * `tests/mastra/marketing-boot.test.ts:50` pins the warning that log emits, so
+ * `tests/mastra/marketing-boot.test.ts:54` pins the parse warning that log emits, so
  * folding boot in here would move a pinned message without moving the thing the test
  * is actually about. The third copy is real duplication and is parked for the final
  * review rather than papered over by a helper with two callers.
