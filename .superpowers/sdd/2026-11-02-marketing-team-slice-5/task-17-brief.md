@@ -135,3 +135,91 @@ One hazard, because the tree has moved since you started. The controller has lan
 ## Report back
 
 Return the commit hash, the file count and the insert count, the RED you captured, every gate with its per-file counts, any deviation from the plan with the reason, and anything you found that belongs to Task 18 or Task 19 rather than here.
+
+---
+
+## Addendum A8: the round 1 review fixes, controller ruled
+
+Source: `task-17-review-1.md` (0 critical, 2 important, 7 minor) and `task-17-review-2.md`
+(APPROVED, 2 should-fix, 2 nits). The controller re-measured both important findings against
+the source and both hold. This round fixes five and parks two. It is a new commit, never an
+amend.
+
+**A8.1, the origin of a campaign-status draft becomes explicit (I2).** `stageCampaignStatusChange`
+hardcodes `runId: 'analyst-cron'` at `src/mastra/tools/marketing-writes.ts:982`, and the chat tool
+calls that same function at `:1152`, so a draft a person staged in conversation is stored with the
+cron's label. It reaches a human verbatim at `src/api/approvals.ts:74` and goes into
+`matchSuspension` at `:172`. Add a required `origin: 'cron' | 'chat'` field to the argument
+object and use it to pick the run id: `'analyst-cron'` for the cron, `'pending'` for chat.
+`'pending'` is the label every other marketing staging tool already uses for a draft with no
+resumable run (`:549`, `:717`, `:826`) and it is a member of `UNMATCHABLE_RUN_IDS` at
+`src/api/approvals.ts:95`, so the approval queue reads honestly for both origins. Do not default
+the field and do not make it optional. The type error is the mechanism that finds every call
+site, and there are eleven of them: `scripts/analyst-cron.ts:328`, the tool at `:1152`,
+`tests/mastra/marketing-campaign-status-tool.test.ts` at nine sites, and
+`tests/integration/marketing-campaign-status.test.ts:118`. Give each call site the origin that
+case is actually exercising, and add one case that asserts the stored `run_id` differs between
+the two origins.
+
+**A8.2, the `requireApproval` case must be able to fail (I1).** `gateFor: () => 'approval'` at
+`tests/mastra/marketing-campaign-status-tool.test.ts:89` decides the hook's return value by
+stub rather than by computation, so a mutant that puts prose into the payload the hook scores
+survives 17 of 17, and so does `&& input.status === 'PAUSED'` appended to the return at
+`src/mastra/tools/marketing-writes.ts:1144`. Change the stub to record what it is handed, the
+way this plan's own self-review notes say to do when a fragment stub answers any parameters:
+capture the tool name, the score and the payload into an array the test can read. Keep returning
+whatever the real policy would return for that input only if it does not need a second parser; if
+it does, return `true` and stop asserting on the boolean. Then assert three things on the hook
+for both `ACTIVE` and `PAUSED`: it returns true for both, the payload it scored is exactly
+`campaignStatusPayload({ campaignId: '', status: input.status })`, and no string in that payload
+came from the tool input. Show the RED for both mutants before fixing, then GREEN after.
+
+**A8.3, the gate the tool reports is the gate that was stored.** `:1164` and `:1190` return
+`gate: 'approval' as const` while the value persisted at `:974` is computed by `gateFor`. Return
+the computed gate out of `stageCampaignStatusChange` alongside `pendingWriteId` and `riskScore`,
+and have the success path report it. Add the field to the function's declared return type, not
+inferred, so a later reader sees the shape. Leave the refusal path's `gate` alone if the schema
+forces a literal there, and say which it is.
+
+**A8.4, `tokenOf` must not invent a token.** `:1032` takes everything before the first colon, so
+a thrown message containing a Windows path yields `D:`. Accept the leading segment only when it
+matches `/^[a-z][a-z0-9_]*$/`, otherwise return the whole message unchanged. One case per arm.
+
+**A8.5, two sentences that are not always true.** Read every raise site of `campaign_not_found`
+in `stageCampaignStatusChange` before touching it: the reviewer's finding is that the prose at
+`:1024` states the publish condition in a case where a different condition failed. Make the
+sentence true for every site that raises it, splitting the token if the sites genuinely mean
+different things. Then fix the comment at `:1136`, which claims the declared class decides the
+gate "whatever the placeholder holds": that is true of the hook, whose campaign id is the empty
+literal, and misleading about `execute`, which scores the real id and can reach 90 and `refuse`
+for prose. Say which one the sentence covers.
+
+**Parked, do not attempt here.** `campaignExternalId` carries no shape validation at all, and the
+instructions paragraph at `src/mastra/instructions.ts:100-105` names an admin-only tool to roles
+that cannot reach it. Both are wider than a nit round and both go to the slice-end register.
+
+**Files this round may touch, and nothing else:** `src/mastra/tools/marketing-writes.ts`,
+`scripts/analyst-cron.ts`, `tests/mastra/marketing-campaign-status-tool.test.ts`,
+`tests/integration/marketing-campaign-status.test.ts`, and only the exact lines of any other file
+TypeScript names because of the new required field. If you find yourself wanting
+`src/mastra/agent.ts`, `src/mastra/instructions.ts`, `policy/tools.yaml` or
+`src/marketing/payload.ts`, stop and report instead.
+
+**Gate for this round:**
+
+```
+cd D:/Code/CRUM && npx vitest run tests/mastra/marketing-campaign-status-tool.test.ts tests/mastra/agent.test.ts tests/mastra/instructions.test.ts tests/db/marketing-commit.test.ts tests/governance
+cd D:/Code/CRUM && export CRUM_INTEGRATION_DATABASE_URL="postgres://crum_test@localhost:5455/crum_slice5" && npx vitest run --project integration tests/integration/marketing-campaign-status.test.ts tests/integration/analyst-cron.test.ts tests/integration/pending-writes.test.ts
+cd D:/Code/CRUM && npm run typecheck && npm run lint
+```
+
+**Commit, one new commit, named paths only:**
+
+```
+git commit -m "fix(marketing): a campaign status draft says which lane staged it"
+```
+
+Say in the body which of A8.1 to A8.5 landed. Do not stage or revert anything outside your paths;
+the working tree carries another effort's unstaged work in `src/api`, `src/mastra/identity.ts`,
+`src/mastra/docling.ts`, `console/**`, `package.json` and untracked `src/queue/`, `src/temporal/`,
+`services/ocr/`.
