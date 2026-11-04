@@ -1,6 +1,7 @@
 import { getDbClient } from './client'
 import type { TenantRequestContext } from '../mastra/tenant-context'
 import type { Q } from './validation'
+import { docVisibility } from './visibility'
 
 
 export interface DocumentRow {
@@ -133,24 +134,6 @@ export interface DocumentBlockWrite {
   confidence: number | null
   char_start: number | null
   char_end: number | null
-}
-
-function docVisibility(context: TenantRequestContext): { sql: string; params: unknown[] } {
-  if (context.userRole === 'admin') {
-    return { sql: 'd.tenant_id = $1', params: [context.tenantId] }
-  }
-  return {
-    sql: `d.tenant_id = $1 AND (
-            d.owner_id = $2
-            OR d.customer_id IS NULL
-            OR d.customer_id IN (
-              SELECT id FROM customers
-               WHERE tenant_id = $1 AND deleted_at IS NULL
-                 AND (owner_id = $2 OR $2 = ANY(team_member_ids))
-            )
-          )`,
-    params: [context.tenantId, context.userId],
-  }
 }
 
 async function queryRows<T>(sql: string, params?: unknown[], client?: Q): Promise<T[]> {

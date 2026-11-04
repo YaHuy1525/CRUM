@@ -19,11 +19,20 @@ import {
 import { invalidateOpenStageDraft } from '../db/pending-writes'
 import { listBundleIdsForDocument } from '../db/marketing-assets'
 import { setAuditContext } from '../db/audit-context'
-import { MAX_DOCUMENT_BYTES } from '../mastra/workflows/document-intake'
+import { CONFIDENCE_THRESHOLD, MAX_DOCUMENT_BYTES } from '../mastra/workflows/document-intake'
 import type { DocumentJobData } from '../queue/document-queue'
 import { getDbClient } from '../db/client'
 import type { PoolClient } from 'pg'
-import { listViolations, waiveViolation, replaceValidation, type Q, type StoredViolation } from '../db/validation'
+import {
+  listViolations,
+  waiveViolation,
+  replaceValidation,
+  reviewQueue,
+  type Q,
+  type ReviewQueueItem,
+  type ReviewQueueRow,
+  type StoredViolation,
+} from '../db/validation'
 import { evaluate, buildBundle, localDay, RULESET_VERSION } from '../validation/index'
 import { INVOICE_FIELDS, CONTRACT_FIELDS, isCorrectable } from '../validation/fields'
 import type { DocumentRecordBundle } from '../validation/types'
@@ -73,6 +82,39 @@ function toContractBundle(ctr: { header: ContractRow | null; terms: ContractTerm
     [],
     ctr.terms as unknown as Array<Record<string, unknown>>,
   )
+}
+
+// Ruling R57: the row-to-item map lives here rather than in `src/db/validation.ts`
+// because the one threshold it reads, `CONFIDENCE_THRESHOLD`, is exported by the
+// intake workflow, which already imports `replaceValidation` from that storage
+// module. The reverse edge closes a cycle and pulls `@mastra/core`, `unpdf`,
+// mammoth, docling and OCR into everything that reads findings. The db layer
+// returns rows; this is where a row becomes a queue item.
+function toQueueItem(row: ReviewQueueRow): ReviewQueueItem {
+  const lowest = row.lowest_field_confidence === null ? null : Number(row.lowest_field_confidence)
+  const reasons: string[] = []
+  if (row.status === 'needs_review') reasons.push('needs review')
+  if (row.open_errors > 0) reasons.push('open error')
+  if (row.open_warnings > 0) reasons.push('open warning')
+  if (lowest !== null && lowest < CONFIDENCE_THRESHOLD) reasons.push('low confidence')
+  return {
+    documentId: row.document_id,
+    title: row.title,
+    kind: row.kind,
+    status: row.status,
+    confidence: row.confidence === null ? null : Number(row.confidence),
+    lowestFieldConfidence: lowest,
+    openErrors: row.open_errors,
+    openWarnings: row.open_warnings,
+    reasons,
+    createdAt: row.created_at,
+  }
+}
+
+function intQuery(raw: string | undefined, fallback: number): number | null {
+  if (raw === undefined || raw === '') return fallback
+  const n = Number(raw)
+  return Number.isInteger(n) ? n : null
 }
 
 export async function runValidationForDocument(
@@ -300,6 +342,44 @@ export function createDocumentsRouter(deps: DocumentsRouterDeps): Hono {
       },
     )
     return c.json({ documents, total: documents.length })
+  })
+
+  // Ahead of `/:id` by registration order, not by router magic: registered after it,
+  // this path would be answered by the `:id` handler with 400 on the uuid parse.
+  app.get('/review-queue', async (c) => {
+    const gate = await auth(c)
+    if ('error' in gate) return gate.error
+
+    const kind = c.req.query('kind')
+    if (kind !== undefined && kind !== 'invoice' && kind !== 'contract') {
+      return c.json({ error: 'bad_filter', param: 'kind' }, 400)
+    }
+    const severity = c.req.query('severity')
+    if (severity !== undefined && severity !== 'error' && severity !== 'warning') {
+      return c.json({ error: 'bad_filter', param: 'severity' }, 400)
+    }
+
+    const rawLimit = intQuery(c.req.query('limit'), 50)
+    const rawOffset = intQuery(c.req.query('offset'), 0)
+    // R11 clamps a page above 200 instead of rejecting it, because "load more" asking
+    // for 500 is a request for less precision. A limit under one is not a smaller
+    // page: it promises a response that cannot carry a row, so it is refused.
+    if (rawLimit === null || rawLimit < 1) {
+      return c.json({ error: 'bad_filter', param: 'limit' }, 400)
+    }
+    if (rawOffset === null) {
+      return c.json({ error: 'bad_filter', param: 'offset' }, 400)
+    }
+    const limit = Math.min(200, rawLimit)
+    const offset = Math.max(0, rawOffset)
+
+    const { rows, total } = await reviewQueue(gate.identity, {
+      kind: kind ?? null,
+      severity: severity ?? null,
+      limit,
+      offset,
+    })
+    return c.json({ items: rows.map(toQueueItem), total, limit, offset })
   })
 
   app.get('/:id', async (c) => {

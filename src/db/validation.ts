@@ -1,5 +1,7 @@
 import { getDbClient } from './client.js'
 import { toIsoString } from './timestamps.js'
+import { docVisibility } from './visibility.js'
+import type { TenantRequestContext } from '../mastra/tenant-context.js'
 import type { Violation } from '../validation/types.js'
 
 export interface Q {
@@ -135,6 +137,126 @@ export async function waiveViolation(
     [violationId, tenantId],
   )
   return { ok: false, reason: existing.rows.length === 0 ? 'not_found' : 'already_waived' }
+}
+
+export interface ReviewQueueItem {
+  documentId: string
+  title: string
+  kind: 'invoice' | 'contract'
+  status: string
+  confidence: number | null
+  lowestFieldConfidence: number | null
+  openErrors: number
+  openWarnings: number
+  reasons: string[]
+  createdAt: string
+}
+
+export interface ReviewQueueFilter {
+  kind: 'invoice' | 'contract' | null
+  severity: 'error' | 'warning' | null
+  limit: number
+  offset: number
+}
+
+/**
+ * One queue row as the database renders it: `numeric` and `count` arrive as
+ * strings from `pg`, so the mapping to `ReviewQueueItem` numbers happens in the
+ * route (ruling R57), never here.
+ */
+export interface ReviewQueueRow {
+  document_id: string
+  title: string
+  kind: 'invoice' | 'contract'
+  status: string
+  confidence: string | null
+  lowest_field_confidence: string | null
+  open_errors: number
+  open_warnings: number
+  created_at: string
+}
+
+// Membership is status OR open findings: a correction can clear every finding
+// while the document stays `ready`, and a back-dated row can bypass the intake
+// trigger, so status alone is not the queue (spec §9.1).
+//
+// The visibility predicate of ruling R62 is composed with that membership clause,
+// not swapped in for it. `docVisibility` binds the tenant as `$1` in both branches,
+// so the derived tables may name `$1` literally while every filter, page and offset
+// placeholder is numbered from the length of its params — one for an `admin`, two for
+// a `user`, which is why these cannot be hard-coded as `$2` through `$5`.
+function queueFrom(
+  visibilitySql: string,
+  kindRef: string,
+  severityRef: string,
+): string {
+  return `
+  FROM documents d
+  LEFT JOIN (
+    SELECT document_id,
+           COUNT(*) FILTER (WHERE severity = 'error')   AS errors,
+           COUNT(*) FILTER (WHERE severity = 'warning') AS warnings
+    FROM document_validation
+    WHERE tenant_id = $1 AND status = 'open'
+    GROUP BY document_id
+  ) c ON c.document_id = d.id
+  LEFT JOIN (
+    SELECT d2.id AS document_id,
+           (SELECT MIN(NULLIF(kv.value, 'null'::jsonb)::numeric)
+              FROM jsonb_each(d2.field_confidence) AS kv(key, value)) AS lowest
+    FROM documents d2
+    WHERE d2.tenant_id = $1 AND d2.kind IN ('invoice', 'contract')
+  ) f ON f.document_id = d.id
+  WHERE ${visibilitySql}
+    AND d.kind IN ('invoice', 'contract')
+    AND (${kindRef}::text IS NULL OR d.kind = ${kindRef})
+    AND (d.status = 'needs_review' OR COALESCE(c.errors, 0) + COALESCE(c.warnings, 0) > 0)
+    AND (${severityRef}::text IS NULL OR EXISTS (
+      SELECT 1 FROM document_validation s
+      WHERE s.document_id = d.id AND s.tenant_id = $1
+        AND s.status = 'open' AND s.severity = ${severityRef}
+    ))
+`
+}
+
+export async function reviewQueue(
+  context: TenantRequestContext,
+  filter: ReviewQueueFilter,
+): Promise<{ rows: ReviewQueueRow[]; total: number }> {
+  const client = getDbClient()
+  const vis = docVisibility(context)
+  const params: unknown[] = [
+    ...vis.params,
+    filter.kind,
+    filter.severity,
+    filter.limit,
+    filter.offset,
+  ]
+  const firstFilter = vis.params.length + 1
+  const kindRef = `$${firstFilter}`
+  const severityRef = `$${firstFilter + 1}`
+  const limitRef = `$${firstFilter + 2}`
+  const offsetRef = `$${firstFilter + 3}`
+  const from = queueFrom(vis.sql, kindRef, severityRef)
+
+  const countResult = await client.query<{ total: number }>(
+    'SELECT COUNT(*)::int AS total' + from,
+    // The count statement carries no LIMIT or OFFSET to bind, and `pg` counts the
+    // parameters of each prepared statement separately.
+    params.slice(0, firstFilter + 1),
+  )
+  const pageResult = await client.query<ReviewQueueRow>(
+    `SELECT d.id AS document_id, d.title, d.kind, d.status, d.confidence,
+            d.created_at::text AS created_at, f.lowest AS lowest_field_confidence,
+            COALESCE(c.errors, 0)::int   AS open_errors,
+            COALESCE(c.warnings, 0)::int AS open_warnings` +
+      from +
+      ` ORDER BY COALESCE(c.errors, 0) DESC, f.lowest ASC NULLS LAST, d.created_at ASC
+         LIMIT ${limitRef} OFFSET ${offsetRef}`,
+    params,
+  )
+
+  return { rows: pageResult.rows, total: countResult.rows[0]?.total ?? 0 }
 }
 
 export async function openCounts(
