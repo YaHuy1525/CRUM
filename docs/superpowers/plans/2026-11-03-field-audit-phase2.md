@@ -2662,7 +2662,7 @@ export interface ReviewQueueRow {
   lowest_field_confidence: string | null
   open_errors: number
   open_warnings: number
-  created_at: string
+  created_at: Date
 }
 
 const QUEUE_FROM = `
@@ -2675,13 +2675,6 @@ const QUEUE_FROM = `
     WHERE tenant_id = $1 AND status = 'open'
     GROUP BY document_id
   ) c ON c.document_id = d.id
-  LEFT JOIN (
-    SELECT d2.id AS document_id,
-           (SELECT MIN(NULLIF(kv.value, 'null'::jsonb)::numeric)
-              FROM jsonb_each(d2.field_confidence) AS kv(key, value)) AS lowest
-    FROM documents d2
-    WHERE d2.tenant_id = $1 AND d2.kind IN ('invoice', 'contract')
-  ) f ON f.document_id = d.id
   WHERE d.tenant_id = $1
     AND d.kind IN ('invoice', 'contract')
     AND ($2::text IS NULL OR d.kind = $2)
@@ -2706,11 +2699,14 @@ export async function reviewQueue(
   )
   const pageResult = await client.query<ReviewQueueRow>(
     `SELECT d.id AS document_id, d.title, d.kind, d.status, d.confidence,
-            d.created_at::text AS created_at, f.lowest AS lowest_field_confidence,
+            d.created_at,
+            (SELECT MIN(NULLIF(kv.value, 'null'::jsonb)::numeric)
+               FROM jsonb_each(d.field_confidence) AS kv(key, value)) AS lowest_field_confidence,
             COALESCE(c.errors, 0)::int   AS open_errors,
             COALESCE(c.warnings, 0)::int AS open_warnings` +
       QUEUE_FROM +
-      ` ORDER BY COALESCE(c.errors, 0) DESC, f.lowest ASC NULLS LAST, d.created_at ASC
+      ` ORDER BY COALESCE(c.errors, 0) DESC, lowest_field_confidence ASC NULLS LAST,
+               d.created_at ASC, d.id ASC
          LIMIT $4 OFFSET $5`,
     [...params, filter.limit, filter.offset],
   )
@@ -2735,7 +2731,7 @@ function toQueueItem(row: ReviewQueueRow): ReviewQueueItem {
     openErrors: row.open_errors,
     openWarnings: row.open_warnings,
     reasons,
-    createdAt: row.created_at,
+    createdAt: toIsoString(row.created_at, 'review_queue.created_at'),
   }
 }
 ```
@@ -2745,6 +2741,12 @@ function toQueueItem(row: ReviewQueueRow): ReviewQueueItem {
 **Corrected at ruling R57: do NOT import `CONFIDENCE_THRESHOLD` into `src/db/validation.ts`.** Measured: `src/mastra/workflows/document-intake.ts:21` already imports `replaceValidation` from `../../db/validation` (Task 8 put it there), so the reverse import is a genuine module cycle, and `document-intake.ts` pulls `@mastra/core`, `unpdf`, `mammoth`, the extractor agent, docling and OCR into whatever imports it — a heavy graph for a storage module to carry. `CONFIDENCE_THRESHOLD` is exported at `src/mastra/workflows/document-intake.ts:30`, and `src/api/documents.ts:22` already imports `MAX_DOCUMENT_BYTES` from that same module, so extend THAT statement and move `toQueueItem` into the route handler. The db module returns rows; the route maps them. The ordering and membership SQL do not change, and this is the fallback this line itself offered, now made mandatory.
 
 **Ruling R62, after the shipped route was read against its siblings: the queue applies `docVisibility`, not the tenant clause alone.** `docVisibility` (`src/db/documents.ts:138-154`) gives an `admin` the tenant predicate and a `user` the owner / no-customer / shared-customer predicate, and both `listDocuments` (`:392`) and `getDocument` (`:445`) call it. `reviewQueue` as first written took a bare `tenantId`, so a `user` could list documents they cannot open: the response carried another member's customer invoice title, confidence and finding counts, and every row it named 404s on click because the detail route does respect the rule. The membership rule below therefore takes the caller's `TenantRequestContext` and composes the visibility predicate with the status-or-findings predicate. This does change membership SQL, and it supersedes the "the ordering and membership SQL do not change" sentence in the R57 note above, which was written about a different edit.
+
+**Ruling R69, after the independent review read the shipped queue against the project's own timestamp rule: two gates, and the plan's snippet was the source of both.** Nothing below was invented by the implementer; the queue did exactly what this section told it to. The `created_at: string` field and the `d.created_at::text` projection came from Step 2, and `src/db/timestamps.ts:9-11` names that cast "the second house pattern, a cast that keeps the fiction in place", so `GET /review-queue` shipped as the only route in `src/db/` that breaks the rule, emitting DateStyle text (`2026-11-04 10:04:01.133009+00`) where `GET /:id/validation` emits ISO-8601 from `rowToStored` at `src/db/validation.ts:41`. Task 15 formats both lists through one helper, so two wire shapes would have made that helper a lie. The fix, and the shape the snippet now shows: the row field is a `Date`, the projection is the bare column, and `toQueueItem` normalises with `toIsoString` the way `rowToStored` already does.
+
+The second gate is the `f` join. It expanded `jsonb_each` over every invoice and contract in the tenant on every request, because the join ignores the kind filter, the severity filter and the page, and the same fragment runs in the COUNT as well as the page. Threading the kind parameter into it would have been cheaper to write and would still have expanded the whole tenant for the default no-filter request, so the fix is the scalar correlated subquery the snippet now shows: `lowest` is computed in the page's select list only, which means it runs only on the rows that survived membership, and the plan's own R9 measures that set as tens. `ORDER BY` then refers to the output alias, which Postgres allows. The `WHERE` block never mentioned `f`, so dropping the join costs the COUNT nothing and gains speed.
+
+Both gates land in the hardening commit before Task 12, together with the `d.id ASC` tiebreaker (the `ORDER BY` ended on a non-unique `created_at`, and the paging test could not have caught the double-appearance because it seeds five documents through five autocommit inserts, so each gets a distinct transaction `now()` and no tie is ever constructed), the `Number.isSafeInteger` guard on `intQuery` (`?offset=1e30` is an integer to `Number.isInteger`, reaches `OFFSET $n`, and Postgres' bigint range error turns a client mistake into a 500), and the test-pinning gaps the review enumerated. Ruling R69 also decides the question the review raised and the spec left open: the severity filter is an attribute of *findings*, so a `needs_review` document whose only open finding is a warning leaves the queue under `?severity=error`, and one with no findings leaves it under any severity. That is pinned by a test rather than changed.
 
 The rule cannot live in either module. `src/db/documents.ts:3` already does `import type { Q } from './validation'`, so a value import of `docVisibility` from `documents.ts` into `validation.ts` is the same cycle class R57 refused. Put `docVisibility` in a new leaf, `src/db/visibility.ts`, import it from both storage modules, and delete the private copy. Bind its parameters by derivation, the way `listDocuments:395-401` does: an `admin` call carries one parameter and a `user` call carries two, so kind, severity, limit and offset cannot be written as literal `$2` through `$5` in `QUEUE_FROM`. Two cases belong in the queue suite alongside the existing tenant-isolation one, which stays because tenant scoping and visibility are different rules: a `user` is not shown another member's unshared-customer document, and an `admin` in the same tenant is shown that same document.
 
@@ -2817,6 +2819,10 @@ git commit -m "feat(api): a prioritised review queue ordered by open errors then
 - Consumes: `document_validation` (Task 6), `document_field_audit` (Phase 1), `documents`, `parseDate` from `src/validation/values.js`, `localDay` from `src/validation/index.js`.
 - Produces: `GET /api/documents/analytics/review` with the six spec-11 keys plus a `window` object the panel labels itself with. Task 16 consumes it.
 
+**Ruling R67, and it is this task's Commit A: `GET /:id/audit` is visibility-blind.** Measured at `47218ed`. The audit route gates with `SELECT id FROM documents WHERE id = $1 AND tenant_id = $2` (`src/api/documents.ts:468-471`) and then returns every `document_field_audit` row for the document (`:490-495`), which carries `old_value`, `new_value`, `changed_by`, `change_source` and `reason`. It is the only document read route that skips the rule: `/:id` at `:391`, `/:id/invoice` at `:404`, `/:id/contract` at `:422` and `/:id/validation` at `:507` each call `getDocument(gate.identity, ...)`, which applies `docVisibility`, and the correction handler says so in its own comment at `:592`. So a `user` holding a uuid reads another member's whole change history inside the same tenant. Fix it here, before the new route, because this task already holds the only writer seat on `src/api/documents.ts`. Use the `docVisibility` leaf that R62 created and compose it into the existing guard query, binding by derivation the way `reviewQueue` now does, rather than calling `getDocument` — that helper fetches and maps the whole document row for a route that needs one answer. Two cases pin it, and both belong in the audit suite rather than a new file: a `user` 404s on the audit trail of a document owned by another member through an unshared customer, and an `admin` in the same tenant gets 200 for that same document. `/:id/audit` shipped in Task 5 and survived Task 7, the Task 9 review and the Task 10 review, which is why the visibility question now belongs in the brief of every route that reads documents instead of being rediscovered per route.
+
+**Ruling R68: analytics stays tenant-scoped, deliberately.** `reviewAnalytics(tenantId, window, kind)` keeps its bare tenant parameter, and that is a decision with a reason, not an omission: the six outputs are aggregates over rules, fields, change sources and dates, and none of them names a document, a title or a customer, so there is nothing to disclose that the tenant predicate does not already cover. Making them visibility-scoped would put derived placeholder numbering into six separate queries to protect against a leak that does not exist. Task 13's export gets the opposite ruling because it emits row content. The consequence is stated here so a later reader does not file it as a bug: a `user` sees a queue filtered to their own documents and analytics for the whole tenant, so the panel labels its scope.
+
 ```ts
 export interface AnalyticsWindow {
   from: Date
@@ -2846,6 +2852,14 @@ Ruling R13, carried from R8. `turnaround` is measured from `documents.created_at
 Ruling R14. The top-level `correctionRate` follows spec 11 literally: its numerator counts corrections in the window on documents of any age, its denominator counts documents created in the window. It can exceed 1 when a window reviews older work. The response therefore carries the two integers beside the rate, and the panel prints "12 of 9 corrected" before it prints a percentage. Silently redefining the metric to stay inside `[0, 1]` would break the comparison against the CSV export, which counts the same rows.
 
 Ruling R15. `confidenceTrend[].correctionRate` is a different number from the top-level one on purpose: it is the share of documents *created* in that ISO week that ever received a correction, ignoring the window. Why: the top-level metric compares two populations and is not attributable to a week, and a per-week version of it would put a correction in a week its document was not created in. The panel titles the column "corrected (lifetime)".
+
+- [ ] **Step 0: Commit A, the audit route's visibility predicate (ruling R67)**
+
+Do this first and commit it alone, before any analytics code, so the security fix is one reviewable change and a reverted analytics attempt cannot carry it away.
+
+In `src/api/documents.ts`, replace the guard at `:468-471` with the same composition `reviewQueue` uses: `const vis = docVisibility(gate.identity)`, then `SELECT 1 FROM documents d WHERE d.id = $1 AND <vis.sql>` with `[id.data, ...vis.params]` and the document id bound through the derived index that `vis.params.length` leaves free. The alias matters: `docVisibility` writes `d.tenant_id`, `d.owner_id` and `d.customer_id`, so the guard's `documents` needs `AS d`. Keep the 404 response and its shape exactly as they are, `{"error": "not_found"}`, because Task 16's console already treats a 404 as "not yours".
+
+Then add the two cases to `tests/api/document-audit.test.ts`, not to a new file, and give them the same `DB_TIMEOUT` allowance the sibling suites use: seed a customer owned by one user with no team members, seed an invoice for it that carries at least one audit row, and assert that the other member 404s while reading the same id as an `admin` returns 200 with the rows. The second case is the control that proves the first is the rule and not a broken predicate. A one-line comment above the guard naming R67 is the only comment this step should add.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -3274,6 +3288,8 @@ git commit -m "feat(api): review analytics with one defined formula per reported
 - Consumes: `document_field_audit` (Phase 1), `documents.title`, `parseDate` from `src/validation/values.js`, `localDay` from `src/validation/index.js`, the `parseAnalyticsWindow` helper Task 12 added (reused here unchanged).
 - Produces: `GET /api/documents/audit/export` returning `text/csv`. Task 16 puts a button on it.
 
+**Ruling R68, and it applies here in the opposite direction to Task 12: `exportAuditRows` takes the caller's `TenantRequestContext`, not a bare `tenantId`.** This route emits row content — `document_title`, `old_value`, `new_value`, `changed_by`, `reason` — so a tenant-only predicate lets any `user` download the whole tenant's correction history as a file, which is ruling R67's disclosure in bulk form. The SQL below already does `JOIN documents d ON d.id = a.document_id` for the date filter, so `docVisibility` from the `src/db/visibility.ts` leaf costs one clause and no new edge. Bind by derivation exactly as `reviewQueue` does at `src/db/validation.ts:228-240`: the visibility fragment names `$1` for the tenant in both branches and adds `$2` for the actor only in the `user` branch, so the `FROM`-fragment placeholders for `from`, `to`, `kind` and `max` must be numbered from `vis.params.length`, never written as literals. One case belongs in `tests/api/audit-export.test.ts` besides the tenant-isolation one, which stays because the two rules are different: seed an unshared customer owned by another member, request the export as that `user`, and assert the CSV carries no row for that document while the same request as an `admin` does.
+
 ```ts
 export const AUDIT_CSV_HEADER = [
   'document_id', 'document_title', 'table_name', 'field_name', 'action',
@@ -3300,7 +3316,7 @@ export function csvRow(cells: readonly (string | null)[]): string
 export function buildAuditCsv(rows: readonly AuditExportRow[]): string
 
 export function exportAuditRows(
-  tenantId: string,
+  context: TenantRequestContext,
   window: AnalyticsWindow,
   changeSource: string | null,
   kind: 'invoice' | 'contract' | null,
@@ -3613,24 +3629,37 @@ const EXPORT_FIELDS = `
 `
 
 export async function exportAuditRows(
-  tenantId: string,
+  context: TenantRequestContext,
   window: AnalyticsWindow,
   changeSource: string | null,
   kind: 'invoice' | 'contract' | null,
   max: number,
 ): Promise<AuditExportRow[]> {
-  const client = getDbClient()
-  const result = await client.query<AuditExportRow>(
+  const vis = docVisibility(context)
+  // `docVisibility` names `$1` for the tenant in both branches and adds `$2` for the
+  // actor only in the `user` branch, so every placeholder after it is derived from
+  // its param count. Ruling R68; the same arithmetic `reviewQueue` does at
+  // `src/db/validation.ts:235-239`.
+  const p = vis.params.length
+  const params: unknown[] = [
+    ...vis.params,
+    window.from,
+    window.toExclusive,
+    changeSource,
+    kind,
+    max + 1,
+  ]
+  const result = await getDbClient().query<AuditExportRow>(
     'SELECT ' + EXPORT_FIELDS + `
        FROM document_field_audit a
        JOIN documents d ON d.id = a.document_id
-      WHERE a.tenant_id = $1
-        AND a.changed_at >= $2 AND a.changed_at < $3
-        AND ($4::text IS NULL OR a.change_source = $4)
-        AND ($5::text IS NULL OR d.kind = $5)
+      WHERE ${vis.sql}
+        AND a.changed_at >= $${p + 1} AND a.changed_at < $${p + 2}
+        AND ($${p + 3}::text IS NULL OR a.change_source = $${p + 3})
+        AND ($${p + 4}::text IS NULL OR d.kind = $${p + 4})
       ORDER BY a.changed_at DESC, a.id
-      LIMIT $6`,
-    [tenantId, window.from, window.toExclusive, changeSource, kind, max + 1],
+      LIMIT $${p + 5}`,
+    params,
   )
   return result.rows
 }
@@ -3652,7 +3681,8 @@ const CHANGE_SOURCE_VALUES: ReadonlySet<string> = new Set(CHANGE_SOURCES)
 app.get('/audit/export', async (c) => {
   const gate = await auth(c)
   if ('error' in gate) return gate.error
-  const { tenantId } = gate.identity
+  // No `tenantId` destructure. Ruling R68 passes the whole identity so the export
+  // carries the same visibility predicate the detail, queue and audit routes apply.
 
   const parsed = parseAnalyticsWindow(c.req.query('from'), c.req.query('to'))
   if (!parsed.ok) return c.json({ error: parsed.error, maxDays: MAX_WINDOW_DAYS }, 400)
@@ -3670,7 +3700,7 @@ app.get('/audit/export', async (c) => {
   const cap = Math.min(MAX_EXPORT_ROWS, rawMax)
 
   const rows = await exportAuditRows(
-    tenantId, parsed.window, changeSource, (kind as 'invoice' | 'contract' | undefined) ?? null, cap,
+    gate.identity, parsed.window, changeSource, (kind as 'invoice' | 'contract' | undefined) ?? null, cap,
   )
   c.header('X-Export-Row-Cap', String(cap))
   if (rows.length > cap) {
@@ -5356,9 +5386,4 @@ git commit -m "docs(field-audit): phase 2 status records what shipped and what w
 Summarise for the human partner: the commits on the branch, the verification evidence, the known failure, and the rulings. Stop there. Pushing, merging and opening a pull request are their decisions, not this plan's.
 
 ---
-
-
-
-
-
 
