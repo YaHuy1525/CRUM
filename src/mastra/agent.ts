@@ -43,6 +43,13 @@ import {
 } from './tools/marketing-writes'
 import { sendSlackTool } from './tools/notifications'
 import { createCheckoutTool, getSubscriptionTool, cancelSubscriptionTool } from './tools/billing'
+import {
+  createCalendarEventTool,
+  deliverWebhookTool,
+  sendSmsTool,
+  sendWhatsAppTool,
+  createLinkedInPostTool,
+} from './tools/channel-writes'
 import { approvalFlow } from './workflows/approval-flow'
 import { resolveActiveTools, providerToolName } from './active-tools'
 import { CRUM_MAIN_MODEL, CRUM_LIGHT_MODEL } from './models'
@@ -101,6 +108,11 @@ export const crumToolRegistry = {
   'billing.create_checkout': createCheckoutTool,
   'billing.get_subscription': getSubscriptionTool,
   'billing.cancel_subscription': cancelSubscriptionTool,
+  'calendar.create_event': createCalendarEventTool,
+  'webhooks.deliver': deliverWebhookTool,
+  'sms.send': sendSmsTool,
+  'whatsapp.send': sendWhatsAppTool,
+  'linkedin.create_post': createLinkedInPostTool,
 }
 
 export const crmAssistant = new Agent({

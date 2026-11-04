@@ -272,6 +272,21 @@ export const EnvSchema = z.object({
   CRUM_STRIPE_PRICE_ID_BASIC: z.preprocess(blankAsUnset, z.string().trim().min(3).optional()),
   CRUM_STRIPE_PRICE_ID_AGENCY: z.preprocess(blankAsUnset, z.string().trim().min(3).optional()),
   CRUM_STRIPE_PRICE_ID_ENTERPRISE: z.preprocess(blankAsUnset, z.string().trim().min(3).optional()),
+  // Tier-2/3 outbound channels. Each family needs its full set before its tool
+  // works; partial sets leave the tool unregistered-and-refusing at call time
+  // rather than half-working. Blank means unset, like every other credential.
+  CRUM_TWILIO_ACCOUNT_SID: z.preprocess(blankAsUnset, z.string().trim().min(10).optional()),
+  CRUM_TWILIO_AUTH_TOKEN: z.preprocess(blankAsUnset, z.string().trim().min(10).optional()),
+  CRUM_TWILIO_FROM_NUMBER: z.preprocess(blankAsUnset, z.string().trim().min(5).optional()),
+  CRUM_WHATSAPP_TOKEN: z.preprocess(blankAsUnset, z.string().trim().min(10).optional()),
+  CRUM_WHATSAPP_PHONE_NUMBER_ID: z.preprocess(blankAsUnset, z.string().trim().min(5).optional()),
+  // Generic outbound webhook: the URL is a config value because the agent picks
+  // payloads, not destinations — a tool that took an arbitrary URL would be a
+  // tidy SSRF primitive wearing a tool costume.
+  CRUM_WEBHOOK_URL: z.preprocess(blankAsUnset, z.string().trim().url().optional()),
+  CRUM_WEBHOOK_SECRET: z.preprocess(blankAsUnset, z.string().trim().min(10).optional()),
+  CRUM_LINKEDIN_ACCESS_TOKEN: z.preprocess(blankAsUnset, z.string().trim().min(10).optional()),
+  CRUM_LINKEDIN_AUTHOR_URN: z.preprocess(blankAsUnset, z.string().trim().min(10).optional()),
 })
 
 export type CrumEnv = z.infer<typeof EnvSchema>

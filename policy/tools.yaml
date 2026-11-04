@@ -306,6 +306,42 @@ tools:
     idempotent: true
     idempotency_key: actionId
 
+  # ── tier-2/3 outbound channels (5) ─────────────────────────
+  - name: calendar.create_event
+    description: Create an event on the connected user's primary Google Calendar.
+    scope: calendar:event
+    class: approval
+    idempotent: true
+    idempotency_key: actionHash
+
+  - name: webhooks.deliver
+    description: POST a signed JSON payload to the configured webhook URL.
+    scope: webhooks:deliver
+    class: approval
+    idempotent: true
+    idempotency_key: actionHash
+
+  - name: sms.send
+    description: Send one SMS through Twilio from the configured from-number.
+    scope: sms:send
+    class: approval
+    idempotent: true
+    idempotency_key: actionHash
+
+  - name: whatsapp.send
+    description: Send one WhatsApp text from the configured business number.
+    scope: whatsapp:send
+    class: approval
+    idempotent: true
+    idempotency_key: actionHash
+
+  - name: linkedin.create_post
+    description: Publish a text post as the configured member or organization.
+    scope: linkedin:post
+    class: approval
+    idempotent: true
+    idempotency_key: actionHash
+
   # ── workflow side effects (1) ──────────────────────────────
   - name: run.side-effect
     description: Any workflow side effect (scope template `{workflow}:{step}`).

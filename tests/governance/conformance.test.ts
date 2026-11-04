@@ -57,6 +57,11 @@ const SPEC_TOOL_SURFACE: ReadonlyArray<readonly [name: string, klass: string, id
   ['notifications.send_slack', 'approval', 'actionHash'],
   ['billing.create_checkout', 'approval', 'actionHash'],
   ['billing.cancel_subscription', 'approval', 'actionId'],
+  ['calendar.create_event', 'approval', 'actionHash'],
+  ['webhooks.deliver', 'approval', 'actionHash'],
+  ['sms.send', 'approval', 'actionHash'],
+  ['whatsapp.send', 'approval', 'actionHash'],
+  ['linkedin.create_post', 'approval', 'actionHash'],
 ]
 
 /**
@@ -95,7 +100,7 @@ describe('tools.yaml conforms to §4.6.2', () => {
     expect(extra).toEqual([])
   })
 
-  it('has exactly the forty-six spec tools plus run.side-effect', () => {
+  it('has exactly the fifty-one spec tools plus run.side-effect', () => {
     expect(policy.tools.tools).toHaveLength(SPEC_TOOL_SURFACE.length + TEMPLATE_TOOLS.size)
   })
 })

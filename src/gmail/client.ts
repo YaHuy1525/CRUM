@@ -12,6 +12,11 @@ const GMAIL_API_ROOT = 'https://gmail.googleapis.com/gmail/v1/users/me'
 export const GMAIL_SCOPES = [
   'https://www.googleapis.com/auth/gmail.readonly',
   'https://www.googleapis.com/auth/gmail.compose',
+  // Calendar shares this OAuth client: calendar.create_event resolves its token
+  // through the same gmail_connections row. include_granted_scopes makes the
+  // new scope an incremental consent, so existing connections only re-authorize
+  // when they use the calendar tool.
+  'https://www.googleapis.com/auth/calendar.events',
 ] as const
 
 export const DEFAULT_REDIRECT_URI = 'http://localhost:4111/gmail/callback'

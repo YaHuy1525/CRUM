@@ -32,6 +32,14 @@ export const MUTATING_TOOL_IDS = [
   'notifications.send_slack',
   'billing.create_checkout',
   'billing.cancel_subscription',
+  // Tier-2/3 outbound channels. Same shape as the tier-1 additions: each one
+  // mutates state outside this process, so a turn that claims it sent one must
+  // be distinguishable from a turn that invented it.
+  'calendar.create_event',
+  'webhooks.deliver',
+  'sms.send',
+  'whatsapp.send',
+  'linkedin.create_post',
 ]
 
 export const MUTATING_TOOLS = new Set(MUTATING_TOOL_IDS.map(providerToolName))
