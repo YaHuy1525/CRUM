@@ -2859,11 +2859,15 @@ Do this first and commit it alone, before any analytics code, so the security fi
 
 In `src/api/documents.ts`, replace the guard at `:468-471` with the same composition `reviewQueue` uses: `const vis = docVisibility(gate.identity)`, then `SELECT 1 FROM documents d WHERE d.id = $1 AND <vis.sql>` with `[id.data, ...vis.params]` and the document id bound through the derived index that `vis.params.length` leaves free. The alias matters: `docVisibility` writes `d.tenant_id`, `d.owner_id` and `d.customer_id`, so the guard's `documents` needs `AS d`. Keep the 404 response and its shape exactly as they are, `{"error": "not_found"}`, because Task 16's console already treats a 404 as "not yours".
 
-Then add the two cases to `tests/api/document-audit.test.ts`, not to a new file, and give them the same `DB_TIMEOUT` allowance the sibling suites use: seed a customer owned by one user with no team members, seed an invoice for it that carries at least one audit row, and assert that the other member 404s while reading the same id as an `admin` returns 200 with the rows. The second case is the control that proves the first is the rule and not a broken predicate. A one-line comment above the guard naming R67 is the only comment this step should add.
+Then add the two cases to `tests/api/document-audit.test.ts`, not to a new file. Read that file's isolation before copying the queue suite's pattern into it, because three facts there break a naive copy. (a) Its shared document is seeded in tenant `...0001`, which nine other database suites also write into while Vitest runs files in parallel workers; `tests/api/review-queue.test.ts:5-9` records exactly that hazard, and the queue suite moved to its own tenant because of it. So the two new cases get a tenant nothing else touches, following the private-tenant convention already written up at `tests/integration/marketing-campaign-status.test.ts:16`. `a6000000-0000-4000-8000-000000000011` was measured unclaimed across `tests/`. (b) That file defines no `DB_TIMEOUT`, no `seedInvoice`, no `seedCustomer` and no `wipe()`; it seeds one document in `beforeAll` and asserts on it three times, so define the constant (`const DB_TIMEOUT = 30_000`, the allowance `tests/api/document-correction.test.ts:10` uses) and the two small helpers the cases need, rather than assuming they exist. (c) Clean up only your own tenant, child-first (`document_field_audit`, then `invoices`, then `customers`, then `documents`), inside a `beforeEach` on a new `describe`, and never widen any DELETE to the file's original tenant, because the existing three cases depend on the row their `beforeAll` seeded.
+
+`documents.owner_id` carries no foreign key (measured: `migrations/0009_crum_documents.sql:27` is a bare `owner_id uuid NOT NULL`), so the two member ids are free uuids and no `users` row has to exist for them. Seed a customer owned by one member with `team_member_ids` left at its default empty array, seed an invoice for that customer with at least one audit row (the insert audit trigger writes the `insert` row on the `invoices` INSERT, as the file's own `beforeAll` demonstrates at `:45-61`), then assert that the other member 404s on `/:id/audit` while reading the same id as an `admin` returns 200 with the rows. The second case is the control that proves the first is the rule and not a broken predicate. A one-line comment above the guard naming R67 is the only comment this step should add.
 
 - [ ] **Step 1: Write the failing tests**
 
 Create `tests/api/analytics.test.ts` with the same `createTestServer` header, `seedInvoice`, `addFinding` and `setConfidence` helpers as Task 11, plus:
+
+**Ruling R71, and it overrides "the same header as Task 11" for the uuids.** Copy the header's *shape*, never its tenant constants. `tests/api/review-queue.test.ts:10-11` is that file's private pair (`...000b` and `...0009`), and its own comment at `:5-9` explains why the file has one at all: Vitest runs test files in parallel worker processes, so a `wipe()` scoped by `tenant_id` is a cross-file DELETE the moment two files share a tenant. A second file seeding into `...000b` would delete the queue's seeded rows while the queue was asserting on them, in both directions, and would be flaky by construction rather than by accident. Use `a8000000-0000-4000-8000-000000000012` as this file's `TENANT` and `a8000000-0000-4000-8000-000000000112` as its `OTHER`; both were measured unclaimed across `tests/`, `src/` and this plan. A fresh uuid needs no `tenants` row and no migration: `documents.tenant_id` carries no foreign key (`migrations/0009_crum_documents.sql:26` is a bare `tenant_id uuid NOT NULL`, and no migration in the repository references a tenants table), which is how `...000b` works today.
 
 ```ts
 async function addAudit(docId: string, field: string, source: string, at: string, by = USER) {
@@ -3334,6 +3338,8 @@ Ruling R18. A `jsonb` audit cell is rendered with `#>> '{}'` in SQL, not re-seri
 
 Create `tests/api/audit-export.test.ts`. The pure half needs no server and runs in the `unit` project; the route half uses `createTestServer` and the `seedInvoice` plus `addAudit` helpers from Task 12.
 
+Ruling R71 applies to this file the same way it applies to Task 12's: the `TENANT` and `OTHER` in the snippet below are rewritten to a private pair, `a9000000-...013` and `a9000000-...113`, measured unclaimed across `tests/`, `src/` and this plan. The pair this task was originally handed, `...0001` and `...0009`, is a corruption in both directions: `...0001` is seeded in `beforeAll` by nine other suites that the `beforeEach` DELETE would empty while they assert, and `...0009` is the second half of `tests/api/review-queue.test.ts`'s own wipe, so this file would be deleting the queue suite's rows and the queue suite would be deleting its while both run in parallel workers. One more row belongs in that `beforeEach`: a customers DELETE scoped to the same two tenants, after the documents DELETE, because ruling R68's new case seeds a customer and nothing else would ever remove it. No `invoices` DELETE is needed, and adding one would be noise: `migrations/0009_crum_documents.sql:55` declares the child tables `document_id uuid ... REFERENCES documents(id) ON DELETE CASCADE`, so the documents DELETE already retires them, and `:44` makes `documents.customer_id` an `ON DELETE SET NULL`, which is why a customer row can outlive its documents and must be named explicitly.
+
 ```ts
 import { describe, expect, it } from 'vitest'
 import { AUDIT_CSV_HEADER, buildAuditCsv, csvCell } from '../../src/api/audit-csv.js'
@@ -3428,8 +3434,8 @@ describe('buildAuditCsv', () => {
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { createTestServer, type TestServer } from '../../helpers/test-server.js'
 
-const TENANT = '00000000-0000-4000-8000-000000000001'
-const OTHER = '00000000-0000-4000-8000-000000000009'
+const TENANT = 'a9000000-0000-4000-8000-000000000013'   // R71: this file's own tenant pair
+const OTHER = 'a9000000-0000-4000-8000-000000000113'
 const USER = '00000000-0000-4000-8000-000000000002'
 const HEADERS = { 'x-tenant-id': TENANT, 'x-user-id': USER, 'x-user-role': 'admin' }
 
