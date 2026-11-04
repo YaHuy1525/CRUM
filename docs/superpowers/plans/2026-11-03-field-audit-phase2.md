@@ -17,13 +17,15 @@
 3. Every query takes the tenant predicate. `document_validation.tenant_id` is written from the caller's identity, never copied from the document row.
 4. Import extensions follow ruling R35, not a single repo-wide suffix. Measured: 505 extensionless relative imports against 19 with `.js`, and all 19 live in the async-intake surface Task 1 copied (`src/queue`, `src/temporal`, `src/mastra/{adaptive-extraction,multi-format-parser}.ts`). `tsconfig.json` sets `moduleResolution: "bundler"` and every entry point runs through `tsx` or `mastra dev/build`, never raw `node dist/`, so both forms resolve in both test and production paths. The rule is therefore: a file you modify keeps the convention already used by the other imports in that file (`src/api` and `src/db` are extensionless), and a file you create uses the form written in this plan's code blocks. Never "fix" an existing file's suffixes as a drive-by.
 5. `pg` returns `numeric` as a string. Treat `''`, `null` and `NaN` as absent, never as zero.
-6. Nothing under `src/validation/` may import `pg`, read `process.env`, or consult the wall clock. The date arrives as `ValidationContext.today`. `Date.UTC` inside `parseDate` validates fields of a supplied string and never reads today. **Calendar-day frame (R45):** a stored day is read *as written*, and no zone conversion happens anywhere in this layer. `localDay` in `src/validation/index.ts` is the only renderer of a calendar day, used for a `date` column arriving as a `Date` and for the `today` a caller puts in `ValidationContext`; `parseDate` matches a time and offset part and then drops them rather than converting. Callers outside the module read the clock themselves — `localDay(new Date())` at a route or workflow step — because the required parameter is what keeps that read visible at the boundary. The one place UTC arithmetic is right is `timestamptz` window maths (Tasks 12 and 13), which never compares against a stored day; there, build and render must both use UTC inside the same function.
+6. Nothing under `src/validation/` may import `pg`, read `process.env`, or consult the wall clock. The date arrives as `ValidationContext.today`. `Date.UTC` inside `parseDate` validates fields of a supplied string and never reads today. **Calendar-day frame (R45):** a stored day is read *as written*, and no zone conversion happens anywhere in this layer. `localDay` in `src/validation/index.ts` is the only renderer of a calendar day, used for a `date` column arriving as a `Date` and for the `today` a caller puts in `ValidationContext`; `parseDate` matches a time and offset part and then drops them rather than converting. Callers outside the module read the clock themselves — `localDay(new Date())` at a route or workflow step — because the required parameter is what keeps that read visible at the boundary. The one place UTC arithmetic is right is `timestamptz` window maths (Tasks 12 and 13), which never compares against a stored day; there, build and render must both use the same zone inside the same function. **Ruling R54 settles which zone: local.** The window's `today` is `localDay(new Date())`, so an edge built at UTC midnight would end "the 90 days ending today" at 11:00 local on the last day on this box (UTC+11) and silently drop that afternoon's rows. `dayToMs` therefore builds with `new Date(y, m - 1, d).getTime()`, and the label renders through the same local-day renderer the rest of the system uses. A DST day is 23 or 25 hours and `Math.round` over 86_400_000 still counts it as one.
 7. Unit tests live under `tests/**/*.test.ts` (vitest project `unit`), integration tests under `tests/integration/**` (project `integration`). A test that touches the database loads `.env` before importing anything that reads it, copying lines 1-12 of `tests/db/field-audit.test.ts`.
 8. The gate for every task, in order: `npx tsc --noEmit`, `npx eslint .`, `npx vitest run <touched files>`, then commit.
 9. The primary tree at `D:\Code\CRUM` is occupied by a live `feat/marketing-slice-5` run. Phase 2 never writes there. Every command in this plan runs from `D:\Code\CRUM\.qoder\worktrees\field-audit-phase2`, and nothing outside that directory is staged or committed.
 10. `tests/evals/golden-gate.test.ts` fails on this machine for the environmental reason recorded in `DOCUMENT_PROCESSING_STATUS.md` section 7. It is a known baseline failure, not a regression, and the final report names it rather than hiding it.
 11. Console tests use the existing setup in `console/vitest.config.ts` and the patterns in `console/tests/DocumentManager.test.tsx`. `console/` is a separate npm workspace, so console commands run with `dir_path` set to `D:\Code\CRUM\.qoder\worktrees\field-audit-phase2\console`.
 12. A test that touches the database runs against the live `DATABASE_URL` from `.env`, which this worktree carries as a copy. `tests/integration/**` additionally gate on `CRUM_INTEGRATION_DATABASE_URL` and skip without it; a skip is not a pass, and a task whose deliverable is an integration test says in its report whether the file ran or skipped.
+13. Identity headers are `x-tenant-id`, `x-user-id` and `x-user-role` (`src/mastra/identity.ts:35-37`), and all three are mandatory: `TenantRequestContextSchema` requires `userRole` as `z.enum(['user', 'admin'])` (`src/mastra/tenant-context.ts:6`), so a request that omits it is rejected with 401 `missing-claim` before any route body runs. Every test in this plan sends `'x-user-role': 'admin'`. An earlier revision of these listings invented a `x-crum-*` pair and omitted the role; corrected at ruling R52 before Task 12.
+14. The `seedInvoice` helper that Task 9 shipped into `tests/api/document-validation.test.ts` declares all four amount fields as required, while 41 of the 42 `seedInvoice(server.db, ...)` call sites written into Tasks 10 through 13 omit at least one of them (39 pass `total` alone; measured by `grep -c`). They do not typecheck against the helper as written. Copy it, then widen the parameter to `fields: { subtotal?: string; tax?: string; total?: string; currency?: string }` and insert `fields.subtotal ?? null` for each column. Do not substitute default amounts for the omitted ones: every column of `invoices` is nullable (`migrations/0009_crum_documents.sql:54-65`), constraint 5 makes `null` the absence a rule keys on, and a defaulted `subtotal` would fire `invoice.total.sum` on a row the test seeded as incidental. Each test file keeps its own copy, so this is a per-file one-line change.
 
 ## File Structure
 
@@ -1994,8 +1996,9 @@ import { createTestServer, type TestServer } from '../../helpers/test-server.js'
 const TENANT = '00000000-0000-4000-8000-000000000001'
 const USER = '00000000-0000-4000-8000-000000000002'
 const HEADERS = {
-  'x-crum-tenant': TENANT,
-  'x-crum-user': USER,
+  'x-tenant-id': TENANT,
+  'x-user-id': USER,
+  'x-user-role': 'admin',
   'content-type': 'application/json',
 }
 
@@ -2024,7 +2027,7 @@ describe('GET /:id/validation', () => {
   })
   it('404s a document that is not this tenant', async () => {
     const res = await server.fetch('/api/documents/' + documentId + '/validation', {
-      headers: { ...HEADERS, 'x-crum-tenant': '00000000-0000-4000-8000-000000000077' },
+      headers: { ...HEADERS, 'x-tenant-id': '00000000-0000-4000-8000-000000000077' },
     })
     expect(res.status).toBe(404)
   })
@@ -2378,7 +2381,7 @@ git commit -m "feat(api): a correction re-validates in its own transaction and s
 - Create: `tests/api/review-queue.test.ts`
 
 **Interfaces:**
-- Consumes: `document_validation` from Task 6, `documents.field_confidence` from Phase 1, `CONFIDENCE_THRESHOLD` already exported at `src/mastra/workflows/document-intake.ts:26` and already imported by `src/api/documents.ts:19` from that module.
+- Consumes: `document_validation` from Task 6, `documents.field_confidence` from Phase 1, `CONFIDENCE_THRESHOLD` exported at `src/mastra/workflows/document-intake.ts:30`. Measured at dispatch: `src/api/documents.ts` does NOT already import it, contrary to an earlier revision of this line; line 22 of that file already imports `MAX_DOCUMENT_BYTES` from the same module, so extend that statement rather than opening a new edge.
 - Produces: `GET /api/documents/review-queue`. Task 15 consumes `{ items, total }`.
 
 ```ts
@@ -2450,7 +2453,7 @@ import { createTestServer, type TestServer } from '../../helpers/test-server.js'
 const TENANT = '00000000-0000-4000-8000-000000000001'
 const OTHER = '00000000-0000-4000-8000-000000000009'
 const USER = '00000000-0000-4000-8000-000000000002'
-const HEADERS = { 'x-crum-tenant': TENANT, 'x-crum-user': USER }
+const HEADERS = { 'x-tenant-id': TENANT, 'x-user-id': USER, 'x-user-role': 'admin' }
 
 let server: TestServer
 
@@ -2739,11 +2742,11 @@ function toQueueItem(row: ReviewQueueRow): ReviewQueueItem {
 
 `NULLIF(kv.value, 'null'::jsonb)` is not decoration: a `field_confidence` written as `{"vendorName": null}` would otherwise reach `NULL::jsonb::numeric` and the `MIN` would silently ignore it, but a `jsonb` string value would raise. The JSONB this column holds is written by `normalizeAndResolveStep` as numbers only, so the null guard is the whole requirement.
 
-`CONFIDENCE_THRESHOLD` is already a value `src/api/documents.ts:19` imports from the workflow module, so the queue layer importing it from `../mastra/workflows/document-intake.js` adds no new edge. If `src/db/validation.ts` importing a Mastra module reads wrong in review, move `toQueueItem` into the route handler and keep the db module returning rows; the ordering and membership SQL do not change.
+**Corrected at ruling R57: do NOT import `CONFIDENCE_THRESHOLD` into `src/db/validation.ts`.** Measured: `src/mastra/workflows/document-intake.ts:21` already imports `replaceValidation` from `../../db/validation` (Task 8 put it there), so the reverse import is a genuine module cycle, and `document-intake.ts` pulls `@mastra/core`, `unpdf`, `mammoth`, the extractor agent, docling and OCR into whatever imports it — a heavy graph for a storage module to carry. `CONFIDENCE_THRESHOLD` is exported at `src/mastra/workflows/document-intake.ts:30`, and `src/api/documents.ts:22` already imports `MAX_DOCUMENT_BYTES` from that same module, so extend THAT statement and move `toQueueItem` into the route handler. The db module returns rows; the route maps them. The ordering and membership SQL do not change, and this is the fallback this line itself offered, now made mandatory.
 
 - [ ] **Step 3: Register the route ahead of `/:id`**
 
-In `src/api/documents.ts`, insert the handler immediately before the `app.get('/:id', ...)` at :253 — not after it. Hono's `SmartRouter` prefers a static segment over a named one, but relying on that for a single-segment path that competes with `/:id` is not worth a debugging session; registration order makes it unambiguous.
+In `src/api/documents.ts`, insert the handler immediately before the `app.get('/:id', ...)` — measured at dispatch: that handler is at line 305 of the current file, not :253 — and not after it. Hono's `SmartRouter` prefers a static segment over a named one, but relying on that for a single-segment path that competes with `/:id` is not worth a debugging session; registration order makes it unambiguous.
 
 ```ts
 function intQuery(raw: string | undefined, fallback: number): number | null {
@@ -3203,7 +3206,7 @@ function dayLabel(ms: number): string {
 
 `to` names the last day the reader wants, so `toExclusive` is that day plus one and `window.days` counts calendar days inclusively on both ends: `from=2026-09-01&to=2026-09-30` is a 30-day window, and the default is the 90 days ending today. The default `today` is `localDay(new Date())`, read here because the route is the boundary and constraint 6 keeps the clock out of `src/validation/`; local, because the day an operator means by "today" is their own business day, not the UTC one. Window maths is the one place this plan renders a day in UTC deliberately: `parseDate` builds with `Date.UTC` and `dayLabel` reads it back with `toISOString()`, so build and render agree inside the same function and no stored `date` is ever compared against these labels.
 
-Two defects in the snippet above are measured and belong to Task 12, which is why they are recorded here rather than silently carried: `parseDate` returns `string | null` (`src/validation/values.ts:37`), so `toDay.getTime()` and `fromDay.getTime()` do not typecheck as written, and the fix is a `dayToMs(day: string)` helper that splits the three components and rebuilds them with `Date.UTC`, keeping that UTC pair intact. Separately, the resulting window edges are UTC midnights, which on this box (UTC+11) ends "the 90 days ending today" at 11:00 local on the last day and drops that afternoon's rows; if the analytics query filters `created_at` against these instants, Task 12 decides whether the edges are the operator's day boundaries instead, and says which it chose.
+Two defects in the snippet above are measured and belong to Task 12, which is why they are recorded here rather than silently carried: `parseDate` returns `string | null` (`src/validation/values.ts:37`), so `toDay.getTime()` and `fromDay.getTime()` do not typecheck as written, and the fix is a `dayToMs(day: string)` helper that splits the three components and rebuilds them as a LOCAL midnight per ruling R54, keeping build and render in that one zone. Separately, and for the same reason, the resulting window edges must be the operator's day boundaries rather than UTC midnights: R54 decides it, so `from`/`toExclusive` are local midnights and the last day's afternoon rows are inside the window.
 
 ```ts
 app.get('/analytics/review', async (c) => {
@@ -3376,7 +3379,7 @@ import { createTestServer, type TestServer } from '../../helpers/test-server.js'
 const TENANT = '00000000-0000-4000-8000-000000000001'
 const OTHER = '00000000-0000-4000-8000-000000000009'
 const USER = '00000000-0000-4000-8000-000000000002'
-const HEADERS = { 'x-crum-tenant': TENANT, 'x-crum-user': USER }
+const HEADERS = { 'x-tenant-id': TENANT, 'x-user-id': USER, 'x-user-role': 'admin' }
 
 let server: TestServer
 let documentId: string
