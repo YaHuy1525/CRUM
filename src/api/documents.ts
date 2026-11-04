@@ -30,12 +30,15 @@ import {
   waiveViolation,
   replaceValidation,
   reviewQueue,
+  reviewAnalytics,
+  type AnalyticsWindow,
   type Q,
   type ReviewQueueItem,
   type ReviewQueueRow,
   type StoredViolation,
 } from '../db/validation'
 import { evaluate, buildBundle, localDay, RULESET_VERSION } from '../validation/index'
+import { parseDate } from '../validation/values'
 import { INVOICE_FIELDS, CONTRACT_FIELDS, isCorrectable } from '../validation/fields'
 import type { DocumentRecordBundle } from '../validation/types'
 
@@ -121,6 +124,67 @@ function intQuery(raw: string | undefined, fallback: number): number | null {
   if (raw === undefined || raw === '') return fallback
   const n = Number(raw)
   return Number.isSafeInteger(n) ? n : null
+}
+
+const MAX_WINDOW_DAYS = 365
+const DEFAULT_WINDOW_DAYS = 90
+
+// R54 and R59 together: the day an operator names is their own calendar day, so every edge
+// of the window is their local midnight. `parseDate` hands back the day a string writes, as
+// text (`src/validation/values.ts:41`), which is why this splits and rebuilds instead of
+// parsing. A malformed day returns NaN and lands in the existing `bad_range` path rather
+// than throwing — `noUncheckedIndexedAccess` means each component has to be checked before
+// it is used, not asserted away.
+function dayToMs(day: string): number {
+  const parts = day.split('-').map(Number)
+  const y = parts[0]
+  const mo = parts[1]
+  const d = parts[2]
+  if (y === undefined || mo === undefined || d === undefined) return Number.NaN
+  if (!Number.isFinite(y) || !Number.isFinite(mo) || !Number.isFinite(d)) return Number.NaN
+  return new Date(y, mo - 1, d).getTime()
+}
+
+// Whole days are added and subtracted with setDate, never with +/- 86_400_000: this box
+// crossed into DST on 2026-10-04, so millisecond arithmetic lands a "local midnight" on
+// 23:00 or 01:00 and the edge stops being the day boundary the label claims.
+function shiftDay(ms: number, days: number): number {
+  const d = new Date(ms)
+  d.setDate(d.getDate() + days)
+  return d.getTime()
+}
+
+function parseAnalyticsWindow(
+  from: string | undefined,
+  to: string | undefined,
+): { ok: true; window: AnalyticsWindow } | { ok: false; error: string } {
+  const today = localDay(new Date())
+  const toDay = to === undefined || to === '' ? today : parseDate(to)
+  if (toDay === null) return { ok: false, error: 'bad_range' }
+  const fromDay = from === undefined || from === '' ? null : parseDate(from)
+  if (from !== undefined && from !== '' && fromDay === null) return { ok: false, error: 'bad_range' }
+
+  const toDayMs = dayToMs(toDay)
+  const fromMs = fromDay === null ? shiftDay(toDayMs, -(DEFAULT_WINDOW_DAYS - 1)) : dayToMs(fromDay)
+  if (Number.isNaN(toDayMs) || Number.isNaN(fromMs)) return { ok: false, error: 'bad_range' }
+
+  const toExclusiveMs = shiftDay(toDayMs, 1)
+  // A DST day is 23 or 25 hours, and `to` names the last day the reader wants, so the
+  // count is inclusive on both ends: rounding over 86_400_000 is correct here precisely
+  // because it is only counting days, never landing on one.
+  const days = Math.round((toExclusiveMs - fromMs) / 86_400_000)
+  if (days < 1 || days > MAX_WINDOW_DAYS) return { ok: false, error: 'bad_range' }
+
+  return {
+    ok: true,
+    window: {
+      from: new Date(fromMs),
+      toExclusive: new Date(toExclusiveMs),
+      fromLabel: localDay(new Date(fromMs)),
+      toLabel: localDay(new Date(toDayMs)),
+      days,
+    },
+  }
 }
 
 export async function runValidationForDocument(
@@ -386,6 +450,26 @@ export function createDocumentsRouter(deps: DocumentsRouterDeps): Hono {
       offset,
     })
     return c.json({ items: rows.map(toQueueItem), total, limit, offset })
+  })
+
+  // Ruling R68: tenant-scoped, not visibility-scoped. The queue a reviewer sees next to
+  // these numbers is filtered to their own documents, so the panel has to label the scope
+  // of this one; the aggregates name rules, fields, sources and dates and never a document.
+  app.get('/analytics/review', async (c) => {
+    const gate = await auth(c)
+    if ('error' in gate) return gate.error
+    const { tenantId } = gate.identity
+
+    const parsed = parseAnalyticsWindow(c.req.query('from'), c.req.query('to'))
+    if (!parsed.ok) return c.json({ error: parsed.error, maxDays: MAX_WINDOW_DAYS }, 400)
+
+    const kind = c.req.query('kind')
+    if (kind !== undefined && kind !== 'invoice' && kind !== 'contract') {
+      return c.json({ error: 'bad_filter', param: 'kind' }, 400)
+    }
+    const kindFilter = kind === 'invoice' || kind === 'contract' ? kind : null
+
+    return c.json(await reviewAnalytics(tenantId, parsed.window, kindFilter))
   })
 
   app.get('/:id', async (c) => {

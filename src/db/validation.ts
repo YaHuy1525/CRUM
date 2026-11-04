@@ -308,3 +308,183 @@ export async function openCounts(
   }
   return out
 }
+
+/**
+ * The window a review-analytics request reads, as the route resolved it: two absolute
+ * instants for the SQL and the two calendar-day labels the panel prints beside them.
+ * Ruling R54 — the edges are the operator's local midnights, because "the 90 days ending
+ * today" on a UTC-bounded box drops the last day's afternoon rows from every number the
+ * panel shows. `fromLabel`/`toLabel` are rendered from the same local zone the edges were
+ * built in (ruling R59), so an edge and its own label cannot disagree.
+ */
+export interface AnalyticsWindow {
+  from: Date
+  toExclusive: Date
+  fromLabel: string
+  toLabel: string
+  days: number
+}
+
+/**
+ * Spec 11's six keys plus the window they were computed over. Ruling R68 decides the
+ * parameter: a bare `tenantId`, not a `TenantRequestContext`. Every value here is an
+ * aggregate over rules, fields, change sources and dates; none of them names a document,
+ * a title or a customer, so there is nothing for a row-level visibility rule to protect,
+ * and scoping the six queries would silently change what the numbers mean. The
+ * consequence is written down so nobody re-files it as a bug: a `user` sees a queue
+ * filtered to their own documents and analytics for the whole tenant, so the panel has to
+ * label the scope.
+ */
+export interface ReviewAnalytics {
+  window: { from: string; to: string; days: number }
+  byRule: Array<{ ruleId: string; total: number; open: number; waived: number }>
+  topFields: Array<{ field: string; corrections: number; violations: number }>
+  bySource: Array<{ changeSource: string; count: number }>
+  correctionRate: { corrected: number; documents: number; rate: number | null }
+  turnaround: { p50Hours: number | null; p90Hours: number | null }
+  confidenceTrend: Array<{ week: string; avgConfidence: number | null; correctionRate: number | null }>
+}
+
+/**
+ * Six aggregates over one window. All six share the same binding: `$1` tenant, `$2` from,
+ * `$3` to-exclusive, `$4` kind (null for "every kind"), and every aggregate that must reach
+ * JavaScript as a number carries an explicit `::int` or `::float8`, because `pg` hands
+ * `numeric` and `count` back as strings.
+ */
+export async function reviewAnalytics(
+  tenantId: string,
+  window: AnalyticsWindow,
+  kind: 'invoice' | 'contract' | null,
+): Promise<ReviewAnalytics> {
+  const client = getDbClient()
+  const p = [tenantId, window.from, window.toExclusive, kind]
+
+  const [byRule, topFields, bySource, rate, turnaround, trend] = await Promise.all([
+    client.query<{ rule_id: string; total: number; open: number; waived: number }>(
+      `SELECT rule_id,
+              COUNT(*)::int AS total,
+              COUNT(*) FILTER (WHERE status = 'open')::int   AS open,
+              COUNT(*) FILTER (WHERE status = 'waived')::int AS waived
+         FROM document_validation v
+        WHERE v.tenant_id = $1
+          AND v.created_at >= $2 AND v.created_at < $3
+          AND ($4::text IS NULL OR EXISTS (
+                SELECT 1 FROM documents kd WHERE kd.id = v.document_id AND kd.kind = $4))
+        GROUP BY rule_id
+        ORDER BY total DESC, rule_id`,
+      p,
+    ),
+    client.query<{ field: string; corrections: number; violations: number }>(
+      `WITH corr AS (
+         SELECT a.field_name, COUNT(*)::int AS corrections
+           FROM document_field_audit a
+          WHERE a.tenant_id = $1 AND a.change_source = 'manual_correction'
+            AND a.changed_at >= $2 AND a.changed_at < $3
+            AND ($4::text IS NULL OR EXISTS (
+                  SELECT 1 FROM documents kd WHERE kd.id = a.document_id AND kd.kind = $4))
+          GROUP BY a.field_name
+       ), viol AS (
+         SELECT v.field_name, COUNT(*)::int AS violations
+           FROM document_validation v
+          WHERE v.tenant_id = $1
+            AND v.created_at >= $2 AND v.created_at < $3
+            AND ($4::text IS NULL OR EXISTS (
+                  SELECT 1 FROM documents kd WHERE kd.id = v.document_id AND kd.kind = $4))
+          GROUP BY v.field_name
+       )
+       SELECT corr.field_name AS field, corr.corrections, COALESCE(viol.violations, 0) AS violations
+         FROM corr LEFT JOIN viol USING (field_name)
+        ORDER BY corr.corrections DESC, corr.field_name
+          LIMIT 10`,
+      p,
+    ),
+    client.query<{ change_source: string; count: number }>(
+      `SELECT a.change_source, COUNT(*)::int AS count
+         FROM document_field_audit a
+        WHERE a.tenant_id = $1
+          AND a.changed_at >= $2 AND a.changed_at < $3
+          AND ($4::text IS NULL OR EXISTS (
+                SELECT 1 FROM documents kd WHERE kd.id = a.document_id AND kd.kind = $4))
+        GROUP BY a.change_source
+        ORDER BY count DESC, a.change_source`,
+      p,
+    ),
+    client.query<{ corrected: number; documents: number }>(
+      `SELECT
+         (SELECT COUNT(DISTINCT a.document_id)::int
+            FROM document_field_audit a
+           WHERE a.tenant_id = $1 AND a.change_source = 'manual_correction'
+             AND a.changed_at >= $2 AND a.changed_at < $3
+             AND ($4::text IS NULL OR EXISTS (
+                   SELECT 1 FROM documents k1 WHERE k1.id = a.document_id AND k1.kind = $4))) AS corrected,
+         (SELECT COUNT(*)::int FROM documents d
+           WHERE d.tenant_id = $1 AND d.kind IN ('invoice', 'contract')
+             AND ($4::text IS NULL OR d.kind = $4)
+             AND d.created_at >= $2 AND d.created_at < $3) AS documents`,
+      p,
+    ),
+    // Ruling R13, carried from R8: the clock starts at `documents.created_at`, so queue
+    // wait is inside this number. The panel calls the row "created to first correction"
+    // because that is the only place a reader meets the value.
+    client.query<{ p50: number | null; p90: number | null }>(
+      `WITH first_corr AS (
+         SELECT a.document_id, MIN(a.changed_at) AS at
+           FROM document_field_audit a
+          WHERE a.tenant_id = $1 AND a.change_source = 'manual_correction'
+            AND a.changed_at >= $2 AND a.changed_at < $3
+          GROUP BY a.document_id
+       )
+       SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (
+                ORDER BY EXTRACT(EPOCH FROM (fc.at - d.created_at)) / 3600
+              )::float8 AS p50,
+              PERCENTILE_CONT(0.9) WITHIN GROUP (
+                ORDER BY EXTRACT(EPOCH FROM (fc.at - d.created_at)) / 3600
+              )::float8 AS p90
+         FROM first_corr fc JOIN documents d ON d.id = fc.document_id
+        WHERE d.tenant_id = $1 AND d.kind IN ('invoice', 'contract')
+          AND ($4::text IS NULL OR d.kind = $4)`,
+      p,
+    ),
+    // Ruling R15: the trend's `correctionRate` is deliberately a different number from the
+    // top-level one. It is the share of documents *created* in that ISO week that ever
+    // received a correction, window ignored — a per-week version of the top-level metric
+    // would put a correction in a week its document was not created in. Hence no `$2`/`$3`
+    // inside the EXISTS.
+    client.query<{ week: string; avg_confidence: number | null; correction_rate: number | null }>(
+      `WITH docs AS (
+         SELECT TO_CHAR(DATE_TRUNC('week', d.created_at), 'YYYY-MM-DD') AS week,
+                d.confidence::float8 AS conf,
+                EXISTS (SELECT 1 FROM document_field_audit a
+                         WHERE a.document_id = d.id
+                           AND a.change_source = 'manual_correction') AS corrected
+           FROM documents d
+          WHERE d.tenant_id = $1 AND d.kind IN ('invoice', 'contract')
+            AND ($4::text IS NULL OR d.kind = $4)
+            AND d.created_at >= $2 AND d.created_at < $3
+       )
+       SELECT week, AVG(conf)::float8 AS avg_confidence,
+              (COUNT(*) FILTER (WHERE corrected))::float8 / NULLIF(COUNT(*), 0) AS correction_rate
+         FROM docs GROUP BY week ORDER BY week`,
+      p,
+    ),
+  ])
+
+  const corrected = rate.rows[0]?.corrected ?? 0
+  const documents = rate.rows[0]?.documents ?? 0
+  return {
+    window: { from: window.fromLabel, to: window.toLabel, days: window.days },
+    byRule: byRule.rows.map((r) => ({ ruleId: r.rule_id, total: r.total, open: r.open, waived: r.waived })),
+    topFields: topFields.rows.map((r) => ({ field: r.field, corrections: r.corrections, violations: r.violations })),
+    bySource: bySource.rows.map((r) => ({ changeSource: r.change_source, count: r.count })),
+    // Ruling R14: the numerator and the denominator come from two different populations,
+    // so the quotient can exceed 1 when a window reviews older work. Both integers travel
+    // beside the rate rather than being silently redefined to keep it inside [0, 1].
+    correctionRate: { corrected, documents, rate: documents === 0 ? null : corrected / documents },
+    turnaround: { p50Hours: turnaround.rows[0]?.p50 ?? null, p90Hours: turnaround.rows[0]?.p90 ?? null },
+    confidenceTrend: trend.rows.map((r) => ({
+      week: r.week,
+      avgConfidence: r.avg_confidence,
+      correctionRate: r.correction_rate,
+    })),
+  }
+}
