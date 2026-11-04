@@ -264,9 +264,12 @@ describe('GET /analytics/review metrics', () => {
     await addAudit(a, 'tax', 'manual_correction', '2026-10-02T00:00:00Z')
     await addAudit(b, 'total', 'manual_correction', '2026-10-02T00:00:00Z')
     const { json } = await analytics()
-    // Ruling R14: numerator = corrections in the window on documents of any age,
-    // denominator = documents created in the window. The two integers travel with the
-    // rate because their quotient is not a fraction of the same population.
+    // Ruling R14, per spec §11 (`docs/superpowers/specs/2026-11-03-field-audit-phase2-design.md:383`):
+    // the numerator is the DISTINCT documents carrying at least one `manual_correction` row in
+    // the window, on documents of any age, and the denominator is documents created in the
+    // window. Document `a` takes two corrections above so a row count would answer 3 here; the
+    // two integers travel with the rate because their quotient is not a fraction of one
+    // population.
     expect(json.correctionRate).toEqual({ corrected: 2, documents: 3, rate: 2 / 3 })
   }, DB_TIMEOUT)
 
