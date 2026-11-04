@@ -456,17 +456,27 @@ export function createDocumentsRouter(deps: DocumentsRouterDeps): Hono {
     const violationId = IdSchema.safeParse(c.req.param('violationId'))
     if (!id.success) return c.json({ error: 'id must be a uuid' }, 400)
     if (!violationId.success) return c.json({ error: 'violationId must be a uuid' }, 400)
-    const body = await c.req.json<{ reason?: string }>().catch((): { reason?: string } => ({}))
-    const reason = (body.reason ?? '').trim()
+    const body = await c.req.json<{ reason?: unknown }>().catch((): { reason?: undefined } => ({}))
+    const reason = typeof body.reason === 'string' ? body.reason.trim() : ''
     if (reason.length < 8) {
       return c.json({ error: 'reason_required', min_length: 8 }, 400)
+    }
+    // `waiveViolation` is published (§ DB surface row 234) without a document id, so the
+    // binding lives here: the finding must be one of the rows the path's document lists.
+    const findings = await listViolations(id.data, gate.identity.tenantId)
+    if (!findings.some((v) => v.id === violationId.data)) {
+      return c.json({ error: 'not_found' }, 404)
     }
     const outcome = await waiveViolation(violationId.data, gate.identity.tenantId, gate.identity.userId, reason)
     if (!outcome.ok) {
       return c.json({ error: outcome.reason }, outcome.reason === 'not_found' ? 404 : 409)
     }
     const remaining = await runValidationForDocument(gate.identity, id.data)
-    return c.json({ violation: outcome.violation, openErrors: remaining?.openErrors ?? 0 })
+    return c.json(
+      remaining === null
+        ? { violation: outcome.violation }
+        : { violation: outcome.violation, openErrors: remaining.openErrors },
+    )
   })
 
   const ALLOWED_INVOICE_FIELDS = [...INVOICE_FIELDS]
@@ -474,7 +484,7 @@ export function createDocumentsRouter(deps: DocumentsRouterDeps): Hono {
 
   interface CorrectionBody {
     value: unknown
-    reason?: string
+    reason?: unknown
   }
 
   async function handleCorrection(
@@ -489,6 +499,7 @@ export function createDocumentsRouter(deps: DocumentsRouterDeps): Hono {
     const docId = c.req.param('id')
     const field = c.req.param('field')
     const body = await c.req.json<CorrectionBody>()
+    const reason = typeof body.reason === 'string' ? body.reason.trim() : ''
     const identity = gate.identity
 
     if (!docId) return c.json({ error: 'id is required' }, 400)
@@ -496,13 +507,13 @@ export function createDocumentsRouter(deps: DocumentsRouterDeps): Hono {
       return c.json({ error: `Field not correctable: '${field}'` }, 400)
     }
 
-    // Verify document exists and belongs to tenant
-    const docResult = await getDbClient().query<{ id: string }>(
-      `SELECT id FROM documents WHERE id = $1 AND tenant_id = $2 AND kind = $3`,
-      [docId, identity.tenantId, docKind],
-    )
-
-    if (docResult.rows.length === 0) {
+    // One authority for both halves of a correction. The raw tenant+kind SELECT this
+    // route used to run applied no owner rule, while the re-validation below reads
+    // through `getDocument`, which applies `docVisibility`: a `user` could correct a
+    // document they may not read, and the response then described a document it had
+    // never measured.
+    const document = await getDocument(identity, docId)
+    if (!document || document.kind !== docKind) {
       return c.json({ error: 'Document not found' }, 404)
     }
 
@@ -529,7 +540,7 @@ export function createDocumentsRouter(deps: DocumentsRouterDeps): Hono {
         [body.value, docId],
       )
 
-      if (body.reason) {
+      if (reason !== '') {
         const at = watermark.rows[0]?.at ?? null
         const stamped = await client.query<{ id: string }>(
           at === null
@@ -540,18 +551,17 @@ export function createDocumentsRouter(deps: DocumentsRouterDeps): Hono {
         )
         await client.query(
           `UPDATE document_field_audit SET reason = $1 WHERE id = ANY($2::uuid[])`,
-          [body.reason, stamped.rows.map((r) => r.id)],
+          [reason, stamped.rows.map((r) => r.id)],
         )
       }
 
       const revalidated = await runValidationForDocumentOn(client, identity, docId)
+      if (revalidated === null) {
+        await client.query('ROLLBACK')
+        return c.json({ error: 'Document not found' }, 404)
+      }
       await client.query('COMMIT')
-      return c.json({
-        success: true,
-        openErrors: revalidated?.openErrors ?? 0,
-        openWarnings: revalidated?.openWarnings ?? 0,
-        violations: revalidated?.violations ?? [],
-      })
+      return c.json({ success: true, ...revalidated })
     } catch (error) {
       await client.query('ROLLBACK')
       throw error

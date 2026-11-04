@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createTestServer, type TestServer } from '../helpers/test-server.js'
 import type { Pool, PoolClient } from 'pg'
 
@@ -62,6 +62,53 @@ async function post(path: string, body?: unknown) {
   })
 }
 
+async function seedContract(db: Pool): Promise<string> {
+  const docResult = await db.query<{ id: string }>(
+    `INSERT INTO documents (tenant_id, owner_id, kind, title, source, content_hash, content_text, mime, status)
+     VALUES ($1, $2, 'contract', 'Validation Test Contract', 'upload', $3, 'Test content', 'text/plain', 'ready')
+     RETURNING id`,
+    [TENANT, USER, `hash-validation-contract-${crypto.randomUUID()}`],
+  )
+  const docId = docResult.rows[0]!.id
+  await db.query(
+    `INSERT INTO contracts (document_id, counterparty, contract_value, currency, field_confidence)
+     VALUES ($1, 'Test Counterparty', 5000.00, 'AUD', '{"counterparty": 0.42}'::jsonb)`,
+    [docId],
+  )
+  return docId
+}
+
+// A kind-'other' document exists in the tenant and is listed by document_id, but
+// re-validation refuses its kind, so it is how the "no measured re-run" branch is reached.
+async function seedOtherDocument(db: Pool): Promise<string> {
+  const docResult = await db.query<{ id: string }>(
+    `INSERT INTO documents (tenant_id, owner_id, kind, title, source, content_hash, content_text, mime, status)
+     VALUES ($1, $2, 'other', 'Validation Test Attachment', 'upload', $3, 'Test content', 'text/plain', 'ready')
+     RETURNING id`,
+    [TENANT, USER, `hash-validation-other-${crypto.randomUUID()}`],
+  )
+  return docResult.rows[0]!.id
+}
+
+async function addFinding(docId: string, ruleId: string, field: string, severity: 'error' | 'warning') {
+  const r = await server.db.query<{ id: string }>(
+    `INSERT INTO document_validation
+       (document_id, tenant_id, ruleset_version, severity, rule_id, field_name, message)
+     VALUES ($1, $2, 'v1', $3, $4, $5, 'seeded by document-validation test')
+     RETURNING id`,
+    [docId, TENANT, severity, ruleId, field],
+  )
+  return r.rows[0]!.id
+}
+
+async function openFindingOf(docId: string): Promise<string> {
+  const { violations } = await (await get('/' + docId + '/validation'))
+    .json() as { violations: Array<{ id: string; status: string }> }
+  const open = violations.find((v) => v.status === 'open')
+  if (!open) throw new Error(`no open finding on ${docId}`)
+  return open.id
+}
+
 describe('GET /:id/validation', () => {
   it('refuses a non-uuid id with 400', async () => {
     expect((await get('/nope/validation')).status).toBe(400)
@@ -118,10 +165,84 @@ describe('POST /:id/validation/:violationId/waive', () => {
 })
 
 describe('H3, the detail responses stop leaking internal join columns', () => {
-  it('never returns invoice_field_confidence or contract_field_confidence', async () => {
-    for (const path of ['/' + documentId, '/' + documentId + '/invoice']) {
-      const text = await (await get(path)).text()
-      expect(text).not.toMatch(/invoice_field_confidence|contract_field_confidence/)
+  let contractId = ''
+
+  beforeAll(async () => {
+    await server.db.query(
+      `UPDATE invoices SET field_confidence = '{"total": 0.42}'::jsonb WHERE document_id = $1`,
+      [documentId],
+    )
+    contractId = await seedContract(server.db)
+  })
+
+  afterAll(async () => {
+    await server.db.query(
+      'DELETE FROM documents WHERE tenant_id = $1 AND id = $2',
+      [TENANT, contractId],
+    )
+  })
+
+  it('answers 200 and never returns invoice_field_confidence or contract_field_confidence', async () => {
+    for (const path of ['/' + documentId, '/' + documentId + '/invoice', '/' + contractId + '/contract']) {
+      const res = await get(path)
+      expect(res.status).toBe(200)
+      expect(await res.text()).not.toMatch(/invoice_field_confidence|contract_field_confidence/)
     }
+  })
+})
+
+describe('a waiver is bound to the document named in its own path', () => {
+  const created: string[] = []
+
+  afterAll(async () => {
+    if (created.length > 0) {
+      await server.db.query(
+        'DELETE FROM documents WHERE tenant_id = $1 AND id = ANY($2::uuid[])',
+        [TENANT, created],
+      )
+    }
+  })
+
+  it('404s a same-tenant finding that belongs to a different document', async () => {
+    const other = await seedInvoice(server.db, {
+      subtotal: '10.00', tax: '1.00', total: '99.00', currency: 'AUD',
+    })
+    created.push(other)
+    expect((await post('/' + other + '/validation')).status).toBe(200)
+    const foreignFinding = await openFindingOf(other)
+
+    const res = await post('/' + documentId + '/validation/' + foreignFinding + '/waive', {
+      reason: 'a reason long enough to satisfy the floor',
+    })
+    expect(res.status).toBe(404)
+    expect((await res.json() as { error: string }).error).toBe('not_found')
+
+    const after = await (await get('/' + other + '/validation'))
+      .json() as { violations: Array<{ id: string; status: string }> }
+    expect(after.violations.find((v) => v.id === foreignFinding)?.status).toBe('open')
+  })
+
+  it('refuses a non-string reason with 400 rather than a 500 crash', async () => {
+    const finding = await openFindingOf(documentId)
+    const res = await server.fetch(
+      '/api/documents/' + documentId + '/validation/' + finding + '/waive',
+      { method: 'POST', headers: HEADERS, body: JSON.stringify({ reason: 123 }) },
+    )
+    expect(res.status).toBe(400)
+    expect((await res.json() as { error: string }).error).toBe('reason_required')
+  })
+
+  it('omits openErrors when the re-run measured nothing', async () => {
+    const doc = await seedOtherDocument(server.db)
+    created.push(doc)
+    const finding = await addFinding(doc, 'invoice.total.sum', 'total', 'error')
+
+    const res = await post('/' + doc + '/validation/' + finding + '/waive', {
+      reason: 'a reason long enough to satisfy the floor',
+    })
+    expect(res.status).toBe(200)
+    const body = await res.json() as { violation: { status: string }; openErrors?: number }
+    expect(body.violation.status).toBe('waived')
+    expect(body).not.toHaveProperty('openErrors')
   })
 })

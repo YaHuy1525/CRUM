@@ -283,3 +283,96 @@ describe('a correction re-validates in its own transaction and stamps its own ro
     }
   }, DB_TIMEOUT)
 })
+
+describe('a correction is bounded by the visibility the read path applies', () => {
+  let server: Awaited<ReturnType<typeof createTestServer>>
+  const OTHER_OWNER = '00000000-0000-4000-8000-0000000000aa'
+  const HEADERS = {
+    'content-type': 'application/json',
+    'x-tenant-id': TENANT,
+    'x-user-id': USER,
+    'x-user-role': 'user',
+  }
+  let customerId = ''
+  let documentId = ''
+
+  beforeAll(async () => {
+    server = await createTestServer()
+
+    const customer = await server.db.query<{ id: string }>(
+      `INSERT INTO customers (tenant_id, name, owner_id)
+       VALUES ($1, 'A Customer The Caller Does Not Share', $2) RETURNING id`,
+      [TENANT, OTHER_OWNER],
+    )
+    customerId = customer.rows[0]!.id
+
+    const doc = await server.db.query<{ id: string }>(
+      `INSERT INTO documents (tenant_id, owner_id, kind, title, source, content_hash, content_text, mime, status, customer_id)
+       VALUES ($1, $2, 'invoice', 'A Invoice The Caller May Not Read', 'upload', $3, 'Test content', 'text/plain', 'ready', $4)
+       RETURNING id`,
+      [TENANT, OTHER_OWNER, `hash-unreadable-${crypto.randomUUID()}`, customerId],
+    )
+    documentId = doc.rows[0]!.id
+
+    const client: PoolClient = await server.db.connect()
+    try {
+      await client.query('BEGIN')
+      await client.query('SELECT set_config($1, $2, true)', ['app.current_user_id', OTHER_OWNER])
+      await client.query('SELECT set_config($1, $2, true)', ['app.change_source', 'extraction'])
+      await client.query(
+        `INSERT INTO invoices (document_id, vendor_name, subtotal, tax, total, currency)
+         VALUES ($1, 'Hidden Vendor', '500.00', '50.00', '550.00', 'AUD')`,
+        [documentId],
+      )
+      await client.query('COMMIT')
+    } catch (err) {
+      await client.query('ROLLBACK')
+      throw err
+    } finally {
+      client.release()
+    }
+  }, DB_TIMEOUT)
+
+  afterAll(async () => {
+    await server.db.query('DELETE FROM documents WHERE tenant_id = $1 AND id = $2', [TENANT, documentId])
+    await server.db.query('DELETE FROM customers WHERE tenant_id = $1 AND id = $2', [TENANT, customerId])
+    await server.close()
+  })
+
+  it('404s the PATCH and leaves the stored value alone', async () => {
+    const res = await server.fetch(`/api/documents/${documentId}/invoices/total`, {
+      method: 'PATCH',
+      headers: HEADERS,
+      body: JSON.stringify({ value: '999.00', reason: 'a reason long enough to satisfy the floor' }),
+    })
+    expect(res.status).toBe(404)
+    expect(Object.keys(await res.json() as Record<string, unknown>)).not.toContain('openErrors')
+
+    const row = await server.db.query<{ total: string }>(
+      'SELECT total FROM invoices WHERE document_id = $1',
+      [documentId],
+    )
+    expect(row.rows[0]!.total).toBe('550.00')
+
+    const audit = await server.db.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM document_field_audit
+       WHERE document_id = $1 AND tenant_id = $2 AND field_name = 'total' AND action = 'update'`,
+      [documentId, TENANT],
+    )
+    expect(audit.rows[0]!.n).toBe('0')
+  }, DB_TIMEOUT)
+
+  it('still lets the owner correct the same document', async () => {
+    const res = await server.fetch(`/api/documents/${documentId}/invoices/total`, {
+      method: 'PATCH',
+      headers: { ...HEADERS, 'x-user-id': OTHER_OWNER },
+      body: JSON.stringify({ value: '560.00', reason: 'the vendor reissued the invoice' }),
+    })
+    expect(res.status).toBe(200)
+    const row = await server.db.query<{ total: string }>(
+      'SELECT total FROM invoices WHERE document_id = $1',
+      [documentId],
+    )
+    expect(row.rows[0]!.total).toBe('560.00')
+  }, DB_TIMEOUT)
+})
