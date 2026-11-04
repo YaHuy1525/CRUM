@@ -10,6 +10,11 @@ import {
   getInvoice,
   getContract,
   reviewDocument,
+  type InvoiceRow,
+  type InvoiceLineRow,
+  type ContractRow,
+  type ContractTermRow,
+  type DocumentRow,
 } from '../db/documents'
 import { invalidateOpenStageDraft } from '../db/pending-writes'
 import { listBundleIdsForDocument } from '../db/marketing-assets'
@@ -18,6 +23,10 @@ import { MAX_DOCUMENT_BYTES } from '../mastra/workflows/document-intake'
 import type { DocumentJobData } from '../queue/document-queue'
 import { getDbClient } from '../db/client'
 import type { PoolClient } from 'pg'
+import { listViolations, waiveViolation, replaceValidation, type StoredViolation } from '../db/validation'
+import { evaluate, buildBundle, localDay, RULESET_VERSION } from '../validation/index'
+import { INVOICE_FIELDS, CONTRACT_FIELDS, isCorrectable } from '../validation/fields'
+import type { DocumentRecordBundle } from '../validation/types'
 
 /** The slice of the job queue the upload plane needs, injected so routes stay testable. */
 export interface DocumentJobSnapshot {
@@ -46,6 +55,40 @@ export interface DocumentsRouterDeps {
    * opens a Redis connection as soon as it is loaded.
    */
   queue?: DocumentQueueLike | null
+}
+
+function toInvoiceBundle(inv: { header: InvoiceRow | null; lines: InvoiceLineRow[] }): DocumentRecordBundle {
+  return buildBundle(
+    'invoice',
+    inv.header as unknown as Record<string, unknown> | null,
+    inv.lines as unknown as Array<Record<string, unknown>>,
+    [],
+  )
+}
+
+function toContractBundle(ctr: { header: ContractRow | null; terms: ContractTermRow[] }): DocumentRecordBundle {
+  return buildBundle(
+    'contract',
+    ctr.header as unknown as Record<string, unknown> | null,
+    [],
+    ctr.terms as unknown as Array<Record<string, unknown>>,
+  )
+}
+
+async function runValidationForDocument(
+  identity: TenantRequestContext,
+  documentId: string,
+): Promise<{ openErrors: number; openWarnings: number; violations: StoredViolation[] } | null> {
+  const document = await getDocument(identity, documentId)
+  if (!document || (document.kind !== 'invoice' && document.kind !== 'contract')) return null
+  const bundle = document.kind === 'invoice'
+    ? toInvoiceBundle(await getInvoice(identity, documentId))
+    : toContractBundle(await getContract(identity, documentId))
+  const violations = evaluate(bundle, { today: localDay(new Date()) }).filter((v) => isCorrectable(v.field))
+  const counts = await replaceValidation(
+    getDbClient(), documentId, identity.tenantId, violations, RULESET_VERSION,
+  )
+  return { ...counts, violations: await listViolations(documentId, identity.tenantId) }
 }
 
 let defaultQueue: Promise<DocumentQueueLike> | null = null
@@ -257,8 +300,10 @@ export function createDocumentsRouter(deps: DocumentsRouterDeps): Hono {
     const id = IdSchema.safeParse(c.req.param('id'))
     if (!id.success) return c.json({ error: 'id must be a uuid' }, 400)
 
-    const document = await getDocument(gate.identity, id.data)
-    if (!document) return c.json({ error: 'not_found' }, 404)
+    const doc = await getDocument(gate.identity, id.data)
+    if (!doc) return c.json({ error: 'not_found' }, 404)
+    const { invoice_field_confidence: _ifc, contract_field_confidence: _cfc, ...document } =
+      doc as DocumentRow & Record<string, unknown>
     return c.json({ document })
   })
 
@@ -268,12 +313,16 @@ export function createDocumentsRouter(deps: DocumentsRouterDeps): Hono {
     const id = IdSchema.safeParse(c.req.param('id'))
     if (!id.success) return c.json({ error: 'id must be a uuid' }, 400)
 
-    const document = await getDocument(gate.identity, id.data)
-    if (!document) return c.json({ error: 'not_found' }, 404)
-    if (document.kind !== 'invoice') return c.json({ error: 'not_an_invoice' }, 409)
+    const doc = await getDocument(gate.identity, id.data)
+    if (!doc) return c.json({ error: 'not_found' }, 404)
+    if (doc.kind !== 'invoice') return c.json({ error: 'not_an_invoice' }, 409)
 
+    const { invoice_field_confidence: _ifc, contract_field_confidence: _cfc, ...document } =
+      doc as DocumentRow & Record<string, unknown>
     const { header, lines } = await getInvoice(gate.identity, id.data)
-    return c.json({ document, invoice: header, lines })
+    const { invoice_field_confidence: _ifc2, ...invoiceHeader } =
+      (header ?? {}) as Record<string, unknown>
+    return c.json({ document, invoice: invoiceHeader, lines })
   })
 
   app.get('/:id/contract', async (c) => {
@@ -282,12 +331,16 @@ export function createDocumentsRouter(deps: DocumentsRouterDeps): Hono {
     const id = IdSchema.safeParse(c.req.param('id'))
     if (!id.success) return c.json({ error: 'id must be a uuid' }, 400)
 
-    const document = await getDocument(gate.identity, id.data)
-    if (!document) return c.json({ error: 'not_found' }, 404)
-    if (document.kind !== 'contract') return c.json({ error: 'not_a_contract' }, 409)
+    const doc = await getDocument(gate.identity, id.data)
+    if (!doc) return c.json({ error: 'not_found' }, 404)
+    if (doc.kind !== 'contract') return c.json({ error: 'not_a_contract' }, 409)
 
+    const { invoice_field_confidence: _ifc, contract_field_confidence: _cfc, ...document } =
+      doc as DocumentRow & Record<string, unknown>
     const { header, terms } = await getContract(gate.identity, id.data)
-    return c.json({ document, contract: header, terms })
+    const { contract_field_confidence: _cfc2, ...contractHeader } =
+      (header ?? {}) as Record<string, unknown>
+    return c.json({ document, contract: contractHeader, terms })
   })
 
   app.post('/:id/review', async (c) => {
@@ -357,8 +410,59 @@ export function createDocumentsRouter(deps: DocumentsRouterDeps): Hono {
     return c.json({ audit: result.rows })
   })
 
-  const ALLOWED_INVOICE_FIELDS = ['vendor_name', 'vendor_email', 'invoice_number', 'invoice_date', 'due_date', 'currency', 'subtotal', 'tax', 'total']
-  const ALLOWED_CONTRACT_FIELDS = ['counterparty', 'counterparty_email', 'effective_date', 'expiry_date', 'term_months', 'contract_value', 'currency', 'auto_renewal', 'renewal_notice_days']
+  app.get('/:id/validation', async (c) => {
+    const gate = await auth(c)
+    if ('error' in gate) return gate.error
+    const id = IdSchema.safeParse(c.req.param('id'))
+    if (!id.success) return c.json({ error: 'id must be a uuid' }, 400)
+    const violations = await listViolations(id.data, gate.identity.tenantId)
+    const document = await getDocument(gate.identity, id.data)
+    if (!document) return c.json({ error: 'not_found' }, 404)
+    return c.json({
+      documentId: id.data,
+      rulesetVersion: violations[0]?.rulesetVersion ?? RULESET_VERSION,
+      violations,
+    })
+  })
+
+  app.post('/:id/validation', async (c) => {
+    const gate = await auth(c)
+    if ('error' in gate) return gate.error
+    const id = IdSchema.safeParse(c.req.param('id'))
+    if (!id.success) return c.json({ error: 'id must be a uuid' }, 400)
+    const result = await runValidationForDocument(gate.identity, id.data)
+    if (result === null) return c.json({ error: 'not_found' }, 404)
+    return c.json({
+      documentId: id.data,
+      rulesetVersion: RULESET_VERSION,
+      violations: result.violations,
+      openErrors: result.openErrors,
+      openWarnings: result.openWarnings,
+    })
+  })
+
+  app.post('/:id/validation/:violationId/waive', async (c) => {
+    const gate = await auth(c)
+    if ('error' in gate) return gate.error
+    const id = IdSchema.safeParse(c.req.param('id'))
+    const violationId = IdSchema.safeParse(c.req.param('violationId'))
+    if (!id.success) return c.json({ error: 'id must be a uuid' }, 400)
+    if (!violationId.success) return c.json({ error: 'violationId must be a uuid' }, 400)
+    const body = await c.req.json<{ reason?: string }>().catch((): { reason?: string } => ({}))
+    const reason = (body.reason ?? '').trim()
+    if (reason.length < 8) {
+      return c.json({ error: 'reason_required', min_length: 8 }, 400)
+    }
+    const outcome = await waiveViolation(violationId.data, gate.identity.tenantId, gate.identity.userId, reason)
+    if (!outcome.ok) {
+      return c.json({ error: outcome.reason }, outcome.reason === 'not_found' ? 404 : 409)
+    }
+    const remaining = await runValidationForDocument(gate.identity, id.data)
+    return c.json({ violation: outcome.violation, openErrors: remaining?.openErrors ?? 0 })
+  })
+
+  const ALLOWED_INVOICE_FIELDS = [...INVOICE_FIELDS]
+  const ALLOWED_CONTRACT_FIELDS = [...CONTRACT_FIELDS]
 
   interface CorrectionBody {
     value: unknown
