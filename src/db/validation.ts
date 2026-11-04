@@ -162,7 +162,9 @@ export interface ReviewQueueFilter {
 /**
  * One queue row as the database renders it: `numeric` and `count` arrive as
  * strings from `pg`, so the mapping to `ReviewQueueItem` numbers happens in the
- * route (ruling R57), never here.
+ * route (ruling R57), never here. `created_at` is a `timestamptz` and `pg` hands
+ * it back as a `Date`, so the annotation says what the driver actually gives and
+ * the route normalises it through `toIsoString` like every other timestamp here.
  */
 export interface ReviewQueueRow {
   document_id: string
@@ -173,7 +175,7 @@ export interface ReviewQueueRow {
   lowest_field_confidence: string | null
   open_errors: number
   open_warnings: number
-  created_at: string
+  created_at: Date
 }
 
 // Membership is status OR open findings: a correction can clear every finding
@@ -185,6 +187,12 @@ export interface ReviewQueueRow {
 // so the derived tables may name `$1` literally while every filter, page and offset
 // placeholder is numbered from the length of its params — one for an `admin`, two for
 // a `user`, which is why these cannot be hard-coded as `$2` through `$5`.
+//
+// Only the finding-count aggregate is joined here, because the `WHERE` block below
+// reads it. Lowest field confidence is not a membership clause, so it is computed
+// per row in the page's select list instead of over every invoice and contract of
+// the tenant in a derived table this shared fragment would have to carry into the
+// COUNT as well (ruling R69).
 function queueFrom(
   visibilitySql: string,
   kindRef: string,
@@ -200,17 +208,14 @@ function queueFrom(
     WHERE tenant_id = $1 AND status = 'open'
     GROUP BY document_id
   ) c ON c.document_id = d.id
-  LEFT JOIN (
-    SELECT d2.id AS document_id,
-           (SELECT MIN(NULLIF(kv.value, 'null'::jsonb)::numeric)
-              FROM jsonb_each(d2.field_confidence) AS kv(key, value)) AS lowest
-    FROM documents d2
-    WHERE d2.tenant_id = $1 AND d2.kind IN ('invoice', 'contract')
-  ) f ON f.document_id = d.id
   WHERE ${visibilitySql}
     AND d.kind IN ('invoice', 'contract')
     AND (${kindRef}::text IS NULL OR d.kind = ${kindRef})
     AND (d.status = 'needs_review' OR COALESCE(c.errors, 0) + COALESCE(c.warnings, 0) > 0)
+    -- Ruling R69: severity is an attribute of findings, not of queue membership, so a
+    -- needs_review document whose only open finding is of the other severity, or whose
+    -- only reason to be queued is its status, is correctly hidden by this clause.
+    -- Pinned by tests/api/review-queue.test.ts rather than changed.
     AND (${severityRef}::text IS NULL OR EXISTS (
       SELECT 1 FROM document_validation s
       WHERE s.document_id = d.id AND s.tenant_id = $1
@@ -245,13 +250,25 @@ export async function reviewQueue(
     // parameters of each prepared statement separately.
     params.slice(0, firstFilter + 1),
   )
+  // The page, not the membership test: `created_at` goes out bare so `pg` parses the
+  // `timestamptz` into a `Date` and the route normalises it (ruling R69), and lowest
+  // field confidence is expanded per surviving row here rather than for the whole
+  // tenant in the shared `from` fragment, which the COUNT would pay for too.
   const pageResult = await client.query<ReviewQueueRow>(
     `SELECT d.id AS document_id, d.title, d.kind, d.status, d.confidence,
-            d.created_at::text AS created_at, f.lowest AS lowest_field_confidence,
+            d.created_at,
+            (SELECT MIN(NULLIF(kv.value, 'null'::jsonb)::numeric)
+               FROM jsonb_each(d.field_confidence) AS kv(key, value)) AS lowest_field_confidence,
             COALESCE(c.errors, 0)::int   AS open_errors,
             COALESCE(c.warnings, 0)::int AS open_warnings` +
       from +
-      ` ORDER BY COALESCE(c.errors, 0) DESC, f.lowest ASC NULLS LAST, d.created_at ASC
+      // `lowest_field_confidence` is an output alias, and with the derived table gone
+      // no input column of the FROM answers to that name, so Postgres binds it to the
+      // select list. `d.id` is the tiebreaker: `created_at` is not unique, and two
+      // documents sharing it, their error counts and their lowest confidence would
+      // otherwise be ordered arbitrarily and could split across a page boundary.
+      ` ORDER BY COALESCE(c.errors, 0) DESC, lowest_field_confidence ASC NULLS LAST,
+                 d.created_at ASC, d.id ASC
          LIMIT ${limitRef} OFFSET ${offsetRef}`,
     params,
   )

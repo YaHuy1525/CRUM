@@ -83,14 +83,27 @@ async function seedInvoice(
   return docId
 }
 
-async function seedCustomer(name: string, ownerId: string): Promise<string> {
+async function seedCustomer(
+  name: string,
+  ownerId: string,
+  teamMemberIds: string[] = [],
+): Promise<string> {
   const r = await server.db.query<{ id: string }>(
-    `INSERT INTO customers (tenant_id, name, owner_id)
-     VALUES ($1, $2, $3)
+    `INSERT INTO customers (tenant_id, name, owner_id, team_member_ids)
+     VALUES ($1, $2, $3, $4::uuid[])
      RETURNING id`,
-    [TENANT, name, ownerId],
+    [TENANT, name, ownerId, teamMemberIds],
   )
   return r.rows[0]!.id
+}
+
+// `setConfidence` takes numbers only, which is exactly why a jsonb `null` inside a
+// field map needs its own raw writer: the queue's NULLIF guard would otherwise be
+// unreachable from this file, and deleting it would leave the suite green.
+async function setRawConfidence(docId: string, map: unknown) {
+  await server.db.query('UPDATE documents SET field_confidence = $2::jsonb WHERE id = $1', [
+    docId, JSON.stringify(map),
+  ])
 }
 
 async function setStatus(docId: string, status: string) {
@@ -153,17 +166,50 @@ describe('GET /review-queue auth and filters', () => {
   }, DB_TIMEOUT)
 
   it('400s an unknown kind', async () => {
-    expect((await body('?kind=receipt')).json.error).toBe('bad_filter')
+    const res = await body('?kind=receipt')
+    expect(res.status).toBe(400)
+    expect(res.json.error).toBe('bad_filter')
+    expect(res.json.param).toBe('kind')
   }, DB_TIMEOUT)
 
   it('400s an unknown severity', async () => {
-    expect((await body('?severity=critical')).json.error).toBe('bad_filter')
+    const res = await body('?severity=critical')
+    expect(res.status).toBe(400)
+    expect(res.json.error).toBe('bad_filter')
+    expect(res.json.param).toBe('severity')
   }, DB_TIMEOUT)
 
   it('400s a non-numeric limit', async () => {
     const res = await body('?limit=abc')
     expect(res.json.error).toBe('bad_filter')
     expect(res.status).toBe(400)
+  }, DB_TIMEOUT)
+
+  // Ruling R69, ride-along 4: `Number.isInteger(1e30)` is true, and an offset that
+  // large is a Postgres bigint range error, so the old test let a client typo become
+  // a 500. `intQuery` now refuses anything `Number.isSafeInteger` rejects.
+  it('400s an offset outside the bigint range instead of faulting the query', async () => {
+    const res = await body('?offset=1e30')
+    expect(res.status).toBe(400)
+    expect(res.json.error).toBe('bad_filter')
+    expect(res.json.param).toBe('offset')
+  }, DB_TIMEOUT)
+
+  // Ruling R69, gate 1: the queue used to project `d.created_at::text`, which emits
+  // DateStyle text (`2026-11-04 10:04:01.133009+00`) and is only right while the
+  // session holds `ISO, MDY`. Every other timestamp route ships ISO-8601.
+  it('sends createdAt as an ISO-8601 instant, not DateStyle text', async () => {
+    const doc = await seedInvoice(server.db, { total: '10.00' })
+    await setStatus(doc, 'needs_review')
+    await setCreated(doc, '2026-08-01T12:34:56.789Z')
+
+    const { json } = await body()
+    const mine = json.items.find((i) => i.documentId === doc)
+    expect(mine).toBeDefined()
+    const createdAt = mine!.createdAt
+    expect(createdAt).toBe('2026-08-01T12:34:56.789Z')
+    expect(createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
+    expect(createdAt).not.toContain(' ')
   }, DB_TIMEOUT)
 })
 
@@ -228,6 +274,75 @@ describe('GET /review-queue membership', () => {
     await server.db.query("UPDATE documents SET kind = 'other', status = 'needs_review' WHERE id = $1", [doc])
     expect((await body()).json.total).toBe(0)
   }, DB_TIMEOUT)
+
+  // Ruling R69, ride-along 5: `NULLIF(kv.value, 'null'::jsonb)` inside the page's
+  // scalar subquery is the only thing standing between one null in a field map and a
+  // `cannot cast jsonb null to type numeric` that 500s the entire queue for the tenant.
+  it('serves a queue whose member holds a jsonb null in its field map', async () => {
+    const doc = await seedInvoice(server.db, { total: '10.00' })
+    await setStatus(doc, 'needs_review')
+    await setRawConfidence(doc, { vendorName: null })
+
+    const res = await queue()
+    expect(res.status).toBe(200)
+    const json = (await res.json()) as QueueBody
+    const mine = json.items.find((i) => i.documentId === doc)
+    expect(mine).toBeDefined()
+    expect(mine!.lowestFieldConfidence).toBeNull()
+  }, DB_TIMEOUT)
+
+  // A null next to real numbers must not become the lowest, and must not poison the
+  // MIN() either: the guard drops the null and the numbers still rank.
+  it('reads lowest field confidence through a mixed null and number field map', async () => {
+    const doc = await seedInvoice(server.db, { total: '10.00' })
+    await setStatus(doc, 'ready')
+    await addFinding(doc, 'invoice.total.sum', 'total', 'error')
+    await setRawConfidence(doc, { vendorName: null, total: 0.42 })
+
+    const { json } = await body()
+    expect(json.items.find((i) => i.documentId === doc)!.lowestFieldConfidence).toBe(0.42)
+  }, DB_TIMEOUT)
+})
+
+// Ruling R69, ride-along 6: severity is an attribute of findings, not of queue
+// membership. The two cases below pin what the plan and spec leave silent: a
+// status-only queue member vanishes under any severity filter, and one whose only open
+// finding is of the other severity vanishes under the filter it does not match. Both
+// are decided as correct, because `total` and the chips stay honest. Not a bug report:
+// if this changes, R69 is being reopened.
+describe('GET /review-queue severity filter reads findings (ruling R69)', () => {
+  beforeEach(async () => {
+    await wipe()
+  }, DB_TIMEOUT)
+
+  it('hides a warning-only needs_review document from severity=error', async () => {
+    const doc = await seedInvoice(server.db, { total: '10.00' })
+    await setStatus(doc, 'needs_review')
+    await addFinding(doc, 'invoice.currency.shape', 'currency', 'warning')
+
+    const all = await body()
+    expect(all.json.total).toBe(1)
+    expect(idsOf(all.json)).toEqual([doc])
+    expect(all.json.items[0]!.reasons).toContain('needs review')
+
+    const errors = await body('?severity=error')
+    expect(errors.json.total).toBe(0)
+    expect(errors.json.items).toEqual([])
+
+    expect((await body('?severity=warning')).json.total).toBe(1)
+  }, DB_TIMEOUT)
+
+  it('hides a needs_review document with no findings from any severity filter', async () => {
+    const doc = await seedInvoice(server.db, { total: '10.00' })
+    await setStatus(doc, 'needs_review')
+
+    expect((await body()).json.total).toBe(1)
+    expect((await body('?severity=error')).json.total).toBe(0)
+    expect((await body('?severity=warning')).json.total).toBe(0)
+    // The chip that names the reason it is queued cannot survive the filter, which is
+    // the whole decision: the document is still there unfiltered.
+    expect(idsOf((await body('?kind=invoice')).json)).toEqual([doc])
+  }, DB_TIMEOUT)
 })
 
 describe('GET /review-queue visibility', () => {
@@ -251,7 +366,61 @@ describe('GET /review-queue visibility', () => {
     const doc = await seedInvoice(server.db, { total: '10.00' }, TENANT, OWNER, customer)
     await setStatus(doc, 'needs_review')
 
-    expect(idsOf((await body('', asUser(LOOKER, 'admin'))).json)).toEqual([doc])
+    const { json } = await body('', asUser(LOOKER, 'admin'))
+    expect(idsOf(json)).toEqual([doc])
+    expect(json.total).toBe(1)
+    expect(json.items).toHaveLength(1)
+  }, DB_TIMEOUT)
+
+  // Ruling R69, ride-along 7c: the two arms of the `user` half of `docVisibility`
+  // (src/db/visibility.ts:25-30) are what this rule is actually for, and neither was
+  // pinned. Collapsing the branch to `tenant_id AND owner_id` — which silently revokes
+  // shared and customer-less documents from listDocuments, getDocument, sumInvoices and
+  // reviewDocument — passed this file. Both documents below belong to OWNER, so the only
+  // way LOOKER can read them is the arm each case names.
+  it('shows a user the team-shared and customer-less documents of another member', async () => {
+    const shared = await seedCustomer('Queue Team Shared Customer', OWNER, [LOOKER])
+    const sharedDoc = await seedInvoice(server.db, { total: '10.00' }, TENANT, OWNER, shared)
+    const loneDoc = await seedInvoice(server.db, { total: '20.00' }, TENANT, OWNER, null)
+    for (const d of [sharedDoc, loneDoc]) await setStatus(d, 'needs_review')
+
+    const asOwner = (await body('', asUser(OWNER, 'user'))).json
+    expect(idsOf(asOwner).sort()).toEqual([sharedDoc, loneDoc].sort())
+    expect(asOwner.total).toBe(2)
+
+    const { json } = await body('', asUser(LOOKER, 'user'))
+    expect(json.total).toBe(2)
+    expect(idsOf(json).sort()).toEqual([sharedDoc, loneDoc].sort())
+  }, DB_TIMEOUT)
+
+  // Ruling R69, ride-along 7d: the admin COUNT is bound from `params.slice(0, firstFilter + 1)`
+  // (src/db/validation.ts) precisely because an admin has one visibility parameter and a
+  // user has two. No admin case applied a filter, so that slice had no cover on the branch
+  // it was written for. Here the filtered totals and the filtered pages have to agree.
+  it('agrees between the filtered admin COUNT and the filtered admin page', async () => {
+    const inv = await seedInvoice(server.db, { total: '10.00' }, TENANT, OWNER, null)
+    const con = await seedInvoice(server.db, { total: '20.00' }, TENANT, OWNER, null)
+    for (const d of [inv, con]) await setStatus(d, 'ready')
+    await addFinding(inv, 'invoice.total.sum', 'total', 'error')
+    await server.db.query("UPDATE documents SET kind = 'contract' WHERE id = $1", [con])
+    await addFinding(con, 'contract.value.present', 'contract_value', 'error')
+
+    const admin = asUser(LOOKER, 'admin')
+    for (const [query, expected] of [
+      ['?kind=contract', [con]],
+      ['?kind=invoice', [inv]],
+      ['?kind=contract&severity=error', [con]],
+      ['?kind=contract&severity=warning', []],
+    ] as [string, string[]][]) {
+      const { json } = await body(query, admin)
+      expect(idsOf(json).sort()).toEqual([...expected].sort())
+      expect(json.total).toBe(expected.length)
+      expect(json.items).toHaveLength(expected.length)
+    }
+
+    const userSide = await body('?kind=contract', asUser(OWNER, 'user'))
+    expect(userSide.json.total).toBe(1)
+    expect(idsOf(userSide.json)).toEqual([con])
   }, DB_TIMEOUT)
 })
 
@@ -338,8 +507,50 @@ describe('GET /review-queue paging', () => {
     const page3 = await body('?limit=2&offset=4')
     expect(all.json.total).toBe(5)
     expect(page1.json.total).toBe(5)
+    // Ride-along 7b: a page's shape has to be a page. Without these three lines an
+    // implementation that ignored `limit` and `offset` and returned all five rows on
+    // every call still passed the assertions below.
+    expect(page1.json.items).toHaveLength(2)
+    expect(page2.json.items).toHaveLength(2)
+    expect(page3.json.items).toHaveLength(1)
     const seen = [...page1.json.items, ...page2.json.items, ...page3.json.items].map((i) => i.documentId)
     expect(new Set(seen).size).toBe(5)
+  }, DB_TIMEOUT)
+
+  // Ride-along 3: `d.created_at ASC` is not a total order. Five separate autocommit
+  // INSERTs above always get distinct transaction `now()` values, so this file could
+  // never build a tie; this case does, on all three keys the ORDER BY reads before
+  // `d.id`. Without the `d.id ASC` tiebreaker the two pages are ordered arbitrarily and
+  // a row can appear twice while another is dropped.
+  it('pages a three-way tie without overlap or loss', async () => {
+    const tied = ['2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z']
+    const docs: string[] = []
+    for (const at of tied) {
+      const doc = await seedInvoice(server.db, { total: '10.00' })
+      await setStatus(doc, 'ready')
+      await addFinding(doc, 'invoice.total.sum', 'total', 'error')
+      await setConfidence(doc, { vendorName: 0.5 })
+      await setCreated(doc, at)
+      docs.push(doc)
+    }
+    const expected = [...docs].sort()
+
+    const all = await body()
+    expect(all.json.total).toBe(3)
+    expect(idsOf(all.json)).toEqual(expected)
+
+    const pages = [
+      await body('?limit=1&offset=0'),
+      await body('?limit=1&offset=1'),
+      await body('?limit=1&offset=2'),
+    ]
+    for (const page of pages) {
+      expect(page.json.total).toBe(3)
+      expect(page.json.items).toHaveLength(1)
+    }
+    const seen = pages.flatMap((p) => idsOf(p.json))
+    expect(seen).toEqual(expected)
+    expect(new Set(seen).size).toBe(3)
   }, DB_TIMEOUT)
 
   it('filters by severity and by kind', async () => {

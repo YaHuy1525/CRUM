@@ -22,6 +22,7 @@ import { setAuditContext } from '../db/audit-context'
 import { CONFIDENCE_THRESHOLD, MAX_DOCUMENT_BYTES } from '../mastra/workflows/document-intake'
 import type { DocumentJobData } from '../queue/document-queue'
 import { getDbClient } from '../db/client'
+import { toIsoString } from '../db/timestamps'
 import type { PoolClient } from 'pg'
 import {
   listViolations,
@@ -107,14 +108,18 @@ function toQueueItem(row: ReviewQueueRow): ReviewQueueItem {
     openErrors: row.open_errors,
     openWarnings: row.open_warnings,
     reasons,
-    createdAt: row.created_at,
+    createdAt: toIsoString(row.created_at, 'review_queue.created_at'),
   }
 }
 
+// `offset` and `limit` become SQL parameters bound to a bigint, and `pg` cannot bind
+// a value outside bigint's range. `Number.isInteger(1e30)` is true, so that test let
+// a client typo through to a Postgres range error and a 500; a safe integer is what
+// the parameter can actually hold, so anything else is answered 400 here.
 function intQuery(raw: string | undefined, fallback: number): number | null {
   if (raw === undefined || raw === '') return fallback
   const n = Number(raw)
-  return Number.isInteger(n) ? n : null
+  return Number.isSafeInteger(n) ? n : null
 }
 
 export async function runValidationForDocument(
