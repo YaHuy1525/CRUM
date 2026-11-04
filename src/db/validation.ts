@@ -250,10 +250,13 @@ export async function reviewQueue(
     // parameters of each prepared statement separately.
     params.slice(0, firstFilter + 1),
   )
-  // The page, not the membership test: `created_at` goes out bare so `pg` parses the
-  // `timestamptz` into a `Date` and the route normalises it (ruling R69), and lowest
-  // field confidence is expanded per surviving row here rather than for the whole
-  // tenant in the shared `from` fragment, which the COUNT would pay for too.
+  // The page paid for this, and only the page. `created_at` goes out bare so `pg`
+  // parses the `timestamptz` into a `Date` and the route normalises it (ruling R69),
+  // and lowest field confidence is now expanded per surviving row here instead of over
+  // every invoice and contract of the tenant in the shared `from` fragment. Measured
+  // with `EXPLAIN` on both shapes: the count plan holds an Aggregate over a Seq Scan and
+  // no Function Scan at all, because Postgres removes an unreferenced left join to a
+  // unique key, so the COUNT never paid the expansion the page did.
   const pageResult = await client.query<ReviewQueueRow>(
     `SELECT d.id AS document_id, d.title, d.kind, d.status, d.confidence,
             d.created_at,
