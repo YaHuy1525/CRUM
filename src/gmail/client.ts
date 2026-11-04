@@ -353,6 +353,28 @@ export async function createGmailDraft(
   return { id: json.id }
 }
 
+/**
+ * Send an email directly (not as a draft). Uses the same RFC 2822 encoding
+ * as createGmailDraft but posts to /messages/send instead of /drafts.
+ * Returns the message id and thread id for tracking.
+ */
+export async function sendEmail(
+  accessToken: string,
+  message: { to: string; subject: string; body: string; threadId?: string },
+): Promise<{ id: string; threadId: string }> {
+  const raw = encodeRfc2822(message)
+  const body: { raw: string; threadId?: string } = { raw }
+  if (message.threadId) body.threadId = message.threadId
+  const res = await gmailFetch(accessToken, '/messages/send', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const json = (await res.json()) as { id?: string; threadId?: string }
+  if (!json.id) throw new GmailApiError('gmail messages.send returned no id', 500)
+  return { id: json.id, threadId: json.threadId ?? '' }
+}
+
 
 export interface InboundMessage {
   id: string

@@ -29,6 +29,9 @@ export const MUTATING_TOOL_IDS = [
   'marketing.promote_bundle',
   'marketing.retry_publish',
   'marketing.set_campaign_status',
+  'notifications.send_slack',
+  'billing.create_checkout',
+  'billing.cancel_subscription',
 ]
 
 export const MUTATING_TOOLS = new Set(MUTATING_TOOL_IDS.map(providerToolName))

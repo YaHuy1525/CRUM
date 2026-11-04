@@ -41,6 +41,8 @@ import {
   generateAssetsTool,
   setCampaignStatusTool,
 } from './tools/marketing-writes'
+import { sendSlackTool } from './tools/notifications'
+import { createCheckoutTool, getSubscriptionTool, cancelSubscriptionTool } from './tools/billing'
 import { approvalFlow } from './workflows/approval-flow'
 import { resolveActiveTools, providerToolName } from './active-tools'
 import { CRUM_MAIN_MODEL, CRUM_LIGHT_MODEL } from './models'
@@ -95,6 +97,10 @@ export const crumToolRegistry = {
   'marketing.retry_publish': retryPublishTool,
   'marketing.generate_assets': generateAssetsTool,
   'marketing.set_campaign_status': setCampaignStatusTool,
+  'notifications.send_slack': sendSlackTool,
+  'billing.create_checkout': createCheckoutTool,
+  'billing.get_subscription': getSubscriptionTool,
+  'billing.cancel_subscription': cancelSubscriptionTool,
 }
 
 export const crmAssistant = new Agent({

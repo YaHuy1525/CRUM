@@ -60,6 +60,9 @@ const APPROVAL_TOOLS = [
   'marketing.promote_bundle',
   'marketing.retry_publish',
   'marketing.set_campaign_status',
+  'notifications.send_slack',
+  'billing.create_checkout',
+  'billing.cancel_subscription',
 ]
 
 // Never callable, regardless of role:
@@ -69,7 +72,7 @@ const APPROVAL_TOOLS = [
 const NEVER_CALLABLE = ['run.side-effect', 'crm.bulk_import']
 
 const USER_EXPECTED = [...READ_ONLY_TOOLS, ...AUTO_TOOLS] // 29
-const ADMIN_EXPECTED = [...READ_ONLY_TOOLS, ...AUTO_TOOLS, ...APPROVAL_TOOLS] // 42
+const ADMIN_EXPECTED = [...READ_ONLY_TOOLS, ...AUTO_TOOLS, ...APPROVAL_TOOLS] // 45
 
 describe('resolveActiveTools', () => {
   it('gives a non-admin the read-only + auto tools (29)', () => {
@@ -78,9 +81,9 @@ describe('resolveActiveTools', () => {
     expect(active.slice().sort()).toEqual(USER_EXPECTED.slice().sort())
   })
 
-  it('gives an admin the approval-class writes too (42)', () => {
+  it('gives an admin the approval-class writes too (45)', () => {
     const active = resolveActiveTools({ ...baseContext, userRole: 'admin' })
-    expect(active).toHaveLength(42)
+    expect(active).toHaveLength(45)
     expect(active.slice().sort()).toEqual(ADMIN_EXPECTED.slice().sort())
   })
 
@@ -105,7 +108,7 @@ describe('resolveActiveTools', () => {
 
   it('tool names all come from the policy registry', () => {
     const active = resolveActiveTools({ ...baseContext, userRole: 'admin' })
-    for (const name of active) expect(name).toMatch(/^(crm|knowledge|mail|doc|revenue|marketing)\./)
+    for (const name of active) expect(name).toMatch(/^(crm|knowledge|mail|doc|revenue|marketing|notifications|billing)\./)
   })
 })
 
@@ -140,7 +143,7 @@ describe('providerToolName', () => {
 
   it('leaves no dotted id in the list the agent hands the model', () => {
     const providerNames = resolveActiveTools({ ...baseContext, userRole: 'admin' }).map(providerToolName)
-    expect(providerNames).toHaveLength(42)
+    expect(providerNames).toHaveLength(45)
     for (const name of providerNames) {
       expect(name).not.toContain('.')
       expect(name).toMatch(/^[a-zA-Z][a-zA-Z0-9_-]{0,62}$/)

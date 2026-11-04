@@ -54,6 +54,9 @@ const SPEC_TOOL_SURFACE: ReadonlyArray<readonly [name: string, klass: string, id
   ['marketing.promote_bundle', 'approval', 'siteHash'],
   ['marketing.retry_publish', 'approval', 'actionId'],
   ['marketing.set_campaign_status', 'approval', 'draftHash'],
+  ['notifications.send_slack', 'approval', 'actionHash'],
+  ['billing.create_checkout', 'approval', 'actionHash'],
+  ['billing.cancel_subscription', 'approval', 'actionId'],
 ]
 
 /**
@@ -92,7 +95,7 @@ describe('tools.yaml conforms to §4.6.2', () => {
     expect(extra).toEqual([])
   })
 
-  it('has exactly the forty-three spec tools plus run.side-effect', () => {
+  it('has exactly the forty-six spec tools plus run.side-effect', () => {
     expect(policy.tools.tools).toHaveLength(SPEC_TOOL_SURFACE.length + TEMPLATE_TOOLS.size)
   })
 })

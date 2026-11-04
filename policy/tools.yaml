@@ -285,6 +285,27 @@ tools:
     idempotent: true
     idempotency_key: draftHash
 
+  - name: notifications.send_slack
+    description: Send a notification message to the configured Slack channel. Informational only.
+    scope: notifications:slack
+    class: approval
+    idempotent: true
+    idempotency_key: actionHash
+
+  - name: billing.create_checkout
+    description: Create a Stripe checkout session for one plan tier. Moves money when the customer pays.
+    scope: billing:checkout
+    class: approval
+    idempotent: true
+    idempotency_key: actionHash
+
+  - name: billing.cancel_subscription
+    description: Cancel one Stripe subscription at the end of the current period.
+    scope: billing:cancel
+    class: approval
+    idempotent: true
+    idempotency_key: actionId
+
   # ── workflow side effects (1) ──────────────────────────────
   - name: run.side-effect
     description: Any workflow side effect (scope template `{workflow}:{step}`).

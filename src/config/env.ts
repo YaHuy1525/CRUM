@@ -249,6 +249,29 @@ export const EnvSchema = z.object({
       .uuid('CRUM_ANALYST_USER_ID must be a uuid, the shape pending_writes.requested_by needs')
       .optional(),
   ),
+  // Slack notifications. Bot token for a single workspace (no OAuth needed).
+  // Blank means unset; notifications stay unmapped and the tool refuses at call time.
+  CRUM_SLACK_BOT_TOKEN: z.preprocess(
+    blankAsUnset,
+    z.string().trim().min(10, 'must look like a Slack bot token').optional(),
+  ),
+  CRUM_SLACK_CHANNEL: z.preprocess(
+    blankAsUnset,
+    z.string().trim().min(1).optional(),
+  ),
+  // Stripe billing. The secret key is required for any billing tool to work;
+  // webhook secret and price ids are per-tier and optional until that tier is sold.
+  CRUM_STRIPE_SECRET_KEY: z.preprocess(
+    blankAsUnset,
+    z.string().trim().min(10).optional(),
+  ),
+  CRUM_STRIPE_WEBHOOK_SECRET: z.preprocess(
+    blankAsUnset,
+    z.string().trim().min(10).optional(),
+  ),
+  CRUM_STRIPE_PRICE_ID_BASIC: z.preprocess(blankAsUnset, z.string().trim().min(3).optional()),
+  CRUM_STRIPE_PRICE_ID_AGENCY: z.preprocess(blankAsUnset, z.string().trim().min(3).optional()),
+  CRUM_STRIPE_PRICE_ID_ENTERPRISE: z.preprocess(blankAsUnset, z.string().trim().min(3).optional()),
 })
 
 export type CrumEnv = z.infer<typeof EnvSchema>
