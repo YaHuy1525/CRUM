@@ -11,6 +11,10 @@ const HEADERS = {
   'content-type': 'application/json',
 }
 
+// Same reason as `tests/api/document-correction.test.ts:8`: the seeding and each engine run are
+// many sequential queries over the remote pooler, so a case can exceed vitest's 5000 ms default.
+const DB_TIMEOUT = 30_000
+
 let server: TestServer
 let documentId: string
 
@@ -112,13 +116,13 @@ async function openFindingOf(docId: string): Promise<string> {
 describe('GET /:id/validation', () => {
   it('refuses a non-uuid id with 400', async () => {
     expect((await get('/nope/validation')).status).toBe(400)
-  })
+  }, DB_TIMEOUT)
   it('404s a document that is not this tenant', async () => {
     const res = await server.fetch('/api/documents/' + documentId + '/validation', {
       headers: { ...HEADERS, 'x-tenant-id': '00000000-0000-4000-8000-000000000077' },
     })
     expect(res.status).toBe(404)
-  })
+  }, DB_TIMEOUT)
 })
 
 describe('POST /:id/validation', () => {
@@ -129,13 +133,13 @@ describe('POST /:id/validation', () => {
     expect(body.rulesetVersion).toBe('v1')
     expect(body.violations.map((v) => v.ruleId)).toContain('invoice.total.sum')
     expect((await get('/' + documentId + '/validation')).ok).toBe(true)
-  })
+  }, DB_TIMEOUT)
   it('a second run does not double the rows', async () => {
     await post('/' + documentId + '/validation')
     const before = (await (await get('/' + documentId + '/validation')).json() as { violations: unknown[] }).violations.length
     await post('/' + documentId + '/validation')
     expect((await (await get('/' + documentId + '/validation')).json() as { violations: unknown[] }).violations.length).toBe(before)
-  })
+  }, DB_TIMEOUT)
 })
 
 describe('POST /:id/validation/:violationId/waive', () => {
@@ -143,7 +147,7 @@ describe('POST /:id/validation/:violationId/waive', () => {
     const [row] = (await (await get('/' + documentId + '/validation')).json() as { violations: Array<{ id: string }> }).violations
     expect((await post('/' + documentId + '/validation/' + row!.id + '/waive', { reason: 'oops' })).status).toBe(400)
     expect((await post('/' + documentId + '/validation/' + row!.id + '/waive', {})).status).toBe(400)
-  })
+  }, DB_TIMEOUT)
   it('waives, then 409s a second attempt', async () => {
     const [row] = (await (await get('/' + documentId + '/validation')).json() as { violations: Array<{ id: string }> }).violations
     const ok = await post('/' + documentId + '/validation/' + row!.id + '/waive', {
@@ -154,14 +158,14 @@ describe('POST /:id/validation/:violationId/waive', () => {
     expect((await post('/' + documentId + '/validation/' + row!.id + '/waive', {
       reason: 'trying to waive it a second time',
     })).status).toBe(409)
-  })
+  }, DB_TIMEOUT)
   it('404s a violation belonging to another tenant', async () => {
     const res = await server.fetch(
       '/api/documents/' + documentId + '/validation/00000000-0000-4000-8000-000000000000/waive',
       { method: 'POST', headers: HEADERS, body: JSON.stringify({ reason: 'a long enough reason' }) },
     )
     expect(res.status).toBe(404)
-  })
+  }, DB_TIMEOUT)
 })
 
 describe('H3, the detail responses stop leaking internal join columns', () => {
@@ -188,7 +192,7 @@ describe('H3, the detail responses stop leaking internal join columns', () => {
       expect(res.status).toBe(200)
       expect(await res.text()).not.toMatch(/invoice_field_confidence|contract_field_confidence/)
     }
-  })
+  }, DB_TIMEOUT)
 })
 
 describe('a waiver is bound to the document named in its own path', () => {
@@ -220,7 +224,7 @@ describe('a waiver is bound to the document named in its own path', () => {
     const after = await (await get('/' + other + '/validation'))
       .json() as { violations: Array<{ id: string; status: string }> }
     expect(after.violations.find((v) => v.id === foreignFinding)?.status).toBe('open')
-  })
+  }, DB_TIMEOUT)
 
   it('refuses a non-string reason with 400 rather than a 500 crash', async () => {
     const finding = await openFindingOf(documentId)
@@ -230,7 +234,7 @@ describe('a waiver is bound to the document named in its own path', () => {
     )
     expect(res.status).toBe(400)
     expect((await res.json() as { error: string }).error).toBe('reason_required')
-  })
+  }, DB_TIMEOUT)
 
   it('omits openErrors when the re-run measured nothing', async () => {
     const doc = await seedOtherDocument(server.db)
@@ -244,5 +248,5 @@ describe('a waiver is bound to the document named in its own path', () => {
     const body = await res.json() as { violation: { status: string }; openErrors?: number }
     expect(body.violation.status).toBe('waived')
     expect(body).not.toHaveProperty('openErrors')
-  })
+  }, DB_TIMEOUT)
 })
