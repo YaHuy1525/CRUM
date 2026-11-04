@@ -23,7 +23,7 @@ import { MAX_DOCUMENT_BYTES } from '../mastra/workflows/document-intake'
 import type { DocumentJobData } from '../queue/document-queue'
 import { getDbClient } from '../db/client'
 import type { PoolClient } from 'pg'
-import { listViolations, waiveViolation, replaceValidation, type StoredViolation } from '../db/validation'
+import { listViolations, waiveViolation, replaceValidation, type Q, type StoredViolation } from '../db/validation'
 import { evaluate, buildBundle, localDay, RULESET_VERSION } from '../validation/index'
 import { INVOICE_FIELDS, CONTRACT_FIELDS, isCorrectable } from '../validation/fields'
 import type { DocumentRecordBundle } from '../validation/types'
@@ -75,20 +75,28 @@ function toContractBundle(ctr: { header: ContractRow | null; terms: ContractTerm
   )
 }
 
-async function runValidationForDocument(
+export async function runValidationForDocument(
   identity: TenantRequestContext,
   documentId: string,
 ): Promise<{ openErrors: number; openWarnings: number; violations: StoredViolation[] } | null> {
-  const document = await getDocument(identity, documentId)
+  return runValidationForDocumentOn(getDbClient(), identity, documentId)
+}
+
+export async function runValidationForDocumentOn(
+  client: Q,
+  identity: TenantRequestContext,
+  documentId: string,
+): Promise<{ openErrors: number; openWarnings: number; violations: StoredViolation[] } | null> {
+  const document = await getDocument(identity, documentId, client)
   if (!document || (document.kind !== 'invoice' && document.kind !== 'contract')) return null
   const bundle = document.kind === 'invoice'
-    ? toInvoiceBundle(await getInvoice(identity, documentId))
-    : toContractBundle(await getContract(identity, documentId))
+    ? toInvoiceBundle(await getInvoice(identity, documentId, client))
+    : toContractBundle(await getContract(identity, documentId, client))
   const violations = evaluate(bundle, { today: localDay(new Date()) }).filter((v) => isCorrectable(v.field))
   const counts = await replaceValidation(
-    getDbClient(), documentId, identity.tenantId, violations, RULESET_VERSION,
+    client, documentId, identity.tenantId, violations, RULESET_VERSION,
   )
-  return { ...counts, violations: await listViolations(documentId, identity.tenantId) }
+  return { ...counts, violations: await listViolations(documentId, identity.tenantId, client) }
 }
 
 let defaultQueue: Promise<DocumentQueueLike> | null = null
@@ -483,6 +491,7 @@ export function createDocumentsRouter(deps: DocumentsRouterDeps): Hono {
     const body = await c.req.json<CorrectionBody>()
     const identity = gate.identity
 
+    if (!docId) return c.json({ error: 'id is required' }, 400)
     if (!field || !allowedFields.includes(field)) {
       return c.json({ error: `Field not correctable: '${field}'` }, 400)
     }
@@ -504,20 +513,45 @@ export function createDocumentsRouter(deps: DocumentsRouterDeps): Hono {
       await client.query('BEGIN')
       await setAuditContext(client, { userId: identity.userId, changeSource: 'manual_correction' })
 
+      // The watermark is read before the UPDATE: the trigger's now() is this transaction's
+      // start time, so the only row newer than the pre-update maximum is the one we are about
+      // to write. The ::text cast is load-bearing: node-pg truncates a timestamptz to
+      // milliseconds, and an older row with a microsecond tail would then compare newer than
+      // the truncated watermark and get re-stamped — the exact H2 defect.
+      const watermark = await client.query<{ at: string | null }>(
+        `SELECT MAX(changed_at)::text AS at FROM document_field_audit
+         WHERE document_id = $1 AND tenant_id = $2 AND field_name = $3`,
+        [docId, identity.tenantId, field],
+      )
+
       await client.query(
         `UPDATE ${tableName} SET ${field} = $1 WHERE document_id = $2`,
         [body.value, docId],
       )
 
       if (body.reason) {
+        const at = watermark.rows[0]?.at ?? null
+        const stamped = await client.query<{ id: string }>(
+          at === null
+            ? `SELECT id FROM document_field_audit WHERE document_id = $1 AND tenant_id = $2 AND field_name = $3`
+            : `SELECT id FROM document_field_audit
+               WHERE document_id = $1 AND tenant_id = $2 AND field_name = $3 AND changed_at > $4`,
+          at === null ? [docId, identity.tenantId, field] : [docId, identity.tenantId, field, at],
+        )
         await client.query(
-          `UPDATE document_field_audit SET reason = $1 WHERE document_id = $2 AND field_name = $3 AND changed_at = (SELECT MAX(changed_at) FROM document_field_audit WHERE document_id = $2 AND field_name = $3)`,
-          [body.reason, docId, field],
+          `UPDATE document_field_audit SET reason = $1 WHERE id = ANY($2::uuid[])`,
+          [body.reason, stamped.rows.map((r) => r.id)],
         )
       }
 
+      const revalidated = await runValidationForDocumentOn(client, identity, docId)
       await client.query('COMMIT')
-      return c.json({ success: true })
+      return c.json({
+        success: true,
+        openErrors: revalidated?.openErrors ?? 0,
+        openWarnings: revalidated?.openWarnings ?? 0,
+        violations: revalidated?.violations ?? [],
+      })
     } catch (error) {
       await client.query('ROLLBACK')
       throw error

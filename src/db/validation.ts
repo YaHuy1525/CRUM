@@ -101,8 +101,12 @@ export async function replaceValidation(
   return { openErrors: of('error'), openWarnings: of('warning') }
 }
 
-export async function listViolations(documentId: string, tenantId: string): Promise<StoredViolation[]> {
-  const rows = await getDbClient().query<Record<string, unknown>>(
+export async function listViolations(
+  documentId: string,
+  tenantId: string,
+  client: Q = getDbClient(),
+): Promise<StoredViolation[]> {
+  const rows = await client.query<Record<string, unknown>>(
     `SELECT ${SELECT_COLUMNS} FROM document_validation
      WHERE document_id = $1 AND tenant_id = $2
      ORDER BY CASE severity WHEN 'error' THEN 0 ELSE 1 END, rule_id`,

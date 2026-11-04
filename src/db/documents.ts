@@ -1,5 +1,6 @@
 import { getDbClient } from './client'
 import type { TenantRequestContext } from '../mastra/tenant-context'
+import type { Q } from './validation'
 
 
 export interface DocumentRow {
@@ -152,9 +153,10 @@ function docVisibility(context: TenantRequestContext): { sql: string; params: un
   }
 }
 
-async function queryRows<T>(sql: string, params: unknown[]): Promise<T[]> {
-  const result = await getDbClient().query(sql, params)
-  return result.rows as T[]
+async function queryRows<T>(sql: string, params?: unknown[], client?: Q): Promise<T[]> {
+  const runner: Q = client ?? getDbClient()
+  const result = await runner.query<T>(sql, params)
+  return result.rows
 }
 
 export interface PersistDocumentInput {
@@ -438,6 +440,7 @@ export async function listDocuments(
 export async function getDocument(
   context: TenantRequestContext,
   id: string,
+  client?: Q,
 ): Promise<DocumentRow | null> {
   const vis = docVisibility(context)
   const params = [...vis.params, id]
@@ -445,7 +448,8 @@ export async function getDocument(
     invoice_field_confidence: Record<string, number> | null
     contract_field_confidence: Record<string, number> | null
   }
-  const result = await getDbClient().query<DocumentJoinRow>(
+  const runner: Q = client ?? getDbClient()
+  const result = await runner.query<DocumentJoinRow>(
     `SELECT d.id, d.tenant_id, d.owner_id, d.kind, d.title, d.source, d.source_ref, d.content_hash,
             d.mime, d.status, d.confidence, d.customer_id, d.created_at, d.updated_at,
             i.field_confidence as invoice_field_confidence,
@@ -485,14 +489,16 @@ export async function getDocumentKind(tenantId: string, documentId: string): Pro
 export async function getInvoice(
   context: TenantRequestContext,
   documentId: string,
+  client?: Q,
 ): Promise<{ header: InvoiceRow | null; lines: InvoiceLineRow[] }> {
-  const doc = await getDocument(context, documentId)
+  const doc = await getDocument(context, documentId, client)
   if (!doc) return { header: null, lines: [] }
   const [header, lines] = await Promise.all([
-    queryRows<InvoiceRow>(`SELECT * FROM invoices WHERE document_id = $1 LIMIT 1`, [documentId]),
+    queryRows<InvoiceRow>(`SELECT * FROM invoices WHERE document_id = $1 LIMIT 1`, [documentId], client),
     queryRows<InvoiceLineRow>(
       `SELECT * FROM invoice_lines WHERE document_id = $1 ORDER BY id ASC`,
       [documentId],
+      client,
     ),
   ])
   return { header: header[0] ?? null, lines }
@@ -501,14 +507,16 @@ export async function getInvoice(
 export async function getContract(
   context: TenantRequestContext,
   documentId: string,
+  client?: Q,
 ): Promise<{ header: ContractRow | null; terms: ContractTermRow[] }> {
-  const doc = await getDocument(context, documentId)
+  const doc = await getDocument(context, documentId, client)
   if (!doc) return { header: null, terms: [] }
   const [header, terms] = await Promise.all([
-    queryRows<ContractRow>(`SELECT * FROM contracts WHERE document_id = $1 LIMIT 1`, [documentId]),
+    queryRows<ContractRow>(`SELECT * FROM contracts WHERE document_id = $1 LIMIT 1`, [documentId], client),
     queryRows<ContractTermRow>(
       `SELECT * FROM contract_terms WHERE document_id = $1 ORDER BY start_offset ASC NULLS LAST, id ASC`,
       [documentId],
+      client,
     ),
   ])
   return { header: header[0] ?? null, terms }
