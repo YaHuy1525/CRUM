@@ -161,6 +161,14 @@ afterAll(async () => {
 }, DB_TIMEOUT)
 
 describe('GET /review-queue auth and filters', () => {
+  // Ruling R72: this was the only describe in the file without the wipe, and its ISO
+  // case below is the only case in it that seeds. Harmless today because that case finds
+  // its row with `.find()`, and a false pass the first time anyone asserts a `total`
+  // here, because whatever a previous file left in this tenant would be counted.
+  beforeEach(async () => {
+    await wipe()
+  }, DB_TIMEOUT)
+
   it('refuses a request with no identity headers', async () => {
     expect((await server.fetch('/api/documents/review-queue')).status).toBe(401)
   }, DB_TIMEOUT)
@@ -421,6 +429,16 @@ describe('GET /review-queue visibility', () => {
     const userSide = await body('?kind=contract', asUser(OWNER, 'user'))
     expect(userSide.json.total).toBe(1)
     expect(idsOf(userSide.json)).toEqual([con])
+
+    // Ruling R72: "the COUNT agrees with the page" is not "the COUNT is independent of
+    // the page". Every query in the loop above has a total of 0 or 1 and runs at the
+    // default limit of 50, so `rows.length === total` on all four of them and an
+    // implementation that reported `total: rows.length` would pass this case untouched.
+    // Two documents carry an open error here, so ask for one row and require the count
+    // to still say two.
+    const paged = await body('?severity=error&limit=1', admin)
+    expect(paged.json.total).toBe(2)
+    expect(paged.json.items).toHaveLength(1)
   }, DB_TIMEOUT)
 })
 
@@ -517,40 +535,80 @@ describe('GET /review-queue paging', () => {
     expect(new Set(seen).size).toBe(5)
   }, DB_TIMEOUT)
 
-  // Ride-along 3: `d.created_at ASC` is not a total order. Five separate autocommit
-  // INSERTs above always get distinct transaction `now()` values, so this file could
-  // never build a tie; this case does, on all three keys the ORDER BY reads before
-  // `d.id`. Without the `d.id ASC` tiebreaker the two pages are ordered arbitrarily and
-  // a row can appear twice while another is dropped.
-  it('pages a three-way tie without overlap or loss', async () => {
-    const tied = ['2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z']
+  // Ride-along 3, widened by ruling R72: `d.created_at ASC` is not a total order. Five
+  // separate autocommit INSERTs always get distinct transaction `now()` values, so the
+  // only way to build a tie is to write all three keys the ORDER BY reads before `d.id`
+  // by hand. Three tied rows made this a probabilistic detector: a mutant whose arbitrary
+  // tiebreak happens to be id ascending coincides with the expected order 1 time in 6.
+  // Six rows make that 1 in 720, and the second identical pass catches an ORDER BY that
+  // is unstable between requests yet looks whole inside a single pass.
+  it('pages a six-way tie without overlap or loss', async () => {
     const docs: string[] = []
-    for (const at of tied) {
+    for (let i = 0; i < 6; i++) {
       const doc = await seedInvoice(server.db, { total: '10.00' })
       await setStatus(doc, 'ready')
       await addFinding(doc, 'invoice.total.sum', 'total', 'error')
       await setConfidence(doc, { vendorName: 0.5 })
-      await setCreated(doc, at)
+      await setCreated(doc, '2026-09-01T00:00:00Z')
       docs.push(doc)
     }
     const expected = [...docs].sort()
 
     const all = await body()
-    expect(all.json.total).toBe(3)
+    expect(all.json.total).toBe(6)
     expect(idsOf(all.json)).toEqual(expected)
 
-    const pages = [
-      await body('?limit=1&offset=0'),
-      await body('?limit=1&offset=1'),
-      await body('?limit=1&offset=2'),
-    ]
-    for (const page of pages) {
-      expect(page.json.total).toBe(3)
-      expect(page.json.items).toHaveLength(1)
+    // Measured at 12.8s for the whole case (six seeds, one full page, two passes of three
+    // pages) against the pooler, which is inside the file's single DB_TIMEOUT allowance.
+    const passes: string[][] = []
+    for (let pass = 0; pass < 2; pass++) {
+      const seen: string[] = []
+      for (const offset of [0, 2, 4]) {
+        const page = await body(`?limit=2&offset=${offset}`)
+        expect(page.json.total).toBe(6)
+        expect(page.json.items).toHaveLength(2)
+        seen.push(...idsOf(page.json))
+      }
+      expect(seen).toEqual(expected)
+      expect(new Set(seen).size).toBe(6)
+      passes.push(seen)
     }
-    const seen = pages.flatMap((p) => idsOf(p.json))
-    expect(seen).toEqual(expected)
-    expect(new Set(seen).size).toBe(3)
+    expect(passes[0]).toEqual(passes[1])
+  }, DB_TIMEOUT)
+
+  // Ruling R72: the `user` half of `docVisibility` (src/db/visibility.ts:25-30) binds two
+  // parameters, so on that branch every later placeholder is numbered from 3 — and neither
+  // the severity `EXISTS` nor `limit`/`offset` had ever been sent there. The existing
+  // `?kind=contract`-as-`user` request pins `$2`-derived numbering for the kind filter
+  // alone; hard-coding or swapping the severity and paging placeholders was free. One
+  // request carrying all three makes each of them a wrong page rather than a coincidence.
+  it('binds severity, limit and offset on the two-parameter user branch', async () => {
+    // Both documents hang off one customer owned by OWNER and shared with nobody, so the
+    // actor parameter is what decides visibility here: a customer-less document would be
+    // readable by every member of the tenant (the R69 arm pinned above) and the empty page
+    // below would prove nothing.
+    const customer = await seedCustomer('Queue Paging Customer', OWNER)
+    const older = await seedInvoice(server.db, { total: '10.00' }, TENANT, OWNER, customer)
+    const newer = await seedInvoice(server.db, { total: '20.00' }, TENANT, OWNER, customer)
+    for (const d of [older, newer]) {
+      await setStatus(d, 'ready')
+      await addFinding(d, 'invoice.total.sum', 'total', 'error')
+    }
+    await setCreated(older, '2026-08-01T00:00:00Z')
+    await setCreated(newer, '2026-08-02T00:00:00Z')
+
+    // Equal error counts and no field maps, so the tier's remaining key is created_at and
+    // offset 1 names a specific row rather than whichever row the database felt like.
+    const { json } = await body('?severity=error&limit=1&offset=1', asUser(OWNER, 'user'))
+    expect(json.total).toBe(2)
+    expect(json.items).toHaveLength(1)
+    expect(idsOf(json)).toEqual([newer])
+
+    // The same request as a member who owns neither document and shares no customer with
+    // OWNER: the paging arms must not be able to widen what visibility removed.
+    const empty = await body('?severity=error&limit=1&offset=1', asUser(LOOKER, 'user'))
+    expect(empty.json.total).toBe(0)
+    expect(empty.json.items).toEqual([])
   }, DB_TIMEOUT)
 
   it('filters by severity and by kind', async () => {
