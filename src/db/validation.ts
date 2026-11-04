@@ -191,8 +191,18 @@ export interface ReviewQueueRow {
 // Only the finding-count aggregate is joined here, because the `WHERE` block below
 // reads it. Lowest field confidence is not a membership clause, so it is computed
 // per row in the page's select list instead of over every invoice and contract of
-// the tenant in a derived table this shared fragment would have to carry into the
-// COUNT as well (ruling R69).
+// the tenant in a derived table: `EXPLAIN` on the shipped count shows that table
+// never reached the COUNT anyway, because Postgres removes an unreferenced left join
+// to a provably unique key, but the page expanded the tenant once per row returned
+// (ruling R69, corrected after measurement).
+//
+// Ruling R69 also decides what the severity clause does to membership, and the
+// decision lives here rather than inside the SQL text because a `--` comment in a
+// fragment that callers concatenate is one whitespace-flattener away from swallowing
+// both statements. Severity is an attribute of findings, not of queue membership, so
+// a `needs_review` document whose only open finding is of the other severity, or whose
+// only reason to be queued is its status, is correctly hidden by this clause. Pinned by
+// tests/api/review-queue.test.ts rather than changed.
 function queueFrom(
   visibilitySql: string,
   kindRef: string,
@@ -212,10 +222,6 @@ function queueFrom(
     AND d.kind IN ('invoice', 'contract')
     AND (${kindRef}::text IS NULL OR d.kind = ${kindRef})
     AND (d.status = 'needs_review' OR COALESCE(c.errors, 0) + COALESCE(c.warnings, 0) > 0)
-    -- Ruling R69: severity is an attribute of findings, not of queue membership, so a
-    -- needs_review document whose only open finding is of the other severity, or whose
-    -- only reason to be queued is its status, is correctly hidden by this clause.
-    -- Pinned by tests/api/review-queue.test.ts rather than changed.
     AND (${severityRef}::text IS NULL OR EXISTS (
       SELECT 1 FROM document_validation s
       WHERE s.document_id = d.id AND s.tenant_id = $1
@@ -254,9 +260,11 @@ export async function reviewQueue(
   // parses the `timestamptz` into a `Date` and the route normalises it (ruling R69),
   // and lowest field confidence is now expanded per surviving row here instead of over
   // every invoice and contract of the tenant in the shared `from` fragment. Measured
-  // with `EXPLAIN` on both shapes: the count plan holds an Aggregate over a Seq Scan and
-  // no Function Scan at all, because Postgres removes an unreferenced left join to a
-  // unique key, so the COUNT never paid the expansion the page did.
+  // with `EXPLAIN` on the shipped statement: the count plan keeps its join over the
+  // findings aggregate, because the membership `WHERE` reads `c.errors` and
+  // `c.warnings`, but it holds no `Function Scan` at all, because Postgres removes an
+  // unreferenced left join to a provably unique key. The page expanded the tenant once
+  // per row it returned.
   const pageResult = await client.query<ReviewQueueRow>(
     `SELECT d.id AS document_id, d.title, d.kind, d.status, d.confidence,
             d.created_at,
