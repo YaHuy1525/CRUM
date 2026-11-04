@@ -3,6 +3,7 @@ import { toIsoString } from './timestamps.js'
 import { docVisibility } from './visibility.js'
 import type { TenantRequestContext } from '../mastra/tenant-context.js'
 import type { Violation } from '../validation/types.js'
+import type { AuditExportRow } from '../api/audit-csv.js'
 
 export interface Q {
   query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<{ rows: T[] }>
@@ -487,4 +488,62 @@ export async function reviewAnalytics(
       correctionRate: r.correction_rate,
     })),
   }
+}
+
+const EXPORT_FIELDS = `
+  a.document_id::text,
+  d.title AS document_title,
+  a.table_name,
+  a.field_name,
+  a.action,
+  a.old_value #>> '{}' AS old_value,
+  a.new_value #>> '{}' AS new_value,
+  a.changed_by::text,
+  TO_CHAR(a.changed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS changed_at,
+  a.change_source,
+  a.reason
+`
+
+/**
+ * Ruling R68: takes the caller's `TenantRequestContext`, not a bare `tenantId`, because
+ * this route emits row content (`document_title`, `old_value`, `new_value`, `changed_by`,
+ * `reason`) and a tenant-only predicate would let any `user` download the whole tenant's
+ * correction history as a file — ruling R67's disclosure in bulk form. The SQL already
+ * does `JOIN documents d ON d.id = a.document_id`, so `docVisibility` costs one clause
+ * and no new import edge.
+ */
+export async function exportAuditRows(
+  context: TenantRequestContext,
+  window: AnalyticsWindow,
+  changeSource: string | null,
+  kind: 'invoice' | 'contract' | null,
+  max: number,
+): Promise<AuditExportRow[]> {
+  const vis = docVisibility(context)
+  // `docVisibility` names `$1` for the tenant in both branches and adds `$2` for the
+  // actor only in the `user` branch, so every placeholder after it is derived from
+  // its param count. Same arithmetic `reviewQueue` does at lines 235-239.
+  const p = vis.params.length
+  const params: unknown[] = [
+    ...vis.params,
+    window.from,
+    window.toExclusive,
+    changeSource,
+    kind,
+    max + 1,
+  ]
+  const result = await getDbClient().query<AuditExportRow>(
+    'SELECT ' + EXPORT_FIELDS + `
+       FROM document_field_audit a
+       JOIN documents d ON d.id = a.document_id
+      WHERE ${vis.sql}
+        AND a.tenant_id = $1
+        AND a.changed_at >= $${p + 1} AND a.changed_at < $${p + 2}
+        AND ($${p + 3}::text IS NULL OR a.change_source = $${p + 3})
+        AND ($${p + 4}::text IS NULL OR d.kind = $${p + 4})
+      ORDER BY a.changed_at DESC, a.id
+      LIMIT $${p + 5}`,
+    params,
+  )
+  return result.rows
 }

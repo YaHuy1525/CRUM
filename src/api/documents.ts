@@ -31,12 +31,15 @@ import {
   replaceValidation,
   reviewQueue,
   reviewAnalytics,
+  exportAuditRows,
   type AnalyticsWindow,
   type Q,
   type ReviewQueueItem,
   type ReviewQueueRow,
   type StoredViolation,
 } from '../db/validation'
+import { CHANGE_SOURCES } from '../db/audit-context'
+import { buildAuditCsv, MAX_EXPORT_ROWS } from './audit-csv'
 import { evaluate, buildBundle, localDay, RULESET_VERSION } from '../validation/index'
 import { parseDate } from '../validation/values'
 import { INVOICE_FIELDS, CONTRACT_FIELDS, isCorrectable } from '../validation/fields'
@@ -470,6 +473,51 @@ export function createDocumentsRouter(deps: DocumentsRouterDeps): Hono {
     const kindFilter = kind === 'invoice' || kind === 'contract' ? kind : null
 
     return c.json(await reviewAnalytics(tenantId, parsed.window, kindFilter))
+  })
+
+  // Ruling R68: visibility-scoped, not tenant-scoped. This route emits row content
+  // (`document_title`, `old_value`, `new_value`, `changed_by`, `reason`), so a tenant-only
+  // predicate would let any `user` download the whole tenant's correction history as a file.
+  // A `readonly` tuple has no `has`, and its `includes` will not accept a plain `string`,
+  // so the query parameter is tested against a Set built from the same list Task 2 exported.
+  const CHANGE_SOURCE_VALUES: ReadonlySet<string> = new Set(CHANGE_SOURCES)
+
+  app.get('/audit/export', async (c) => {
+    const gate = await auth(c)
+    if ('error' in gate) return gate.error
+    // No `tenantId` destructure. R68 passes the whole identity so the export carries the
+    // same visibility predicate the detail, queue and audit routes apply.
+
+    const parsed = parseAnalyticsWindow(c.req.query('from'), c.req.query('to'))
+    if (!parsed.ok) return c.json({ error: parsed.error, maxDays: MAX_WINDOW_DAYS }, 400)
+
+    const changeSource = c.req.query('change_source') ?? null
+    if (changeSource !== null && !CHANGE_SOURCE_VALUES.has(changeSource)) {
+      return c.json({ error: 'bad_filter', param: 'change_source' }, 400)
+    }
+    const kind = c.req.query('kind')
+    if (kind !== undefined && kind !== 'invoice' && kind !== 'contract') {
+      return c.json({ error: 'bad_filter', param: 'kind' }, 400)
+    }
+    const rawMax = intQuery(c.req.query('max'), MAX_EXPORT_ROWS)
+    if (rawMax === null || rawMax < 1) return c.json({ error: 'bad_filter', param: 'max' }, 400)
+    const cap = Math.min(MAX_EXPORT_ROWS, rawMax)
+
+    const rows = await exportAuditRows(
+      gate.identity, parsed.window, changeSource, kind === 'invoice' || kind === 'contract' ? kind : null, cap,
+    )
+    c.header('X-Export-Row-Cap', String(cap))
+    if (rows.length > cap) {
+      return c.json({ error: 'too_many_rows', max: cap }, 400)
+    }
+    if (rows.length === 0) return c.body(null, 204)
+
+    c.header('Content-Type', 'text/csv; charset=utf-8')
+    c.header(
+      'Content-Disposition',
+      'attachment; filename="field-audit-' + parsed.window.fromLabel + '-to-' + parsed.window.toLabel + '.csv"',
+    )
+    return c.body(buildAuditCsv(rows))
   })
 
   app.get('/:id', async (c) => {
