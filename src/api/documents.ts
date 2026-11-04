@@ -722,13 +722,16 @@ export function createDocumentsRouter(deps: DocumentsRouterDeps): Hono {
     const gate = await auth(c)
     if ('error' in gate) return gate.error
 
-    const docId = c.req.param('id')
+    // R58(b): the correction route was the only uuid-accepting route without an IdSchema
+    // guard on `:id`, so a malformed id 500ed where its siblings 400ed.
+    const idParse = IdSchema.safeParse(c.req.param('id'))
+    if (!idParse.success) return c.json({ error: 'id must be a uuid' }, 400)
+    const docId = idParse.data
     const field = c.req.param('field')
     const body = await c.req.json<CorrectionBody>()
     const reason = typeof body.reason === 'string' ? body.reason.trim() : ''
     const identity = gate.identity
 
-    if (!docId) return c.json({ error: 'id is required' }, 400)
     if (!field || !allowedFields.includes(field)) {
       return c.json({ error: `Field not correctable: '${field}'` }, 400)
     }
@@ -749,6 +752,17 @@ export function createDocumentsRouter(deps: DocumentsRouterDeps): Hono {
     try {
       await client.query('BEGIN')
       await setAuditContext(client, { userId: identity.userId, changeSource: 'manual_correction' })
+
+      // R58(a): lock the parent row BEFORE the watermark read, so two concurrent corrections
+      // of the same field on the same document serialize here. Without the lock, both
+      // transactions compute the same MAX(changed_at), both UPDATEs serialize on the row
+      // anyway, and the second transaction's stamp SELECT finds the first one's committed
+      // audit row and re-stamps it with the wrong reason. The interpolation stays behind
+      // the same literal-union table guard that already protects the UPDATE.
+      await client.query(
+        `SELECT 1 FROM ${tableName} WHERE document_id = $1 FOR UPDATE`,
+        [docId],
+      )
 
       // The watermark is read before the UPDATE: the trigger's now() is this transaction's
       // start time, so the only row newer than the pre-update maximum is the one we are about

@@ -173,6 +173,25 @@ describe('PATCH /api/documents/:id/invoices/:field', () => {
 
     expect(res.status).toBe(401)
   })
+
+  // R58(b): the correction route was the only uuid-accepting route without an IdSchema
+  // guard on `:id`, so a malformed id 500ed where its siblings 400ed.
+  it('rejects a non-uuid id with 400, not 500', async () => {
+    const res = await server.fetch('/api/documents/not-a-uuid/invoices/total', {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-tenant-id': TENANT,
+        'x-user-id': USER,
+        'x-user-role': 'admin',
+      },
+      body: JSON.stringify({ value: 1300.0 }),
+    })
+
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { error: string }
+    expect(body.error).toContain('uuid')
+  })
 })
 
 describe('a correction re-validates in its own transaction and stamps its own row (H2)', () => {
