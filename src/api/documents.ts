@@ -23,6 +23,7 @@ import { CONFIDENCE_THRESHOLD, MAX_DOCUMENT_BYTES } from '../mastra/workflows/do
 import type { DocumentJobData } from '../queue/document-queue'
 import { getDbClient } from '../db/client'
 import { toIsoString } from '../db/timestamps'
+import { docVisibility } from '../db/visibility'
 import type { PoolClient } from 'pg'
 import {
   listViolations,
@@ -470,9 +471,17 @@ export function createDocumentsRouter(deps: DocumentsRouterDeps): Hono {
     const id = IdSchema.safeParse(c.req.param('id'))
     if (!id.success) return c.json({ error: 'id must be a uuid' }, 400)
 
-    const docResult = await getDbClient().query<{ id: string }>(
-      `SELECT id FROM documents WHERE id = $1 AND tenant_id = $2`,
-      [id.data, gate.identity.tenantId],
+    // Ruling R67: this trail carries old_value, new_value, changed_by and reason, so the
+    // tenant predicate alone let a `user` holding a uuid read another member's whole
+    // change history. Same composition as `getDocument`: `$1` stays the tenant because
+    // `docVisibility` names it there in both branches, and the document id goes in the
+    // placeholder the visibility params leave free.
+    const vis = docVisibility(gate.identity)
+    const guardParams: unknown[] = [...vis.params, id.data]
+    const docResult = await getDbClient().query<{ one: number }>(
+      `SELECT 1 AS one FROM documents d
+        WHERE d.id = $${guardParams.length} AND ${vis.sql}`,
+      guardParams,
     )
 
     if (docResult.rows.length === 0) {
