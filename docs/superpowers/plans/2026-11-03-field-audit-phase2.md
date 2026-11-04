@@ -2744,6 +2744,10 @@ function toQueueItem(row: ReviewQueueRow): ReviewQueueItem {
 
 **Corrected at ruling R57: do NOT import `CONFIDENCE_THRESHOLD` into `src/db/validation.ts`.** Measured: `src/mastra/workflows/document-intake.ts:21` already imports `replaceValidation` from `../../db/validation` (Task 8 put it there), so the reverse import is a genuine module cycle, and `document-intake.ts` pulls `@mastra/core`, `unpdf`, `mammoth`, the extractor agent, docling and OCR into whatever imports it — a heavy graph for a storage module to carry. `CONFIDENCE_THRESHOLD` is exported at `src/mastra/workflows/document-intake.ts:30`, and `src/api/documents.ts:22` already imports `MAX_DOCUMENT_BYTES` from that same module, so extend THAT statement and move `toQueueItem` into the route handler. The db module returns rows; the route maps them. The ordering and membership SQL do not change, and this is the fallback this line itself offered, now made mandatory.
 
+**Ruling R62, after the shipped route was read against its siblings: the queue applies `docVisibility`, not the tenant clause alone.** `docVisibility` (`src/db/documents.ts:138-154`) gives an `admin` the tenant predicate and a `user` the owner / no-customer / shared-customer predicate, and both `listDocuments` (`:392`) and `getDocument` (`:445`) call it. `reviewQueue` as first written took a bare `tenantId`, so a `user` could list documents they cannot open: the response carried another member's customer invoice title, confidence and finding counts, and every row it named 404s on click because the detail route does respect the rule. The membership rule below therefore takes the caller's `TenantRequestContext` and composes the visibility predicate with the status-or-findings predicate. This does change membership SQL, and it supersedes the "the ordering and membership SQL do not change" sentence in the R57 note above, which was written about a different edit.
+
+The rule cannot live in either module. `src/db/documents.ts:3` already does `import type { Q } from './validation'`, so a value import of `docVisibility` from `documents.ts` into `validation.ts` is the same cycle class R57 refused. Put `docVisibility` in a new leaf, `src/db/visibility.ts`, import it from both storage modules, and delete the private copy. Bind its parameters by derivation, the way `listDocuments:395-401` does: an `admin` call carries one parameter and a `user` call carries two, so kind, severity, limit and offset cannot be written as literal `$2` through `$5` in `QUEUE_FROM`. Two cases belong in the queue suite alongside the existing tenant-isolation one, which stays because tenant scoping and visibility are different rules: a `user` is not shown another member's unshared-customer document, and an `admin` in the same tenant is shown that same document.
+
 - [ ] **Step 3: Register the route ahead of `/:id`**
 
 In `src/api/documents.ts`, insert the handler immediately before the `app.get('/:id', ...)` — measured at dispatch: that handler is at line 305 of the current file, not :253 — and not after it. Hono's `SmartRouter` prefers a static segment over a named one, but relying on that for a single-segment path that competes with `/:id` is not worth a debugging session; registration order makes it unambiguous.
@@ -3170,6 +3174,23 @@ In `src/api/documents.ts`, above the routes:
 const MAX_WINDOW_DAYS = 365
 const DEFAULT_WINDOW_DAYS = 90
 
+// R54 and R59 together: the day an operator names is their own calendar day, so every edge of
+// the window is their local midnight. `parseDate` hands back the day a string writes, as text,
+// which is why this splits and rebuilds instead of parsing.
+function dayToMs(day: string): number {
+  const [y, mo, d] = day.split('-').map(Number)
+  return new Date(y, mo - 1, d).getTime()
+}
+
+// Whole days are added and subtracted with setDate, never with +/- 86_400_000: this box crossed
+// into DST on 2026-10-04, so millisecond arithmetic lands a "local midnight" on 23:00 or 01:00
+// and the edge stops being the day boundary the label claims.
+function shiftDay(ms: number, days: number): number {
+  const d = new Date(ms)
+  d.setDate(d.getDate() + days)
+  return d.getTime()
+}
+
 function parseAnalyticsWindow(
   from: string | undefined,
   to: string | undefined,
@@ -3180,10 +3201,9 @@ function parseAnalyticsWindow(
   const fromDay = from === undefined || from === '' ? null : parseDate(from)
   if (from !== undefined && from !== '' && fromDay === null) return { ok: false, error: 'bad_range' }
 
-  const fromMs = fromDay === null
-    ? toDay.getTime() - (DEFAULT_WINDOW_DAYS - 1) * 86_400_000
-    : fromDay.getTime()
-  const toExclusiveMs = toDay.getTime() + 86_400_000
+  const toDayMs = dayToMs(toDay)
+  const fromMs = fromDay === null ? shiftDay(toDayMs, -(DEFAULT_WINDOW_DAYS - 1)) : dayToMs(fromDay)
+  const toExclusiveMs = shiftDay(toDayMs, 1)
   const days = Math.round((toExclusiveMs - fromMs) / 86_400_000)
   if (days < 1 || days > MAX_WINDOW_DAYS) return { ok: false, error: 'bad_range' }
 
@@ -3192,21 +3212,21 @@ function parseAnalyticsWindow(
     window: {
       from: new Date(fromMs),
       toExclusive: new Date(toExclusiveMs),
-      fromLabel: dayLabel(fromMs),
-      toLabel: dayLabel(toDay.getTime()),
+      fromLabel: localDay(new Date(fromMs)),
+      toLabel: localDay(new Date(toDayMs)),
       days,
     },
   }
 }
-
-function dayLabel(ms: number): string {
-  return new Date(ms).toISOString().slice(0, 10)
-}
 ```
 
-`to` names the last day the reader wants, so `toExclusive` is that day plus one and `window.days` counts calendar days inclusively on both ends: `from=2026-09-01&to=2026-09-30` is a 30-day window, and the default is the 90 days ending today. The default `today` is `localDay(new Date())`, read here because the route is the boundary and constraint 6 keeps the clock out of `src/validation/`; local, because the day an operator means by "today" is their own business day, not the UTC one. Window maths is the one place this plan renders a day in UTC deliberately: `parseDate` builds with `Date.UTC` and `dayLabel` reads it back with `toISOString()`, so build and render agree inside the same function and no stored `date` is ever compared against these labels.
+`to` names the last day the reader wants, so `toExclusive` is that day plus one and `window.days` counts calendar days inclusively on both ends: `from=2026-09-01&to=2026-09-30` is a 30-day window, and the default is the 90 days ending today. The default `today` is `localDay(new Date())`, read here because the route is the boundary and constraint 6 keeps the clock out of `src/validation/`; local, because the day an operator means by "today" is their own business day, not the UTC one.
 
-Two defects in the snippet above are measured and belong to Task 12, which is why they are recorded here rather than silently carried: `parseDate` returns `string | null` (`src/validation/values.ts:37`), so `toDay.getTime()` and `fromDay.getTime()` do not typecheck as written, and the fix is a `dayToMs(day: string)` helper that splits the three components and rebuilds them as a LOCAL midnight per ruling R54, keeping build and render in that one zone. Separately, and for the same reason, the resulting window edges must be the operator's day boundaries rather than UTC midnights: R54 decides it, so `from`/`toExclusive` are local midnights and the last day's afternoon rows are inside the window.
+Ruling R59, and it removes a label defect this section used to carry. The labels are rendered with `localDay`, the same renderer the default `today` comes from, so the window edges and the window label are one zone. Before this ruling the snippet built its edges as UTC midnights and read them back with `new Date(ms).toISOString().slice(0, 10)`, which round-tripped; R54 moved the edges to local midnights and left the UTC read behind, and the two no longer agree. Measured on this box (`Australia/Sydney`, UTC+11 in November): the local midnight of 2026-11-03 is `2026-11-02T13:00Z`, so the UTC render of that edge prints `2026-11-02`. Both labels, every request, on the machine where the code runs and where the panel is opened. The endpoint's own test would not have caught it, because the default-window case asserts `window.days === 90` and a `/^\d{4}-\d{2}-\d{2}$/` shape match on `window.to`, neither of which compares the label to the edge it names. `localDay`'s doc comment at `src/validation/index.ts:15-18` already states this failure mode, so the route does not need a second day renderer.
+
+Three things the snippet used to get wrong are recorded here so they stay fixed. First, `parseDate` returns `string | null` (`src/validation/values.ts:41`), so the earlier revision's `toDay.getTime()` and `fromDay.getTime()` never typechecked; `dayToMs` above is the fix, and it is what R54's local-midnight edges are built from. Second, the window edges are the operator's day boundaries rather than UTC midnights, so the last day's afternoon rows are inside the window; that is R54. Third, shifting by whole days goes through `setDate`, because a DST day is 23 or 25 hours and `Math.round` over `86_400_000` is only safe for *counting* days, not for landing on one; that is R59, which also moved the labels onto `localDay` so an edge and its own label cannot disagree.
+
+The one remaining zone mix is deliberate and belongs to Task 18's review, not to this route: `confidenceTrend` groups with `DATE_TRUNC('week', d.created_at)`, which truncates in the database session's timezone, while the window edges are the operator's local midnights. Measured on the pooler this project uses: `SHOW timezone` returns `UTC`, and `DATE_TRUNC('week', timestamptz '2026-09-20T20:00:00Z')` renders `2026-09-14` even though that instant is 2026-09-21 06:00 here, a Monday. So the week axis is UTC-Monday and a document created in the first eleven local hours of a Monday is counted in the week the operator already finished. No metric double-counts or drops a row, because the stored values are absolute instants and the window filter compares instants; what differs is which week a label names. Every trend test seeds exact UTC midnights (`2026-09-21`, `2026-09-25`, `2026-09-28`), where the two readings agree, so nothing here is a test failure. A fix means either setting the session zone or truncating in JS, and neither is worth an endpoint-wide `SET timezone` on a shared pooler; when Task 16's panel makes the week axis prominent, that is the moment to revisit it.
 
 ```ts
 app.get('/analytics/review', async (c) => {
@@ -3327,6 +3347,22 @@ describe('csvCell', () => {
   it('keeps a leading space, which Excel would otherwise trim silently', () => {
     expect(csvCell(' AUD')).toBe(' AUD')
   })
+  it('neutralises a leading equals sign', () => {
+    expect(csvCell('=SUM(A1:A9)')).toBe("'=SUM(A1:A9)")
+  })
+  it('neutralises a leading plus and a leading at-sign', () => {
+    expect(csvCell('+1-2')).toBe("'+1-2")
+    expect(csvCell('@SUM(A1)')).toBe("'@SUM(A1)")
+  })
+  it('neutralises a leading tab, which spreadsheet parsers hit-tab-guard', () => {
+    expect(csvCell('\t=1+1')).toBe("'\t=1+1")
+  })
+  it('leaves a negative money value alone', () => {
+    expect(csvCell('-1100.00')).toBe('-1100.00')
+  })
+  it('neutralises before it quotes, so a guarded cell still survives its comma', () => {
+    expect(csvCell(`=cmd,'/C calc'!A0`)).toBe(`"'=cmd,'/C calc'!A0"`)
+  })
 })
 
 describe('buildAuditCsv', () => {
@@ -3399,7 +3435,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   await server.db.query('DELETE FROM document_field_audit WHERE tenant_id = ANY($1::uuid[])', [[TENANT, OTHER]])
   await server.db.query('DELETE FROM documents WHERE tenant_id = ANY($1::uuid[])', [[TENANT, OTHER]])
-  documentId = await seedInvoice(server.db, { total: '1200.00', vendor_name: 'Acme' })
+  documentId = await seedInvoice(server.db, { total: '1200.00' })
 })
 
 describe('GET /audit/export', () => {
@@ -3439,7 +3475,6 @@ describe('GET /audit/export', () => {
     )
     const lines = exportLines(await (await exportCsv()).text())
     expect(lines[1]).toContain(',invoices,total,update,1100.00,1200.5,' + USER)
-  })
   })
 
   it('filters by change source', async () => {
@@ -3513,6 +3548,10 @@ export const AUDIT_CSV_HEADER = [
 
 export const MAX_EXPORT_ROWS = 50_000
 const NEEDS_QUOTING = /[",\r\n]/
+// Ruling R60, CWE-1236. A leading `-` is deliberately absent: a credit or refund arrives as
+// `-1100.00` in old_value and new_value routinely, and guarding it turns a real number into text
+// to defend against a payload those columns never legitimately start with.
+const FORMULA_PREFIX = /^[=+@\t]/
 
 export interface AuditExportRow {
   document_id: string
@@ -3532,8 +3571,9 @@ const FIELDS: readonly (keyof AuditExportRow)[] = AUDIT_CSV_HEADER
 
 export function csvCell(value: string | null): string {
   if (value === null) return ''
-  if (!NEEDS_QUOTING.test(value)) return value
-  return '"' + value.replaceAll('"', '""') + '"'
+  const guarded = FORMULA_PREFIX.test(value) ? "'" + value : value
+  if (!NEEDS_QUOTING.test(guarded)) return guarded
+  return '"' + guarded.replaceAll('"', '""') + '"'
 }
 
 export function csvRow(cells: readonly (string | null)[]): string {
@@ -3550,6 +3590,8 @@ export function buildAuditCsv(rows: readonly AuditExportRow[]): string {
 ```
 
 The BOM is the only non-ASCII character permitted in this file, and Step 2 is where it is typed: write it as `'\uFEFF'` in the source. `FIELDS.map((key) => row[key])` rather than eleven hand-written arguments is what keeps the header and the body from ever disagreeing, which is the failure mode a CSV export has.
+
+Ruling R60, added at pre-flight because the file the plan described was open to it. Two of the eleven columns are attacker-authored text: `document_title` is copied from the document that was uploaded, and `reason` is typed by whoever corrected the field. A title of `=cmd|'/C calc'!A0` exports, opens in Excel, and runs, which is CSV injection (CWE-1236) and the reason `csvCell` prefixes a leading `=`, `+`, `@` or tab with `'` before the quoting decision. The apostrophe is what Excel itself writes when it stores such a cell, so the guard round-trips rather than corrupting. Cost if wrong: a reviewer who genuinely wants a formula in a title sees a leading apostrophe, which is the same thing Excel would have shown them anyway. The guard sits before the quoting check, so a payload containing both a trigger character and a comma is guarded and then quoted, and Step 1 has a test for exactly that ordering.
 
 - [ ] **Step 3: The read**
 
@@ -3603,6 +3645,10 @@ export async function exportAuditRows(
 In `src/api/documents.ts`, register it after `/review-queue`. `/audit/export` is two segments so it cannot be reached by `/:id`, which is one segment; order still groups the three read routes together.
 
 ```ts
+// A `readonly` tuple has no `has`, and its `includes` will not accept a plain `string`, so the
+// query parameter is tested against a Set built from the same list Task 2 exported.
+const CHANGE_SOURCE_VALUES: ReadonlySet<string> = new Set(CHANGE_SOURCES)
+
 app.get('/audit/export', async (c) => {
   const gate = await auth(c)
   if ('error' in gate) return gate.error
@@ -3612,7 +3658,7 @@ app.get('/audit/export', async (c) => {
   if (!parsed.ok) return c.json({ error: parsed.error, maxDays: MAX_WINDOW_DAYS }, 400)
 
   const changeSource = c.req.query('change_source') ?? null
-  if (changeSource !== null && !CHANGE_SOURCES.has(changeSource)) {
+  if (changeSource !== null && !CHANGE_SOURCE_VALUES.has(changeSource)) {
     return c.json({ error: 'bad_filter', param: 'change_source' }, 400)
   }
   const kind = c.req.query('kind')
@@ -3641,7 +3687,7 @@ app.get('/audit/export', async (c) => {
 })
 ```
 
-`CHANGE_SOURCES` is the five-value tuple Task 2 exported from `src/db/audit-context.ts`, so the export filter, the `AuditContext` type and the `CHECK` constraint in `migrations/0023` all read one list. Import it with `(await import('../db/audit-context.js')).CHANGE_SOURCES` if adding a fourth import line to `src/api/documents.ts` trips the file's existing import style; a plain top-level import is what Task 2 expects and is the better choice.
+`CHANGE_SOURCES` is the five-value tuple Task 2 exported from `src/db/audit-context.ts:3`, so the export filter, the `AuditContext` type and the `CHECK` constraint in `migrations/0023_crum_field_audit.sql:18` all read one list; measured, the constraint's five values are the tuple's five values in the same order, so no legitimate row can be filtered out and no accepted filter value can name a row the database would refuse. Import it with a plain top-level `import { CHANGE_SOURCES } from '../db/audit-context'`, which is what Task 2 expects. Do not write `CHANGE_SOURCES.has(changeSource)`, which is what an earlier revision of this snippet said: `as const` produces a readonly tuple, so `has` does not exist on it, and `includes` is typed to take only the union of its literal members, which a `string` from `c.req.query` is not. Both fail `tsc`, and the second failure is the kind that tempts a reviewer into a cast. The `ReadonlySet<string>` above is the whole fix and keeps one source of truth.
 
 - [ ] **Step 5: Run the suites**
 
@@ -3667,12 +3713,14 @@ git commit -m "feat(api): csv export of the field audit trail that refuses rathe
 - Create: `console/tests/FindingList.test.tsx`
 
 **Interfaces:**
-- Consumes: `get`, `post`, `patch`, `describeError` from `console/lib/api.ts:112-125`, `route` and `stubFetch` from `console/tests/fetchStub.ts`.
+- Consumes: `get`, `post`, `patch` from `console/lib/api.ts:112-125` and `describeError` from `console/lib/api.ts:154`, `route` and `stubFetch` from `console/tests/fetchStub.ts`.
 - Produces: every type and fetcher Tasks 15, 16 and 17 import. `FindingList` renders the array `Task 9`'s `GET /:id/validation` returns and calls `onWaive(id, reason)`; `FieldConfidenceChip` takes one number and colours it.
 
 Ruling R19. `console/lib/review.ts` re-declares the shapes the server returns rather than importing them. Why: `console/` is a separate npm workspace whose `tsconfig.json` maps `@/*` to itself and never reaches `../src`, and every existing console type lives in `console/lib/types.ts` for the same reason. Cost if wrong: a server field rename surfaces as a console type error only at render time, which is why Task 18 adds a contract test that reads the server's own route file for the key names it claims.
 
-Ruling R20. `CONFIDENCE_THRESHOLD = 0.7` is duplicated in `console/lib/review.ts` as `REVIEW_CONFIDENCE_FLOOR`, with a comment naming `src/mastra/workflows/document-intake.ts:26`. Why: the alternative is a new `/api/documents/meta` route to deliver one number the server already knows, which is more surface than the value. Cost if wrong: a chip colour disagrees with the server's queue ordering until someone notices. Task 18 pins the server constant at `0.7` in a test so the drift is at least loud.
+Ruling R20. `CONFIDENCE_THRESHOLD = 0.7` is duplicated in `console/lib/review.ts` as `REVIEW_CONFIDENCE_FLOOR`, with a comment naming `src/mastra/workflows/document-intake.ts:30`. Why: the alternative is a new `/api/documents/meta` route to deliver one number the server already knows, which is more surface than the value. Cost if wrong: a chip colour disagrees with the server's queue ordering until someone notices. Task 18 pins the server constant at `0.7` in a test so the drift is at least loud. An earlier revision of this ruling said `:26`; the constant is exported at `:30` and that is where Task 18's own reference needed the same correction.
+
+Ruling R61, measured so nobody re-derives it while writing a fetcher. The console does not send identity headers, and `console/lib/review.ts` must not start. `console/lib/identity.ts:74-76` sets `x-tenant-id`, `x-user-id` and `x-user-role` from `CRUM_DEV_TENANT_ID` / `CRUM_DEV_USER_ID` / `CRUM_DEV_USER_ROLE`, `resolveIdentity` in that file refuses loudly when a fixture is absent or the role is neither `user` nor `admin`, and in `jwt` mode it deletes all three from the inbound request before verifying (`:47-49`) so a browser cannot spoof them; `console/middleware.ts` stamps the result onto every `/api` request before the REST rewrite. So the three names R52 put in every test header are exactly the three the middleware already sends, which means a Phase 2 route reached from the console authenticates the same way `GET /api/documents` does today, and a fetcher that adds its own `x-*` headers would be stripped in `jwt` mode and redundant in `dev`. One consequence worth knowing for Task 17's manual pass: the role is one env value for the whole console, so seeing the `user`-role visibility rules in the browser means restarting with `CRUM_DEV_USER_ROLE=user`, and the console tests stub `fetch` directly, which never touches the middleware, so no console test can prove header behaviour.
 
 ```ts
 // console/lib/review.ts
