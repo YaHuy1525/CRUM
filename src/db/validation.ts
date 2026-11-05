@@ -1,4 +1,5 @@
 import { getDbClient } from './client.js'
+import { parseCursor, generateCursor, buildCursorCondition } from './cursor.js'
 import { toIsoString } from './timestamps.js'
 import { docVisibility } from './visibility.js'
 import type { TenantRequestContext } from '../mastra/tenant-context.js'
@@ -157,7 +158,7 @@ export interface ReviewQueueFilter {
   kind: 'invoice' | 'contract' | null
   severity: 'error' | 'warning' | null
   limit: number
-  offset: number
+  cursor?: string
 }
 
 /**
@@ -234,38 +235,53 @@ function queueFrom(
 export async function reviewQueue(
   context: TenantRequestContext,
   filter: ReviewQueueFilter,
-): Promise<{ rows: ReviewQueueRow[]; total: number }> {
+): Promise<{ rows: ReviewQueueRow[]; total: number; nextCursor: string | null; hasMore: boolean }> {
   const client = getDbClient()
   const vis = docVisibility(context)
+
+  const parsedCursor = filter.cursor ? parseCursor(filter.cursor) : null
+  if (filter.cursor && !parsedCursor) {
+    throw new Error('Invalid cursor format')
+  }
+
+  // The created_at expression is truncated to millisecond precision so that the
+  // cursor comparison (which passes through JavaScript Date, losing sub-ms) is
+  // consistent with the sort order.
+  const createdAtExpr = "TO_CHAR(date_trunc('milliseconds', d.created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"')"
+  const cursorExprs = {
+    openErrors: 'COALESCE(c.errors, 0)',
+    lowestConfidence:
+      "(SELECT MIN(NULLIF(kv.value, 'null'::jsonb)::numeric) FROM jsonb_each(d.field_confidence) AS kv(key, value))",
+    createdAt: createdAtExpr,
+  }
+  const cursorCondition = buildCursorCondition(parsedCursor, vis.params.length + 3, cursorExprs)
+
   const params: unknown[] = [
     ...vis.params,
     filter.kind,
     filter.severity,
-    filter.limit,
-    filter.offset,
+    filter.limit + 1, // fetch one extra to determine hasMore
+    ...cursorCondition.params,
   ]
   const firstFilter = vis.params.length + 1
   const kindRef = `$${firstFilter}`
   const severityRef = `$${firstFilter + 1}`
   const limitRef = `$${firstFilter + 2}`
-  const offsetRef = `$${firstFilter + 3}`
   const from = queueFrom(vis.sql, kindRef, severityRef)
 
   const countResult = await client.query<{ total: number }>(
     'SELECT COUNT(*)::int AS total' + from,
-    // The count statement carries no LIMIT or OFFSET to bind, and `pg` counts the
-    // parameters of each prepared statement separately.
+    // The count statement carries no LIMIT or cursor condition to bind, and `pg` counts
+    // the parameters of each prepared statement separately.
     params.slice(0, firstFilter + 1),
   )
-  // The page paid for this, and only the page. `created_at` goes out bare so `pg`
-  // parses the `timestamptz` into a `Date` and the route normalises it (ruling R69),
-  // and lowest field confidence is now expanded per surviving row here instead of over
-  // every invoice and contract of the tenant in the shared `from` fragment. Measured
-  // with `EXPLAIN` on the shipped statement: the count plan keeps its join over the
-  // findings aggregate, because the membership `WHERE` reads `c.errors` and
-  // `c.warnings`, but it holds no `Function Scan` at all, because Postgres removes an
-  // unreferenced left join to a provably unique key. The page expanded the tenant once
-  // per row it returned.
+
+  // The cursor condition is appended to the WHERE block inside `from`.  It references
+  // `c.errors` (from the left join in `queueFrom`) and a scalar subquery over
+  // `d.field_confidence`; both are in scope because the condition sits at the same
+  // SELECT level as the FROM that defines those tables.  The scalar subquery is
+  // repeated in each comparison but is correlated only with `d.field_confidence`, so
+  // the planner evaluates it once per row.
   const pageResult = await client.query<ReviewQueueRow>(
     `SELECT d.id AS document_id, d.title, d.kind, d.status, d.confidence,
             d.created_at,
@@ -274,18 +290,29 @@ export async function reviewQueue(
             COALESCE(c.errors, 0)::int   AS open_errors,
             COALESCE(c.warnings, 0)::int AS open_warnings` +
       from +
-      // `lowest_field_confidence` is an output alias, and with the derived table gone
-      // no input column of the FROM answers to that name, so Postgres binds it to the
-      // select list. `d.id` is the tiebreaker: `created_at` is not unique, and two
-      // documents sharing it, their error counts and their lowest confidence would
-      // otherwise be ordered arbitrarily and could split across a page boundary.
-      ` ORDER BY COALESCE(c.errors, 0) DESC, lowest_field_confidence ASC NULLS LAST,
-                 d.created_at ASC, d.id ASC
-         LIMIT ${limitRef} OFFSET ${offsetRef}`,
+      ` ${cursorCondition.sql}
+       ORDER BY COALESCE(c.errors, 0) DESC, lowest_field_confidence ASC NULLS LAST,
+                  ${createdAtExpr} ASC, d.id ASC
+         LIMIT ${limitRef}`,
     params,
   )
 
-  return { rows: pageResult.rows, total: countResult.rows[0]?.total ?? 0 }
+  const hasMore = pageResult.rows.length > filter.limit
+  const rows = hasMore ? pageResult.rows.slice(0, filter.limit) : pageResult.rows
+
+  let nextCursor: string | null = null
+  if (hasMore && rows.length > 0) {
+    const lastRow = rows[rows.length - 1]!
+    nextCursor = generateCursor({
+      openErrors: lastRow.open_errors,
+      lowestFieldConfidence:
+        lastRow.lowest_field_confidence != null ? Number(lastRow.lowest_field_confidence) : null,
+      createdAt: lastRow.created_at.toISOString(),
+      documentId: lastRow.document_id,
+    })
+  }
+
+  return { rows, total: countResult.rows[0]?.total ?? 0, nextCursor, hasMore }
 }
 
 export async function openCounts(

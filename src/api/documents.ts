@@ -433,26 +433,22 @@ export function createDocumentsRouter(deps: DocumentsRouterDeps): Hono {
     }
 
     const rawLimit = intQuery(c.req.query('limit'), 50)
-    const rawOffset = intQuery(c.req.query('offset'), 0)
     // R11 clamps a page above 200 instead of rejecting it, because "load more" asking
     // for 500 is a request for less precision. A limit under one is not a smaller
     // page: it promises a response that cannot carry a row, so it is refused.
     if (rawLimit === null || rawLimit < 1) {
       return c.json({ error: 'bad_filter', param: 'limit' }, 400)
     }
-    if (rawOffset === null) {
-      return c.json({ error: 'bad_filter', param: 'offset' }, 400)
-    }
     const limit = Math.min(200, rawLimit)
-    const offset = Math.max(0, rawOffset)
+    const cursor = c.req.query('cursor') || undefined
 
-    const { rows, total } = await reviewQueue(gate.identity, {
+    const { rows, total, nextCursor, hasMore } = await reviewQueue(gate.identity, {
       kind: kind ?? null,
       severity: severity ?? null,
       limit,
-      offset,
+      cursor,
     })
-    return c.json({ items: rows.map(toQueueItem), total, limit, offset })
+    return c.json({ items: rows.map(toQueueItem), total, limit, nextCursor, hasMore })
   })
 
   // Ruling R68: tenant-scoped, not visibility-scoped. The queue a reviewer sees next to

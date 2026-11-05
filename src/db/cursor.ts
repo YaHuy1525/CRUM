@@ -47,18 +47,33 @@ export function generateCursor(item: QueueRow): string {
   return `${item.openErrors}|${item.lowestFieldConfidence ?? 'null'}|${item.createdAt}|${item.documentId}`
 }
 
-export function buildCursorCondition(cursor: ParsedCursor | null): { sql: string; params: unknown[] } {
+export interface CursorExpressions {
+  openErrors?: string
+  lowestConfidence?: string
+  createdAt?: string
+}
+
+export function buildCursorCondition(
+  cursor: ParsedCursor | null,
+  paramOffset = 0,
+  expressions: CursorExpressions = {},
+): { sql: string; params: unknown[] } {
   if (cursor === null) {
     return { sql: '', params: [] }
   }
 
+  const oe = expressions.openErrors ?? 'open_errors'
+  const lc = expressions.lowestConfidence ?? 'lowest_field_confidence'
+  const ca = expressions.createdAt ?? 'created_at'
+  const p = (n: number) => `$${paramOffset + n}`
+
   if (cursor.lowestConfidence === null) {
     // Cursor is at a NULL value; only rows with NULL come after (use created_at/id as tiebreaker)
     const sql = `AND (
-      open_errors < $1
-      OR (open_errors = $1 AND lowest_field_confidence IS NULL AND (
-        created_at > $2
-        OR (created_at = $2 AND id > $3)
+      ${oe} < ${p(1)}
+      OR (${oe} = ${p(1)} AND ${lc} IS NULL AND (
+        ${ca} > ${p(2)}
+        OR (${ca} = ${p(2)} AND id > ${p(3)})
       ))
     )`
     return {
@@ -68,13 +83,13 @@ export function buildCursorCondition(cursor: ParsedCursor | null): { sql: string
   } else {
     // Cursor is at a non-null value; rows after include higher values AND all nulls
     const sql = `AND (
-      open_errors < $1
-      OR (open_errors = $1 AND (
-        lowest_field_confidence > $2
-        OR lowest_field_confidence IS NULL
-        OR (lowest_field_confidence = $2 AND (
-          created_at > $3
-          OR (created_at = $3 AND id > $4)
+      ${oe} < ${p(1)}
+      OR (${oe} = ${p(1)} AND (
+        ${lc} > ${p(2)}
+        OR ${lc} IS NULL
+        OR (${lc} = ${p(2)} AND (
+          ${ca} > ${p(3)}
+          OR (${ca} = ${p(3)} AND id > ${p(4)})
         ))
       ))
     )`

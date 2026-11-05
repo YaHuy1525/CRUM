@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 // Load .env before any module that reads process.env at import time.
 const envPath = fileURLToPath(new URL('../../.env', import.meta.url));
@@ -16,7 +16,9 @@ import {
   listViolations,
   waiveViolation,
   openCounts,
+  reviewQueue,
 } from '../../src/db/validation.js';
+import { generateCursor } from '../../src/db/cursor.js';
 
 const TENANT = '00000000-0000-4000-8000-000000000001';
 const USER = '00000000-0000-4000-8000-000000000002';
@@ -122,3 +124,183 @@ describe('validation persistence', () => {
     expect(counts.has(b)).toBe(false);
   });
 });
+
+function makeContext() {
+  return { tenantId: TENANT, userId: USER, userRole: 'admin' as const }
+}
+
+async function wipeQueue() {
+  await getDbClient().query(
+    'DELETE FROM document_validation WHERE tenant_id = $1',
+    [TENANT],
+  )
+  await getDbClient().query(
+    "DELETE FROM documents WHERE tenant_id = $1 AND kind IN ('invoice', 'contract')",
+    [TENANT],
+  )
+}
+
+const DB_TIMEOUT = 30_000
+
+describe('reviewQueue with cursor', () => {
+  beforeEach(async () => {
+    await wipeQueue()
+  }, DB_TIMEOUT)
+
+  afterEach(async () => {
+    await wipeQueue()
+  }, DB_TIMEOUT)
+
+  it('returns first page with hasMore and nextCursor', async () => {
+    const context = makeContext()
+    // Seed 3 documents with varying error counts to create a deterministic order.
+    const d1 = await seedInvoice('rq-cursor-a')
+    const d2 = await seedInvoice('rq-cursor-b')
+    const d3 = await seedInvoice('rq-cursor-c')
+    await run(d1, [sumFailure, shapeWarning]) // 1 error, 1 warning
+    await run(d2, [sumFailure]) // 1 error
+    await run(d3, [shapeWarning]) // 0 errors, 1 warning
+
+    const result = await reviewQueue(context, {
+      kind: null,
+      severity: null,
+      limit: 2,
+      cursor: undefined,
+    })
+
+    expect(result.rows).toHaveLength(2)
+    expect(result.hasMore).toBe(true)
+    expect(result.nextCursor).toBeTruthy()
+    expect(result.total).toBe(3)
+  }, DB_TIMEOUT)
+
+  it('returns second page with no overlap when cursor from last row of first page', async () => {
+    const context = makeContext()
+    const d1 = await seedInvoice('rq-cursor2-a')
+    const d2 = await seedInvoice('rq-cursor2-b')
+    const d3 = await seedInvoice('rq-cursor2-c')
+    const d4 = await seedInvoice('rq-cursor2-d')
+    await run(d1, [sumFailure, shapeWarning]) // 1 error
+    await run(d2, [sumFailure]) // 1 error
+    await run(d3, [shapeWarning]) // 0 errors, 1 warning
+    await run(d4, []) // clean but status=ready → not in queue
+
+    // d4 is ready with no findings → not in queue. Only d1, d2, d3 are queued.
+    // Force d4 into queue via status:
+    await getDbClient().query("UPDATE documents SET status = 'needs_review' WHERE id = $1", [d4])
+
+    const firstPage = await reviewQueue(context, {
+      kind: null,
+      severity: null,
+      limit: 2,
+      cursor: undefined,
+    })
+
+    expect(firstPage.rows).toHaveLength(2)
+    expect(firstPage.hasMore).toBe(true)
+    expect(firstPage.nextCursor).toBeTruthy()
+
+    const lastRow = firstPage.rows[1]!
+    const cursor = generateCursor({
+      openErrors: lastRow.open_errors,
+      lowestFieldConfidence:
+        lastRow.lowest_field_confidence != null ? Number(lastRow.lowest_field_confidence) : null,
+      createdAt: lastRow.created_at.toISOString(),
+      documentId: lastRow.document_id,
+    })
+
+    const secondPage = await reviewQueue(context, {
+      kind: null,
+      severity: null,
+      limit: 2,
+      cursor,
+    })
+
+    expect(secondPage.rows.length).toBeGreaterThan(0)
+    // No overlap between pages
+    const firstPageIds = new Set(firstPage.rows.map(r => r.document_id))
+    for (const row of secondPage.rows) {
+      expect(firstPageIds.has(row.document_id)).toBe(false)
+    }
+  }, DB_TIMEOUT)
+
+  it('returns hasMore false and null nextCursor on last page', async () => {
+    const context = makeContext()
+    const d1 = await seedInvoice('rq-cursor3-a')
+    const d2 = await seedInvoice('rq-cursor3-b')
+    await run(d1, [sumFailure])
+    await run(d2, [shapeWarning])
+
+    // Get first page with large enough limit to fetch all
+    const result = await reviewQueue(context, {
+      kind: null,
+      severity: null,
+      limit: 10,
+      cursor: undefined,
+    })
+
+    expect(result.rows).toHaveLength(2)
+    expect(result.hasMore).toBe(false)
+    expect(result.nextCursor).toBeNull()
+  }, DB_TIMEOUT)
+
+  it('throws on invalid cursor format', async () => {
+    const context = makeContext()
+    await expect(
+      reviewQueue(context, {
+        kind: null,
+        severity: null,
+        limit: 10,
+        cursor: 'not-a-valid-cursor',
+      }),
+    ).rejects.toThrow('Invalid cursor format')
+  }, DB_TIMEOUT)
+
+  it('pages through all rows without overlap or loss', async () => {
+    const context = makeContext()
+    // Seed 5 documents with varying error counts
+    const docs: string[] = []
+    for (let i = 0; i < 5; i++) {
+      const doc = await seedInvoice(`rq-cursor5-${i}`)
+      docs.push(doc)
+      // Give each a different number of errors for deterministic ordering
+      const violations: Violation[] = []
+      for (let e = 0; e < 5 - i; e++) {
+        violations.push({
+          ruleId: `invoice.rule.${e}`,
+          field: `field_${e}`,
+          severity: 'error',
+          message: `Error ${e}`,
+        })
+      }
+      await run(doc, violations)
+    }
+
+    // Collect all rows via cursor pagination with page size 2
+    const allRows: string[] = []
+    let cursor: string | undefined
+    let pageCount = 0
+
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const result = await reviewQueue(context, {
+        kind: null,
+        severity: null,
+        limit: 2,
+        cursor,
+      })
+      allRows.push(...result.rows.map(r => r.document_id))
+      pageCount++
+
+      if (!result.hasMore || !result.nextCursor) {
+        break
+      }
+      cursor = result.nextCursor
+    }
+
+    // All 5 documents should be accounted for, with no duplicates
+    expect(allRows).toHaveLength(5)
+    expect(new Set(allRows).size).toBe(5)
+    expect(pageCount).toBe(3) // 2 + 2 + 1
+  }, DB_TIMEOUT)
+})
