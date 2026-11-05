@@ -165,10 +165,10 @@ export function ReviewAnalytics({ kind }: { kind: 'invoice' | 'contract' | null 
               <table className="w-full text-sm">
                 <caption className="text-left text-xs uppercase tracking-[0.06em] text-text-muted">By customer</caption>
                 <tbody>
-                  {data.byCustomer.length === 0 ? (
+                  {(data.byCustomer?.length ?? 0) === 0 ? (
                     <tr><td className="py-1 text-text-muted">No data</td></tr>
                   ) : (
-                    data.byCustomer.map((c) => (
+                    (data.byCustomer ?? []).map((c) => (
                       <tr key={c.customer}>
                         <td className="py-1">{c.customer}</td>
                         <td className="py-1 text-right tabular-nums">{c.documents} docs</td>
@@ -185,10 +185,10 @@ export function ReviewAnalytics({ kind }: { kind: 'invoice' | 'contract' | null 
               <table className="w-full text-sm">
                 <caption className="text-left text-xs uppercase tracking-[0.06em] text-text-muted">By vendor</caption>
                 <tbody>
-                  {data.byVendor.length === 0 ? (
+                  {(data.byVendor?.length ?? 0) === 0 ? (
                     <tr><td className="py-1 text-text-muted">No data</td></tr>
                   ) : (
-                    data.byVendor.map((v) => (
+                    (data.byVendor ?? []).map((v) => (
                       <tr key={v.vendor}>
                         <td className="py-1">{v.vendor}</td>
                         <td className="py-1 text-right tabular-nums">{v.documents} docs</td>
@@ -206,11 +206,11 @@ export function ReviewAnalytics({ kind }: { kind: 'invoice' | 'contract' | null 
             <table className="w-full text-sm">
               <caption className="text-left text-xs uppercase tracking-[0.06em] text-text-muted">Field correction heatmap</caption>
               <tbody>
-                {data.heatmap.length === 0 ? (
+                {(data.heatmap?.length ?? 0) === 0 ? (
                   <tr><td className="py-1 text-text-muted">No data</td></tr>
                 ) : (
-                  data.heatmap.map((h, i) => {
-                    const maxCorrections = Math.max(...data.heatmap.map((x) => x.corrections))
+                  (data.heatmap ?? []).map((h, i) => {
+                    const maxCorrections = Math.max(...(data.heatmap ?? []).map((x) => x.corrections))
                     const intensity = maxCorrections > 0 ? (h.corrections / maxCorrections) * 100 : 0
                     return (
                       <tr key={i}>

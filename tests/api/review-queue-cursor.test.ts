@@ -72,7 +72,7 @@ async function setStatus(docId: string, status: string) {
   await server.db.query('UPDATE documents SET status = $1 WHERE id = $2', [status, docId])
 }
 
-async function addFinding(docId: string, ruleId: string, field: string, severity: 'error' | 'warning') {
+async function _addFinding(docId: string, ruleId: string, field: string, severity: 'error' | 'warning') {
   const r = await server.db.query<{ id: string }>(
     `INSERT INTO document_validation
        (document_id, tenant_id, ruleset_version, severity, rule_id, field_name, message)
