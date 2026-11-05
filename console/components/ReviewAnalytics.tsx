@@ -209,11 +209,12 @@ export function ReviewAnalytics({ kind }: { kind: 'invoice' | 'contract' | null 
                 {(data.heatmap?.length ?? 0) === 0 ? (
                   <tr><td className="py-1 text-text-muted">No data</td></tr>
                 ) : (
-                  (data.heatmap ?? []).map((h, i) => {
+                  (() => {
                     const maxCorrections = Math.max(...(data.heatmap ?? []).map((x) => x.corrections))
-                    const intensity = maxCorrections > 0 ? (h.corrections / maxCorrections) * 100 : 0
-                    return (
-                      <tr key={i}>
+                    return (data.heatmap ?? []).map((h) => {
+                      const intensity = maxCorrections > 0 ? (h.corrections / maxCorrections) * 100 : 0
+                      return (
+                        <tr key={`${h.kind}-${h.field}`}>
                         <td className="py-1">{h.kind}</td>
                         <td className="py-1">{h.field}</td>
                         <td className="py-1">
@@ -231,6 +232,7 @@ export function ReviewAnalytics({ kind }: { kind: 'invoice' | 'contract' | null 
                       </tr>
                     )
                   })
+                  })()
                 )}
               </tbody>
             </table>
