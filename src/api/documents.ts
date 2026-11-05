@@ -38,6 +38,7 @@ import {
   type ReviewQueueRow,
   type StoredViolation,
 } from '../db/validation'
+import { parseCursor } from '../db/cursor'
 import { CHANGE_SOURCES } from '../db/audit-context'
 import { buildAuditCsv, MAX_EXPORT_ROWS } from './audit-csv'
 import { evaluate, buildBundle, localDay, RULESET_VERSION } from '../validation/index'
@@ -440,13 +441,19 @@ export function createDocumentsRouter(deps: DocumentsRouterDeps): Hono {
       return c.json({ error: 'bad_filter', param: 'limit' }, 400)
     }
     const limit = Math.min(200, rawLimit)
-    const cursor = c.req.query('cursor') || undefined
+    const cursor = c.req.query('cursor')
+    if (cursor !== undefined) {
+      const parsed = parseCursor(cursor)
+      if (!parsed) {
+        return c.json({ error: 'bad_filter', param: 'cursor' }, 400)
+      }
+    }
 
     const { rows, total, nextCursor, hasMore } = await reviewQueue(gate.identity, {
       kind: kind ?? null,
       severity: severity ?? null,
       limit,
-      cursor,
+      cursor: cursor || undefined,
     })
     return c.json({ items: rows.map(toQueueItem), total, limit, nextCursor, hasMore })
   })

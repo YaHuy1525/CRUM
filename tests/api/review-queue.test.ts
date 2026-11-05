@@ -38,7 +38,8 @@ interface QueueBody {
   items: QueueItem[]
   total: number
   limit: number
-  offset: number
+  nextCursor: string | null
+  hasMore: boolean
   error?: string
   param?: string
 }
@@ -193,14 +194,13 @@ describe('GET /review-queue auth and filters', () => {
     expect(res.status).toBe(400)
   }, DB_TIMEOUT)
 
-  // Ruling R69, ride-along 4: `Number.isInteger(1e30)` is true, and an offset that
-  // large is a Postgres bigint range error, so the old test let a client typo become
-  // a 500. `intQuery` now refuses anything `Number.isSafeInteger` rejects.
-  it('400s an offset outside the bigint range instead of faulting the query', async () => {
-    const res = await body('?offset=1e30')
+  // Ruling R69, ride-along 4: replaced offset range check with cursor format validation.
+  // A malformed cursor is rejected with 400 before it reaches the database layer.
+  it('400s a malformed cursor instead of faulting the query', async () => {
+    const res = await body('?cursor=invalid')
     expect(res.status).toBe(400)
     expect(res.json.error).toBe('bad_filter')
-    expect(res.json.param).toBe('offset')
+    expect(res.json.param).toBe('cursor')
   }, DB_TIMEOUT)
 
   // Ruling R69, gate 1: the queue used to project `d.created_at::text`, which emits
@@ -520,13 +520,15 @@ describe('GET /review-queue paging', () => {
       await setStatus(doc, 'needs_review')
     }
     const all = await body()
-    const page1 = await body('?limit=2&offset=0')
-    const page2 = await body('?limit=2&offset=2')
-    const page3 = await body('?limit=2&offset=4')
+    const page1 = await body('?limit=2')
+    expect(page1.json.hasMore).toBe(true)
+    const page2 = await body(`?limit=2&cursor=${page1.json.nextCursor}`)
+    expect(page2.json.hasMore).toBe(true)
+    const page3 = await body(`?limit=2&cursor=${page2.json.nextCursor}`)
     expect(all.json.total).toBe(5)
     expect(page1.json.total).toBe(5)
     // Ride-along 7b: a page's shape has to be a page. Without these three lines an
-    // implementation that ignored `limit` and `offset` and returned all five rows on
+    // implementation that ignored `limit` and `cursor` and returned all five rows on
     // every call still passed the assertions below.
     expect(page1.json.items).toHaveLength(2)
     expect(page2.json.items).toHaveLength(2)
@@ -563,11 +565,14 @@ describe('GET /review-queue paging', () => {
     const passes: string[][] = []
     for (let pass = 0; pass < 2; pass++) {
       const seen: string[] = []
-      for (const offset of [0, 2, 4]) {
-        const page = await body(`?limit=2&offset=${offset}`)
-        expect(page.json.total).toBe(6)
-        expect(page.json.items).toHaveLength(2)
-        seen.push(...idsOf(page.json))
+      let cursor: string | null | undefined = undefined
+      for (let page = 0; page < 3; page++) {
+        const query = cursor ? `?limit=2&cursor=${cursor}` : '?limit=2'
+        const result = await body(query)
+        expect(result.json.total).toBe(6)
+        expect(result.json.items).toHaveLength(2)
+        seen.push(...idsOf(result.json))
+        cursor = result.json.nextCursor
       }
       expect(seen).toEqual(expected)
       expect(new Set(seen).size).toBe(6)
@@ -578,11 +583,11 @@ describe('GET /review-queue paging', () => {
 
   // Ruling R72: the `user` half of `docVisibility` (src/db/visibility.ts:25-30) binds two
   // parameters, so on that branch every later placeholder is numbered from 3 — and neither
-  // the severity `EXISTS` nor `limit`/`offset` had ever been sent there. The existing
+  // the severity `EXISTS` nor `limit`/`cursor` had ever been sent there. The existing
   // `?kind=contract`-as-`user` request pins `$2`-derived numbering for the kind filter
   // alone; hard-coding or swapping the severity and paging placeholders was free. One
   // request carrying all three makes each of them a wrong page rather than a coincidence.
-  it('binds severity, limit and offset on the two-parameter user branch', async () => {
+  it('binds severity, limit and cursor on the two-parameter user branch', async () => {
     // Both documents hang off one customer owned by OWNER and shared with nobody, so the
     // actor parameter is what decides visibility here: a customer-less document would be
     // readable by every member of the tenant (the R69 arm pinned above) and the empty page
@@ -598,15 +603,21 @@ describe('GET /review-queue paging', () => {
     await setCreated(newer, '2026-08-02T00:00:00Z')
 
     // Equal error counts and no field maps, so the tier's remaining key is created_at and
-    // offset 1 names a specific row rather than whichever row the database felt like.
-    const { json } = await body('?severity=error&limit=1&offset=1', asUser(OWNER, 'user'))
-    expect(json.total).toBe(2)
-    expect(json.items).toHaveLength(1)
-    expect(idsOf(json)).toEqual([newer])
+    // cursor pagination names a specific row rather than whichever row the database felt like.
+    const first = await body('?severity=error&limit=1', asUser(OWNER, 'user'))
+    expect(first.json.total).toBe(2)
+    expect(first.json.items).toHaveLength(1)
+    expect(idsOf(first.json)).toEqual([older])
+    expect(first.json.nextCursor).toBeTruthy()
+
+    const second = await body(`?severity=error&limit=1&cursor=${first.json.nextCursor}`, asUser(OWNER, 'user'))
+    expect(second.json.total).toBe(2)
+    expect(second.json.items).toHaveLength(1)
+    expect(idsOf(second.json)).toEqual([newer])
 
     // The same request as a member who owns neither document and shares no customer with
     // OWNER: the paging arms must not be able to widen what visibility removed.
-    const empty = await body('?severity=error&limit=1&offset=1', asUser(LOOKER, 'user'))
+    const empty = await body('?severity=error&limit=1', asUser(LOOKER, 'user'))
     expect(empty.json.total).toBe(0)
     expect(empty.json.items).toEqual([])
   }, DB_TIMEOUT)
