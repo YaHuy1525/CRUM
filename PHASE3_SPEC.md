@@ -1,7 +1,7 @@
 # Phase 3: Cursor Paging and Extended Analytics
 
 **Date:** 2026-11-05  
-**Status:** Draft  
+**Status:** Approved  
 **Phase:** Field-audit Phase 3
 
 ## Overview
@@ -76,31 +76,49 @@ LIMIT $limit OFFSET $offset
 ```
 
 **New query (cursor-based):**
-```sql
-SELECT ... FROM documents d
-WHERE <visibility> AND <filters>
-  AND (
-    -- First page: no cursor condition
-    -- Subsequent pages: row is "after" the cursor in the ORDER BY sequence
-    -- ORDER BY: open_errors DESC, lowest_field_confidence ASC NULLS LAST, created_at ASC, id ASC
-    ($cursor IS NULL) OR  -- first page
-    (open_errors < $cursor_open_errors) OR  -- lower open_errors comes later in DESC
-    (open_errors = $cursor_open_errors AND (
-      (lowest_field_confidence IS NOT NULL AND $cursor_lowest_confidence IS NULL) OR  -- non-null comes before null (NULLS LAST)
-      (lowest_field_confidence IS NOT NULL AND $cursor_lowest_confidence IS NOT NULL AND lowest_field_confidence > $cursor_lowest_confidence) OR  -- higher confidence comes later in ASC
-      (lowest_field_confidence IS NULL AND $cursor_lowest_confidence IS NULL AND (
-        (created_at > $cursor_created_at) OR
-        (created_at = $cursor_created_at AND id > $cursor_id)
+
+The WHERE clause is built dynamically in the application layer based on cursor values:
+
+```typescript
+function buildCursorCondition(cursor: ParsedCursor | null): string {
+  if (cursor === null) return ''; // first page, no cursor condition
+  
+  // For ORDER BY: open_errors DESC, lowest_field_confidence ASC NULLS LAST, created_at ASC, id ASC
+  // "Rows after cursor" means:
+  // 1. open_errors < cursor.openErrors (lower values come later in DESC)
+  // 2. OR open_errors = cursor.openErrors AND:
+  //    a. lowest_field_confidence > cursor.lowestConfidence (higher values come later in ASC)
+  //    b. OR lowest_field_confidence IS NULL AND cursor.lowestConfidence IS NOT NULL (nulls come last)
+  //    c. OR both equal and created_at > cursor.createdAt
+  //    d. OR all equal and id > cursor.id
+  
+  if (cursor.lowestConfidence === null) {
+    // Cursor is at a NULL value; only rows with NULL come after (use created_at/id as tiebreaker)
+    return `AND (
+      open_errors < $cursor_open_errors
+      OR (open_errors = $cursor_open_errors AND lowest_field_confidence IS NULL AND (
+        created_at > $cursor_created_at
+        OR (created_at = $cursor_created_at AND id > $cursor_id)
       ))
-    ))
-  )
-ORDER BY open_errors DESC, lowest_field_confidence ASC NULLS LAST, created_at ASC, id ASC
-LIMIT $limit
+    )`;
+  } else {
+    // Cursor is at a non-null value; rows after include higher values AND all nulls
+    return `AND (
+      open_errors < $cursor_open_errors
+      OR (open_errors = $cursor_open_errors AND (
+        lowest_field_confidence > $cursor_lowest_confidence
+        OR lowest_field_confidence IS NULL
+        OR (lowest_field_confidence = $cursor_lowest_confidence AND (
+          created_at > $cursor_created_at
+          OR (created_at = $cursor_created_at AND id > $cursor_id)
+        ))
+      ))
+    )`;
+  }
+}
 ```
 
-**Simplification:** The nested NULL logic is verbose. In practice, the route builds the WHERE clause dynamically:
-- If `cursor` is null/undefined: no cursor condition (first page)
-- If `cursor` is present: build the keyset condition with explicit NULL checks based on the cursor's parsed values
+**Simplification rationale:** The dynamic approach is clearer than a single monolithic SQL condition with nested NULL checks. The application layer knows whether the cursor's `lowestConfidence` is null and can generate the appropriate SQL.
 
 **Cursor parsing:** The route parses the cursor string into four typed values:
 ```typescript
@@ -232,12 +250,13 @@ SELECT i.vendor_name AS vendor,
   LEFT JOIN document_validation v ON v.document_id = d.id AND v.tenant_id = d.tenant_id
  WHERE d.tenant_id = $1
    AND d.kind = 'invoice'
-   AND ($4::text IS NULL OR $4 = 'invoice')
    AND d.created_at >= $2 AND d.created_at < $3
  GROUP BY i.vendor_name
  ORDER BY total_findings DESC, i.vendor_name
  LIMIT 10
 ```
+
+**Note:** The `kind` filter ($4) is ignored for byVendor because it only applies to invoices. If $4 = 'contract', return an empty array.
 
 **Response shape:**
 ```typescript
@@ -328,9 +347,9 @@ interface ReviewAnalytics {
 ### 2.4 Console Panel
 
 **`console/components/ReviewAnalytics.tsx`:**
-- Add three new table sections: "By customer", "By vendor", "By model"
+- Add two new table sections: "By customer", "By vendor" (byModel is deferred, returns empty array)
 - Add a heatmap section: grid with kind × field, color-coded cells
-- Each section is collapsible (default: collapsed for new sections, expanded for existing)
+- Each new section is collapsible (default: collapsed)
 - Empty arrays render as "No data" instead of an empty table
 
 ### 2.5 Performance
@@ -382,14 +401,12 @@ Phase 3 does not require optimization; it can be added in a follow-up if needed.
 
 ## 4. Implementation Order
 
-1. **Cursor paging backend** — modify `reviewQueue` function and `/review-queue` route
-2. **Cursor paging tests** — backend and console
-3. **Cursor paging console** — update `getReviewQueue` and `DocumentManager`
-4. **Extended analytics backend** — add 3-4 new queries to `reviewAnalytics`
-5. **Extended analytics tests** — backend and console
-6. **Extended analytics console** — update `ReviewAnalytics` component
+1. **Cursor paging backend + tests** — modify `reviewQueue` function and `/review-queue` route, write backend tests
+2. **Cursor paging console + tests** — update `getReviewQueue` and `DocumentManager`, write console tests
+3. **Extended analytics backend + tests** — add 3 new queries to `reviewAnalytics` (byCustomer, byVendor, heatmap), write backend tests
+4. **Extended analytics console + tests** — update `ReviewAnalytics` component, write console tests
 
-Steps 1-3 and 4-6 are independent and can be done in parallel or sequentially.
+Steps 1-2 and 3-4 are independent and can be done in parallel or sequentially. Each step follows TDD: write tests first, then implementation.
 
 ---
 
@@ -431,16 +448,14 @@ Steps 1-3 and 4-6 are independent and can be done in parallel or sequentially.
 
 ## 8. Decisions
 
-**D1 (cursor format):** Readable string, not base64-encoded. Rationale: debuggability; the API is internal to the console.
-
-**D2 (byCustomer null handling):** Exclude documents without a customer. Rationale: most documents have a customer; a "no customer" bucket adds complexity without much value.
-
 **D3 (heatmap granularity):** Top 20 field-kind combinations. Rationale: balances completeness with visual clarity; the LIMIT prevents rendering hundreds of rows.
 
 **D4 (performance budget):** Analytics endpoint should respond in < 2 seconds for typical tenants. Rationale: acceptable for an admin dashboard; can be optimized later with materialized views if needed.
 
 **D5 (total count in cursor paging):** Keep the `total` field in the response. Rationale: the console shows "X of Y documents" and removing it would break the UI; the COUNT query is acceptable for typical queue sizes.
 
+**D6 (cursor condition implementation):** Build WHERE clause dynamically in application layer, not as a single monolithic SQL condition. Rationale: clearer NULL handling and easier to test.
+
 ---
 
-**Next step:** Review this spec, approve or request changes, then transition to implementation planning.
+**Next step:** Transition to implementation planning via the writing-plans skill.
