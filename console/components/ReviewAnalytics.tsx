@@ -98,32 +98,36 @@ export function ReviewAnalytics({ kind }: { kind: 'invoice' | 'contract' | null 
       {data ? (
         <>
           <div className="grid gap-4 md:grid-cols-2">
-            <table className="w-full text-sm">
-              <caption className="text-left text-xs uppercase tracking-[0.06em] text-text-muted">Findings by rule</caption>
-              <tbody>
-                {data.byRule.map((r) => (
-                  <tr key={r.ruleId}>
-                    <td className="py-1">{r.ruleId}</td>
-                    <td className="w-1/3 py-1"><Bar value={r.total} max={maxRule} /></td>
-                    <td className="py-1 text-right tabular-nums">{r.total}</td>
-                    <td className="py-1 text-right text-text-muted">open {r.open} · waived {r.waived}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <caption className="text-left text-xs uppercase tracking-[0.06em] text-text-muted">Findings by rule</caption>
+                <tbody>
+                  {data.byRule.map((r) => (
+                    <tr key={r.ruleId}>
+                      <td className="py-1">{r.ruleId}</td>
+                      <td className="w-1/3 py-1"><Bar value={r.total} max={maxRule} /></td>
+                      <td className="py-1 text-right tabular-nums">{r.total}</td>
+                      <td className="py-1 text-right text-text-muted">open {r.open} · waived {r.waived}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
 
-            <table className="w-full text-sm">
-              <caption className="text-left text-xs uppercase tracking-[0.06em] text-text-muted">Most corrected fields</caption>
-              <tbody>
-                {data.topFields.map((f) => (
-                  <tr key={f.field}>
-                    <td className="py-1">{f.field}</td>
-                    <td className="py-1 text-right tabular-nums">{f.corrections}</td>
-                    <td className="py-1 text-right text-text-muted">{f.violations} findings</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <caption className="text-left text-xs uppercase tracking-[0.06em] text-text-muted">Most corrected fields</caption>
+                <tbody>
+                  {data.topFields.map((f) => (
+                    <tr key={f.field}>
+                      <td className="py-1">{f.field}</td>
+                      <td className="py-1 text-right tabular-nums">{f.corrections}</td>
+                      <td className="py-1 text-right text-text-muted">{f.violations} findings</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
 
           <dl className="grid gap-2 text-sm md:grid-cols-3">
@@ -141,18 +145,20 @@ export function ReviewAnalytics({ kind }: { kind: 'invoice' | 'contract' | null 
             </div>
           </dl>
 
-          <table className="w-full text-sm">
-            <caption className="text-left text-xs uppercase tracking-[0.06em] text-text-muted">By week</caption>
-            <tbody>
-              {data.confidenceTrend.map((w) => (
-                <tr key={w.week}>
-                  <td className="py-1">{w.week}</td>
-                  <td className="py-1 text-right tabular-nums">{w.avgConfidence === null ? 'no data' : (w.avgConfidence * 100).toFixed(0) + '%'}</td>
-                  <td className="py-1 text-right text-text-muted">corrected (lifetime) {pct(w.correctionRate)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <caption className="text-left text-xs uppercase tracking-[0.06em] text-text-muted">By week</caption>
+              <tbody>
+                {data.confidenceTrend.map((w) => (
+                  <tr key={w.week}>
+                    <td className="py-1">{w.week}</td>
+                    <td className="py-1 text-right tabular-nums">{w.avgConfidence === null ? 'no data' : (w.avgConfidence * 100).toFixed(0) + '%'}</td>
+                    <td className="py-1 text-right text-text-muted">corrected (lifetime) {pct(w.correctionRate)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </>
       ) : null}
     </section>
