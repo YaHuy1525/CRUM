@@ -1,6 +1,7 @@
 // tests/db/cursor.test.ts
 import { describe, expect, it } from 'vitest'
-import { parseCursor, generateCursor } from '../../src/db/cursor'
+import { parseCursor, generateCursor, buildCursorCondition } from '../../src/db/cursor'
+import type { ParsedCursor } from '../../src/db/cursor'
 
 describe('parseCursor', () => {
   it('parses a valid cursor with non-null lowestConfidence', () => {
@@ -55,5 +56,50 @@ describe('generateCursor', () => {
       documentId: 'b2c3d4e5-f6a7-8901-bcde-f12345678901',
     }
     expect(generateCursor(row)).toBe('3|null|2026-11-03T10:00:00.000Z|b2c3d4e5-f6a7-8901-bcde-f12345678901')
+  })
+})
+
+describe('buildCursorCondition', () => {
+  it('returns empty condition for null cursor (first page)', () => {
+    const result = buildCursorCondition(null)
+    expect(result.sql).toBe('')
+    expect(result.params).toEqual([])
+  })
+
+  it('builds condition for cursor with non-null lowestConfidence', () => {
+    const cursor: ParsedCursor = {
+      openErrors: 5,
+      lowestConfidence: 0.42,
+      createdAt: new Date('2026-11-03T09:00:00.000Z'),
+      id: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+    }
+    const result = buildCursorCondition(cursor)
+    expect(result.sql).toContain('open_errors < $1')
+    expect(result.sql).toContain('lowest_field_confidence > $2')
+    expect(result.sql).toContain('lowest_field_confidence IS NULL')
+    expect(result.params).toEqual([
+      5,
+      0.42,
+      '2026-11-03T09:00:00.000Z',
+      'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+    ])
+  })
+
+  it('builds condition for cursor with null lowestConfidence', () => {
+    const cursor: ParsedCursor = {
+      openErrors: 3,
+      lowestConfidence: null,
+      createdAt: new Date('2026-11-03T10:00:00.000Z'),
+      id: 'b2c3d4e5-f6a7-8901-bcde-f12345678901',
+    }
+    const result = buildCursorCondition(cursor)
+    expect(result.sql).toContain('open_errors < $1')
+    expect(result.sql).toContain('lowest_field_confidence IS NULL')
+    expect(result.sql).not.toContain('lowest_field_confidence > $2')
+    expect(result.params).toEqual([
+      3,
+      '2026-11-03T10:00:00.000Z',
+      'b2c3d4e5-f6a7-8901-bcde-f12345678901',
+    ])
   })
 })

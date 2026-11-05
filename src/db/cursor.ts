@@ -46,3 +46,41 @@ export function parseCursor(cursor: string): ParsedCursor | null {
 export function generateCursor(item: QueueRow): string {
   return `${item.openErrors}|${item.lowestFieldConfidence ?? 'null'}|${item.createdAt}|${item.documentId}`
 }
+
+export function buildCursorCondition(cursor: ParsedCursor | null): { sql: string; params: unknown[] } {
+  if (cursor === null) {
+    return { sql: '', params: [] }
+  }
+
+  if (cursor.lowestConfidence === null) {
+    // Cursor is at a NULL value; only rows with NULL come after (use created_at/id as tiebreaker)
+    const sql = `AND (
+      open_errors < $1
+      OR (open_errors = $1 AND lowest_field_confidence IS NULL AND (
+        created_at > $2
+        OR (created_at = $2 AND id > $3)
+      ))
+    )`
+    return {
+      sql,
+      params: [cursor.openErrors, cursor.createdAt.toISOString(), cursor.id],
+    }
+  } else {
+    // Cursor is at a non-null value; rows after include higher values AND all nulls
+    const sql = `AND (
+      open_errors < $1
+      OR (open_errors = $1 AND (
+        lowest_field_confidence > $2
+        OR lowest_field_confidence IS NULL
+        OR (lowest_field_confidence = $2 AND (
+          created_at > $3
+          OR (created_at = $3 AND id > $4)
+        ))
+      ))
+    )`
+    return {
+      sql,
+      params: [cursor.openErrors, cursor.lowestConfidence, cursor.createdAt.toISOString(), cursor.id],
+    }
+  }
+}
