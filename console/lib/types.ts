@@ -147,6 +147,7 @@ export interface CrmDocument {
   customer_id: string | null
   created_at: string
   updated_at: string
+  field_confidence?: Record<string, number> | null
 }
 
 export interface InvoiceRecord {

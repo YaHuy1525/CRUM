@@ -7,12 +7,30 @@ import type {
   ContractRecord,
   ContractTerm,
   CrmDocument,
-  DocumentUploadResponse,
   InvoiceLine,
   InvoiceRecord,
 } from '../lib/types'
 import { Badge } from './ui/badge'
 import { Button } from './ui/button'
+import { EditableField } from './EditableField'
+import { AuditTrail } from './AuditTrail'
+import { FieldConfidenceChip } from './FieldConfidenceChip'
+import { FindingList } from './FindingList'
+import {
+  getReviewQueue,
+  getValidation,
+  getAuditTrail,
+  waiveFinding,
+  revalidateDocument,
+  findingsFor,
+  shortTime,
+} from '../lib/review'
+import type {
+  ReviewQueueItem,
+  StoredViolation,
+  AuditRow,
+  CorrectionResult,
+} from '../lib/review'
 
 
 type Notice = { kind: 'ok' | 'bad' | 'info'; text: string }
@@ -54,11 +72,15 @@ export function DocumentManager({ kind }: { kind: 'invoice' | 'contract' }) {
   const [loading, setLoading] = useState(true)
   const [listError, setListError] = useState<string | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
-  const [uploading, setUploading] = useState(false)
+  const [_uploading, setUploading] = useState(false)
   const [processingJobs, setProcessingJobs] = useState<Map<string, { fileName: string; status: string }>>(new Map())
   const [selected, setSelected] = useState<CrmDocument | null>(null)
   const [detail, setDetail] = useState<InvoiceDetail | ContractDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
+  const [reviewMode, setReviewMode] = useState(false)
+  const [queue, setQueue] = useState<ReviewQueueItem[]>([])
+  const [violations, setViolations] = useState<StoredViolation[]>([])
+  const [auditRows, setAuditRows] = useState<AuditRow[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
   const aliveRef = useRef(true)
 
@@ -76,15 +98,23 @@ export function DocumentManager({ kind }: { kind: 'invoice' | 'contract' }) {
     setLoading(true)
     setListError(null)
     try {
-      const data = await get<ListResponse>(`/api/documents?kind=${kind}`)
-      setDocuments(data.documents ?? [])
+      if (reviewMode) {
+        const data = await getReviewQueue(`?kind=${kind}`)
+        setQueue(data.items)
+        setDocuments([])
+      } else {
+        const data = await get<ListResponse>(`/api/documents?kind=${kind}`)
+        setDocuments(data.documents ?? [])
+        setQueue([])
+      }
     } catch (err) {
       setListError(describeError(err))
       setDocuments([])
+      setQueue([])
     } finally {
       setLoading(false)
     }
-  }, [kind])
+  }, [kind, reviewMode])
 
   useEffect(() => {
     void load()
@@ -193,16 +223,26 @@ export function DocumentManager({ kind }: { kind: 'invoice' | 'contract' }) {
     })
   }
 
-  async function openDetail(doc: CrmDocument) {
-    setSelected(doc)
+  async function openDetail(documentId: string, _title: string) {
     setDetail(null)
     setDetailLoading(true)
+    setViolations([])
+    setAuditRows([])
+    const suffix = isInvoice ? 'invoice' : 'contract'
     try {
-      const suffix = isInvoice ? 'invoice' : 'contract'
       const data = await get<InvoiceDetail | ContractDetail>(
-        `/api/documents/${encodeURIComponent(doc.id)}/${suffix}`,
+        `/api/documents/${encodeURIComponent(documentId)}/${suffix}`,
       )
       setDetail(data)
+      setSelected(data.document)
+      if (reviewMode) {
+        const [validation, audit] = await Promise.all([
+          getValidation(documentId),
+          getAuditTrail(documentId),
+        ])
+        setViolations(validation.violations)
+        setAuditRows(audit.audit)
+      }
     } catch (err) {
       setNotice({ kind: 'bad', text: describeError(err) })
     } finally {
@@ -222,6 +262,27 @@ export function DocumentManager({ kind }: { kind: 'invoice' | 'contract' }) {
     }
   }
 
+  async function recheck(documentId: string) {
+    const data = await revalidateDocument(documentId)
+    setViolations(data.violations)
+    await load()
+  }
+
+  async function refreshAudit(documentId: string) {
+    setAuditRows((await getAuditTrail(documentId)).audit)
+  }
+
+  async function waive(documentId: string, violationId: string, reason: string) {
+    await waiveFinding(documentId, violationId, reason)
+    setViolations((await getValidation(documentId)).violations)
+    await load()
+  }
+
+  function applyCorrection(result: CorrectionResult) {
+    setViolations(result.violations)
+    if (selected) void refreshAudit(selected.id)
+  }
+
   return (
     <div className="mt-6 space-y-4">
       <div className="flex flex-wrap items-center gap-3">
@@ -236,6 +297,16 @@ export function DocumentManager({ kind }: { kind: 'invoice' | 'contract' }) {
         <Button variant="outline" size="sm" onClick={() => void load()}>
           Refresh
         </Button>
+        <Button
+          variant={reviewMode ? 'default' : 'ghost'}
+          size="sm"
+          onClick={() => setReviewMode((m) => !m)}
+        >
+          {reviewMode ? `Needs review (${queue.length})` : 'Needs review'}
+        </Button>
+        {reviewMode && documents.length === 0 && queue.length > 0 ? (
+          <Button variant="ghost" size="sm" onClick={() => setReviewMode(false)}>All {label.toLowerCase()}s</Button>
+        ) : null}
       </div>
 
       {notice ? (
@@ -280,13 +351,13 @@ export function DocumentManager({ kind }: { kind: 'invoice' | 'contract' }) {
         </div>
       ) : null}
 
-      {!loading && !listError && documents.length === 0 ? (
+      {!loading && !listError && documents.length === 0 && !(reviewMode && queue.length > 0) ? (
         <div className="rounded-lg border border-dashed border-border-strong bg-bg-card p-8 text-center text-sm text-text-muted">
           No {label.toLowerCase()}s uploaded yet.
         </div>
       ) : null}
 
-      {documents.length > 0 ? (
+      {(documents.length > 0 || (reviewMode && queue.length > 0)) ? (
         <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full border-collapse text-sm">
             <thead>
@@ -294,43 +365,78 @@ export function DocumentManager({ kind }: { kind: 'invoice' | 'contract' }) {
                 <th scope="col" className="px-3 py-2 font-medium">Title</th>
                 <th scope="col" className="px-3 py-2 font-medium">Status</th>
                 <th scope="col" className="px-3 py-2 font-medium">Confidence</th>
+                {reviewMode ? <th scope="col" className="px-3 py-2 font-medium">Findings</th> : null}
                 <th scope="col" className="px-3 py-2 font-medium">Updated</th>
                 <th scope="col" className="px-3 py-2 font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {documents.map((doc) => (
-                <tr key={doc.id} className="border-b border-border last:border-0 hover:bg-bg-hover">
-                  <td className="px-3 py-2 align-top font-medium text-text-primary">{doc.title}</td>
-                  <td className="px-3 py-2 align-top">
-                    <Badge variant={statusVariant(doc.status)}>{doc.status}</Badge>
-                  </td>
-                  <td className="px-3 py-2 align-top font-mono text-xs text-text-secondary">
-                    {doc.confidence == null ? '—' : `${Math.round(Number(doc.confidence) * 100)}%`}
-                  </td>
-                  <td className="px-3 py-2 align-top text-xs text-text-muted">
-                    {new Date(doc.updated_at).toLocaleString()}
-                  </td>
-                  <td className="px-3 py-2 align-top">
-                    <div className="flex flex-wrap gap-2">
-                      <Button variant="outline" size="sm" onClick={() => void openDetail(doc)}>
-                        View
-                      </Button>
-                      {doc.status === 'needs_review' ? (
-                        <Button variant="ghost" size="sm" onClick={() => void handleReview(doc)}>
-                          Confirm
-                        </Button>
-                      ) : null}
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {reviewMode
+                ? queue.map((item) => (
+                    <tr key={item.documentId} className="border-b border-border last:border-0">
+                      <td className="px-3 py-2">
+                        <button type="button" className="text-left text-text-primary hover:underline"
+                          onClick={() => void openDetail(item.documentId, item.title)}>
+                          {item.title}
+                        </button>
+                      </td>
+                      <td className="px-3 py-2"><Badge variant={statusVariant(item.status as CrmDocument['status'])}>{item.status}</Badge></td>
+                      <td className="px-3 py-2"><FieldConfidenceChip value={item.lowestFieldConfidence} /></td>
+                      <td className="px-3 py-2 text-text-muted">{item.reasons.map((r) => <span key={r} className="mr-1">{r}</span>)}</td>
+                      <td className="px-3 py-2 text-text-muted">{shortTime(item.createdAt)}</td>
+                    </tr>
+                  ))
+                : documents.map((doc) => (
+                    <tr key={doc.id} className="border-b border-border last:border-0 hover:bg-bg-hover">
+                      <td className="px-3 py-2 align-top font-medium text-text-primary">
+                        <button type="button" className="text-left hover:underline"
+                          onClick={() => void openDetail(doc.id, doc.title)}>
+                          {doc.title}
+                        </button>
+                      </td>
+                      <td className="px-3 py-2 align-top">
+                        <Badge variant={statusVariant(doc.status)}>{doc.status}</Badge>
+                      </td>
+                      <td className="px-3 py-2 align-top font-mono text-xs text-text-secondary">
+                        {doc.confidence == null ? '—' : `${Math.round(Number(doc.confidence) * 100)}%`}
+                      </td>
+                      <td className="px-3 py-2 align-top text-xs text-text-muted">
+                        {new Date(doc.updated_at).toLocaleString()}
+                      </td>
+                      <td className="px-3 py-2 align-top">
+                        <div className="flex flex-wrap gap-2">
+                          <Button variant="outline" size="sm" onClick={() => void openDetail(doc.id, doc.title)}>
+                            View
+                          </Button>
+                          {doc.status === 'needs_review' ? (
+                            <Button variant="ghost" size="sm" onClick={() => void handleReview(doc)}>
+                              Confirm
+                            </Button>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
             </tbody>
           </table>
         </div>
       ) : null}
 
-      {selected ? <DocumentDetail kind={kind} detail={detail} loading={detailLoading} onClose={() => setSelected(null)} /> : null}
+      {selected ? (
+        <DocumentDetail
+          kind={kind}
+          detail={detail}
+          loading={detailLoading}
+          editable={reviewMode}
+          violations={violations}
+          auditRows={auditRows}
+          onCorrected={applyCorrection}
+          onWaive={waive}
+          onRecheck={recheck}
+          onRefreshAudit={refreshAudit}
+          onClose={() => setSelected(null)}
+        />
+      ) : null}
     </div>
   )
 }
@@ -339,11 +445,25 @@ function DocumentDetail({
   kind,
   detail,
   loading,
+  editable,
+  violations,
+  auditRows,
+  onCorrected,
+  onWaive,
+  onRecheck,
+  onRefreshAudit,
   onClose,
 }: {
   kind: 'invoice' | 'contract'
   detail: InvoiceDetail | ContractDetail | null
   loading: boolean
+  editable: boolean
+  violations: StoredViolation[]
+  auditRows: AuditRow[]
+  onCorrected: (result: CorrectionResult) => void
+  onWaive: (documentId: string, violationId: string, reason: string) => Promise<void>
+  onRecheck: (documentId: string) => Promise<void>
+  onRefreshAudit: (documentId: string) => Promise<void>
   onClose: () => void
 }) {
   const isInvoice = kind === 'invoice'
@@ -362,11 +482,18 @@ function DocumentDetail({
       {loading ? <p className="text-sm text-text-muted">Loading…</p> : null}
 
       {!loading && detail && isInvoice && 'invoice' in detail ? (
-        <InvoiceView detail={detail as InvoiceDetail} />
+        <InvoiceView detail={detail} editable={editable} violations={violations} onCorrected={onCorrected} onWaive={onWaive} />
       ) : null}
 
       {!loading && detail && !isInvoice && 'contract' in detail ? (
-        <ContractView detail={detail as ContractDetail} />
+        <ContractView detail={detail} editable={editable} violations={violations} onCorrected={onCorrected} onWaive={onWaive} />
+      ) : null}
+
+      {editable && detail ? (
+        <div className="mt-3 space-y-3 border-t border-border pt-3">
+          <AuditTrail rows={auditRows} onReload={() => void onRefreshAudit(detail.document.id)} />
+          <Button variant="ghost" size="sm" onClick={() => void onRecheck(detail.document.id)}>re-check</Button>
+        </div>
       ) : null}
     </div>
   )
@@ -381,20 +508,55 @@ function Field({ name, value }: { name: string; value: React.ReactNode }) {
   )
 }
 
-function InvoiceView({ detail }: { detail: InvoiceDetail }) {
+type InvoiceViewProps = {
+  detail: InvoiceDetail
+  editable: boolean
+  violations: StoredViolation[]
+  onCorrected: (result: CorrectionResult) => void
+  onWaive: (documentId: string, violationId: string, reason: string) => Promise<void>
+}
+
+function InvoiceView({ detail, editable, violations, onCorrected, onWaive }: InvoiceViewProps) {
   const inv = detail.invoice
+  const conf = detail.document instanceof Object && 'field_confidence' in detail.document
+    ? (detail.document as { field_confidence?: Record<string, number> | null }).field_confidence ?? null
+    : null
+  const row = (column: keyof InvoiceRecord, label: string, display: React.ReactNode) => {
+    const fieldFindings = findingsFor(violations, String(column))
+    return editable && fieldFindings.length > 0 ? (
+      <EditableField
+        key={column}
+        documentId={detail.document.id}
+        tableName="invoices"
+        field={String(column)}
+        label={label}
+        value={inv?.[column] == null ? '' : String(inv[column])}
+        confidence={conf?.[String(column)]}
+        findings={fieldFindings}
+        requiredReason={fieldFindings.some((v) => v.severity === 'error' && v.status === 'open')}
+        onCorrected={onCorrected}
+        onWaive={(id, reason) => onWaive(detail.document.id, id, reason)}
+      />
+    ) : (
+      <Field key={column} name={label} value={display} />
+    )
+  }
+
   return (
     <div className="space-y-4">
       <div>
-        <Field name="Vendor" value={inv?.vendor_name ?? '—'} />
-        <Field name="Invoice number" value={inv?.invoice_number ?? '—'} />
-        <Field name="Invoice date" value={inv?.invoice_date ?? '—'} />
-        <Field name="Due date" value={inv?.due_date ?? '—'} />
-        <Field name="Currency" value={inv?.currency ?? '—'} />
-        <Field name="Subtotal" value={money(inv?.subtotal)} />
-        <Field name="Tax" value={money(inv?.tax)} />
-        <Field name="Total" value={<span className="font-semibold">{money(inv?.total)}</span>} />
+        {row('vendor_name', 'Vendor', inv?.vendor_name ?? '—')}
+        {row('invoice_number', 'Invoice number', inv?.invoice_number ?? '—')}
+        {row('invoice_date', 'Invoice date', inv?.invoice_date ?? '—')}
+        {row('due_date', 'Due date', inv?.due_date ?? '—')}
+        {row('currency', 'Currency', inv?.currency ?? '—')}
+        {row('subtotal', 'Subtotal', money(inv?.subtotal))}
+        {row('tax', 'Tax', money(inv?.tax))}
+        {row('total', 'Total', <span className="font-semibold">{money(inv?.total)}</span>)}
       </div>
+      {findingsFor(violations, 'lines.amount').length > 0 ? (
+        <FindingList violations={findingsFor(violations, 'lines.amount')} onWaive={(id, r) => onWaive(detail.document.id, id, r)} />
+      ) : null}
       <div>
         <p className="mb-1 text-xs uppercase tracking-[0.06em] text-text-muted">Line items</p>
         {detail.lines.length === 0 ? (
@@ -414,18 +576,50 @@ function InvoiceView({ detail }: { detail: InvoiceDetail }) {
   )
 }
 
-function ContractView({ detail }: { detail: ContractDetail }) {
+type ContractViewProps = {
+  detail: ContractDetail
+  editable: boolean
+  violations: StoredViolation[]
+  onCorrected: (result: CorrectionResult) => void
+  onWaive: (documentId: string, violationId: string, reason: string) => Promise<void>
+}
+
+function ContractView({ detail, editable, violations, onCorrected, onWaive }: ContractViewProps) {
   const con = detail.contract
+  const conf = detail.document instanceof Object && 'field_confidence' in detail.document
+    ? (detail.document as { field_confidence?: Record<string, number> | null }).field_confidence ?? null
+    : null
+  const row = (column: keyof ContractRecord, label: string, display: React.ReactNode) => {
+    const fieldFindings = findingsFor(violations, String(column))
+    return editable && fieldFindings.length > 0 ? (
+      <EditableField
+        key={column}
+        documentId={detail.document.id}
+        tableName="contracts"
+        field={String(column)}
+        label={label}
+        value={con?.[column] == null ? '' : String(con[column])}
+        confidence={conf?.[String(column)]}
+        findings={fieldFindings}
+        requiredReason={fieldFindings.some((v) => v.severity === 'error' && v.status === 'open')}
+        onCorrected={onCorrected}
+        onWaive={(id, reason) => onWaive(detail.document.id, id, reason)}
+      />
+    ) : (
+      <Field key={column} name={label} value={display} />
+    )
+  }
+
   return (
     <div className="space-y-4">
       <div>
-        <Field name="Counterparty" value={con?.counterparty ?? '—'} />
-        <Field name="Effective date" value={con?.effective_date ?? '—'} />
-        <Field name="Expiry date" value={con?.expiry_date ?? '—'} />
-        <Field name="Term (months)" value={con?.term_months ?? '—'} />
-        <Field name="Value" value={<span className="font-semibold">{money(con?.contract_value)}</span>} />
-        <Field name="Currency" value={con?.currency ?? '—'} />
-        <Field name="Auto-renewal" value={con?.auto_renewal == null ? '—' : con.auto_renewal ? 'Yes' : 'No'} />
+        {row('counterparty', 'Counterparty', con?.counterparty ?? '—')}
+        {row('effective_date', 'Effective date', con?.effective_date ?? '—')}
+        {row('expiry_date', 'Expiry date', con?.expiry_date ?? '—')}
+        {row('term_months', 'Term (months)', con?.term_months ?? '—')}
+        {row('contract_value', 'Value', <span className="font-semibold">{money(con?.contract_value)}</span>)}
+        {row('currency', 'Currency', con?.currency ?? '—')}
+        {row('auto_renewal', 'Auto-renewal', con?.auto_renewal == null ? '—' : con.auto_renewal ? 'Yes' : 'No')}
       </div>
       <div>
         <p className="mb-1 text-xs uppercase tracking-[0.06em] text-text-muted">Key terms</p>
