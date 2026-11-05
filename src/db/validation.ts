@@ -371,6 +371,9 @@ export interface ReviewAnalytics {
   correctionRate: { corrected: number; documents: number; rate: number | null }
   turnaround: { p50Hours: number | null; p90Hours: number | null }
   confidenceTrend: Array<{ week: string; avgConfidence: number | null; correctionRate: number | null }>
+  byCustomer: Array<{ customer: string; documents: number; documentsWithFindings: number; totalFindings: number }>
+  byVendor: Array<{ vendor: string; documents: number; documentsWithFindings: number; totalFindings: number }>
+  heatmap: Array<{ kind: 'invoice' | 'contract'; field: string; corrections: number }>
 }
 
 /**
@@ -387,7 +390,7 @@ export async function reviewAnalytics(
   const client = getDbClient()
   const p = [tenantId, window.from, window.toExclusive, kind]
 
-  const [byRule, topFields, bySource, rate, turnaround, trend] = await Promise.all([
+  const [byRule, topFields, bySource, rate, turnaround, trend, byCustomer, byVendor, heatmap] = await Promise.all([
     client.query<{ rule_id: string; total: number; open: number; waived: number }>(
       `SELECT rule_id,
               COUNT(*)::int AS total,
@@ -495,6 +498,59 @@ export async function reviewAnalytics(
          FROM docs GROUP BY week ORDER BY week`,
       p,
     ),
+    // byCustomer: top customers by finding count (documents without a customer are excluded)
+    client.query<{ customer: string; documents: number; documents_with_findings: number; total_findings: number }>(
+      `SELECT c.name AS customer,
+              COUNT(DISTINCT d.id)::int AS documents,
+              COUNT(DISTINCT v.document_id)::int AS documents_with_findings,
+              COUNT(*)::int AS total_findings
+         FROM documents d
+         JOIN customers c ON c.id = d.customer_id AND c.tenant_id = d.tenant_id
+         LEFT JOIN document_validation v ON v.document_id = d.id AND v.tenant_id = d.tenant_id
+        WHERE d.tenant_id = $1
+          AND d.kind IN ('invoice', 'contract')
+          AND ($4::text IS NULL OR d.kind = $4)
+          AND d.created_at >= $2 AND d.created_at < $3
+        GROUP BY c.id, c.name
+        ORDER BY total_findings DESC, c.name
+        LIMIT 10`,
+      p,
+    ),
+    // byVendor: top vendors by finding count (invoices only, since vendor_name lives there)
+    // Note: This query doesn't use $4 (kind filter) because it's hardcoded to invoices
+    client.query<{ vendor: string; documents: number; documents_with_findings: number; total_findings: number }>(
+      `SELECT i.vendor_name AS vendor,
+              COUNT(DISTINCT d.id)::int AS documents,
+              COUNT(DISTINCT v.document_id)::int AS documents_with_findings,
+              COUNT(v.document_id)::int AS total_findings
+         FROM documents d
+         JOIN invoices i ON i.document_id = d.id
+         LEFT JOIN document_validation v ON v.document_id = d.id AND v.tenant_id = d.tenant_id
+        WHERE d.tenant_id = $1
+          AND d.kind = 'invoice'
+          AND d.created_at >= $2 AND d.created_at < $3
+          AND i.vendor_name IS NOT NULL
+        GROUP BY i.vendor_name
+        ORDER BY total_findings DESC, i.vendor_name
+        LIMIT 10`,
+      [tenantId, window.from, window.toExclusive],
+    ),
+    // heatmap: top field-kind combinations by correction count
+    client.query<{ kind: string; field: string; corrections: number }>(
+      `SELECT d.kind,
+              a.field_name AS field,
+              COUNT(*)::int AS corrections
+         FROM document_field_audit a
+         JOIN documents d ON d.id = a.document_id AND d.tenant_id = a.tenant_id
+        WHERE a.tenant_id = $1
+          AND a.change_source = 'manual_correction'
+          AND a.changed_at >= $2 AND a.changed_at < $3
+          AND ($4::text IS NULL OR d.kind = $4)
+        GROUP BY d.kind, a.field_name
+        ORDER BY corrections DESC, d.kind, a.field_name
+        LIMIT 20`,
+      p,
+    ),
   ])
 
   const corrected = rate.rows[0]?.corrected ?? 0
@@ -513,6 +569,23 @@ export async function reviewAnalytics(
       week: r.week,
       avgConfidence: r.avg_confidence,
       correctionRate: r.correction_rate,
+    })),
+    byCustomer: byCustomer.rows.map((r) => ({
+      customer: r.customer,
+      documents: r.documents,
+      documentsWithFindings: r.documents_with_findings,
+      totalFindings: r.total_findings,
+    })),
+    byVendor: kind === 'contract' ? [] : byVendor.rows.map((r) => ({
+      vendor: r.vendor,
+      documents: r.documents,
+      documentsWithFindings: r.documents_with_findings,
+      totalFindings: r.total_findings,
+    })),
+    heatmap: heatmap.rows.map((r) => ({
+      kind: r.kind as 'invoice' | 'contract',
+      field: r.field,
+      corrections: r.corrections,
     })),
   }
 }

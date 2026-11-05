@@ -81,6 +81,8 @@ export function DocumentManager({ kind }: { kind: 'invoice' | 'contract' }) {
   const [reviewMode, setReviewMode] = useState(false)
   const [showStats, setShowStats] = useState(false)
   const [queue, setQueue] = useState<ReviewQueueItem[]>([])
+  const [cursor, setCursor] = useState<string | null>(null)
+  const [hasMore, setHasMore] = useState(false)
   const [violations, setViolations] = useState<StoredViolation[]>([])
   const [auditRows, setAuditRows] = useState<AuditRow[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -101,13 +103,17 @@ export function DocumentManager({ kind }: { kind: 'invoice' | 'contract' }) {
     setListError(null)
     try {
       if (reviewMode) {
-        const data = await getReviewQueue(`?kind=${kind}`)
+        const data = await getReviewQueue(`?kind=${kind}&limit=50`)
         setQueue(data.items)
+        setCursor(data.nextCursor)
+        setHasMore(data.hasMore)
         setDocuments([])
       } else {
         const data = await get<ListResponse>(`/api/documents?kind=${kind}`)
         setDocuments(data.documents ?? [])
         setQueue([])
+        setCursor(null)
+        setHasMore(false)
       }
     } catch (err) {
       setListError(describeError(err))
@@ -117,6 +123,21 @@ export function DocumentManager({ kind }: { kind: 'invoice' | 'contract' }) {
       setLoading(false)
     }
   }, [kind, reviewMode])
+
+  async function loadMore() {
+    if (!cursor || !hasMore) return
+    setLoading(true)
+    try {
+      const data = await getReviewQueue(`?kind=${kind}&limit=50&cursor=${encodeURIComponent(cursor)}`)
+      setQueue((prev) => [...prev, ...data.items])
+      setCursor(data.nextCursor)
+      setHasMore(data.hasMore)
+    } catch (err) {
+      setListError(describeError(err))
+    } finally {
+      setLoading(false)
+    }
+  }
 
   useEffect(() => {
     void load()
@@ -302,12 +323,30 @@ export function DocumentManager({ kind }: { kind: 'invoice' | 'contract' }) {
         <Button
           variant={reviewMode ? 'default' : 'ghost'}
           size="sm"
-          onClick={() => setReviewMode((m) => !m)}
+          onClick={() => {
+            setReviewMode((m) => {
+              if (!m) {
+                // Entering review mode: reset cursor and load first page
+                setCursor(null)
+                setHasMore(false)
+                setQueue([])
+              } else {
+                // Leaving review mode: reset cursor state
+                setCursor(null)
+                setHasMore(false)
+              }
+              return !m
+            })
+          }}
         >
           {reviewMode ? `Needs review (${queue.length})` : 'Needs review'}
         </Button>
         {reviewMode && documents.length === 0 && queue.length > 0 ? (
-          <Button variant="ghost" size="sm" onClick={() => setReviewMode(false)}>All {label.toLowerCase()}s</Button>
+          <Button variant="ghost" size="sm" onClick={() => {
+            setReviewMode(false)
+            setCursor(null)
+            setHasMore(false)
+          }}>All {label.toLowerCase()}s</Button>
         ) : null}
         <Button variant="ghost" size="sm" onClick={() => setShowStats((s) => !s)}>Review stats</Button>
       </div>
@@ -423,6 +462,12 @@ export function DocumentManager({ kind }: { kind: 'invoice' | 'contract' }) {
             </tbody>
           </table>
         </div>
+      ) : null}
+
+      {reviewMode && hasMore ? (
+        <Button variant="outline" size="sm" onClick={() => { void loadMore() }}>
+          Load more
+        </Button>
       ) : null}
 
       {showStats ? <ReviewAnalytics kind={kind} /> : null}

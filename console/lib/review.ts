@@ -53,7 +53,8 @@ export interface ReviewQueueResponse {
   items: ReviewQueueItem[]
   total: number
   limit: number
-  offset: number
+  nextCursor: string | null
+  hasMore: boolean
 }
 
 export interface AuditRow {
@@ -85,6 +86,9 @@ export interface ReviewAnalytics {
   correctionRate: { corrected: number; documents: number; rate: number | null }
   turnaround: { p50Hours: number | null; p90Hours: number | null }
   confidenceTrend: Array<{ week: string; avgConfidence: number | null; correctionRate: number | null }>
+  byCustomer: Array<{ customer: string; documents: number; documentsWithFindings: number; totalFindings: number }>
+  byVendor: Array<{ vendor: string; documents: number; documentsWithFindings: number; totalFindings: number }>
+  heatmap: Array<{ kind: 'invoice' | 'contract'; field: string; corrections: number }>
 }
 
 // No identity headers are added here (R61, correction #3):

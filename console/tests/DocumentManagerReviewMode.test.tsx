@@ -22,7 +22,7 @@ function document(over: Partial<CrmDocument> = {}): CrmDocument {
 const QUEUE: Reply = {
   status: 200,
   body: {
-    total: 1, limit: 50, offset: 0,
+    total: 1, limit: 50, nextCursor: null, hasMore: false,
     items: [{
       documentId: DOC, title: 'Acme hosting invoice', kind: 'invoice', status: 'needs_review',
       confidence: 0.92, lowestFieldConfidence: 0.2, openErrors: 1, openWarnings: 0,
