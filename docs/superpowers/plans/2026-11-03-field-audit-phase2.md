@@ -153,7 +153,7 @@ Expected: empty here, the new commit at HEAD, and still 33 entries in the primar
 - Consumes: `getDbClient().connect()` returning `PoolClient`.
 - Produces: `setAuditContext(client: PoolClient, context: AuditContext): Promise<void>`, `AuditContext.changeSource` with the `re-parse` spelling, and `CHANGE_SOURCES` as the single five-value list. Tasks 9 and 10 import `setAuditContext`; Task 13 imports `CHANGE_SOURCES`.
 
-- [ ] **Step 1: Rewrite the unit test so it fails first**
+- [x] **Step 1: Rewrite the unit test so it fails first**
 
 Replace the body of `tests/db/audit-context.test.ts` with:
 
@@ -198,7 +198,7 @@ describe('setAuditContext', () => {
 Run: `npx vitest run tests/db/audit-context.test.ts`
 Expected: FAIL. The current signature takes one argument, passes `false` as the is-local flag, and its union says `re_parse`.
 
-- [ ] **Step 2: Write the integration test that proves the leak**
+- [x] **Step 2: Write the integration test that proves the leak**
 
 Create `tests/db/audit-context-isolation.test.ts`. Copy the `.env` header, the `TENANT` and `USER` constants and the `seedInvoice` insert from `tests/db/field-audit.test.ts:1-80`, then add:
 
@@ -238,7 +238,7 @@ it('does not attribute a later write on the same connection to an earlier actor'
 Run: `npx vitest run tests/db/audit-context-isolation.test.ts`
 Expected: FAIL, `changed_by` equal to `USER`. That failure is the evidence the fix is real, so record it in the report.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `src/db/audit-context.ts` in full:
 
@@ -268,7 +268,7 @@ export async function setAuditContext(client: PoolClient, context: AuditContext)
 
 The `changeSource` spelling now matches the shipped `CHECK` at `migrations/0023_crum_field_audit.sql:18`, which reads `re-parse`. The migration is the authority, so the literal moves, not the constraint. `CHANGE_SOURCES` is exported as a tuple so `Task 13` validates the export filter against the same list the type is derived from, rather than a second hand-written array.
 
-- [ ] **Step 4: Route the correction handler through it**
+- [x] **Step 4: Route the correction handler through it**
 
 In `src/api/documents.ts`, replace the two inline `set_config` queries at lines 400-401 with one call, keeping the `BEGIN` before it:
 
@@ -279,12 +279,12 @@ await setAuditContext(client, { userId: identity.userId, changeSource: 'manual_c
 
 Add `import { setAuditContext } from '../db/audit-context'` beside the other `../db` imports.
 
-- [ ] **Step 5: Run the three affected suites**
+- [x] **Step 5: Run the three affected suites**
 
 Run: `npx vitest run tests/db/audit-context.test.ts tests/db/audit-context-isolation.test.ts tests/api/document-correction.test.ts`
 Expected: all PASS. The correction suite proves `changed_by` is still stamped inside a transaction.
 
-- [ ] **Step 6: Typecheck, lint, commit**
+- [x] **Step 6: Typecheck, lint, commit**
 
 ```bash
 npx tsc --noEmit && npx eslint .
@@ -310,7 +310,7 @@ git commit -m "fix(audit): provenance settings stop surviving the connection the
 
 `rules.ts` is created here as `export const RULES: ValidationRule[] = []` so `evaluate` is testable before any rule exists. Tasks 4 and 5 fill it.
 
-- [ ] **Step 1: Write the failing primitive tests**
+- [x] **Step 1: Write the failing primitive tests**
 
 Create `tests/validation/values.test.ts`:
 
@@ -409,11 +409,11 @@ describe('isCurrencyShape', () => {
 Run: `npx vitest run tests/validation/values.test.ts`
 Expected: FAIL, the modules do not exist.
 
-- [ ] **Step 2: Implement `src/validation/types.ts`**
+- [x] **Step 2: Implement `src/validation/types.ts`**
 
 Copy spec section 5.1 word for word. Five exported types, zero imports, zero runtime statements.
 
-- [ ] **Step 3: Implement `src/validation/values.ts`**
+- [x] **Step 3: Implement `src/validation/values.ts`**
 
 ```ts
 export const AMOUNT_TOLERANCE = 0.01
@@ -472,7 +472,7 @@ export function parseDate(v: unknown): string | null {
 
 The time branch exists for strings that come out of extraction and out of `parsedJson`, not for `pg`. An earlier draft of this paragraph claimed `pg` renders a timestamp as `2026-03-01T00:00:00`, and that is wrong twice over: `pg-types` binds OID 1114 and 1184 to `postgres-date` as well as 1082, so a timestamp reaches `buildBundle` as a `Date` and never as a string, and when Postgres does emit text it is space-separated (`DateStyle=ISO`). The separator is therefore `[ T]` and an optional offset group follows, because rejecting `2026-03-01 09:00:00` as absent would silence a rule judging a perfectly well-formed extracted value. Whatever the time part says, the day returned is the day the string writes: `2026-03-01T23:00:00-05:00` gives `2026-03-01` even though that instant is already the next day in UTC, because the frame rule in constraint 6 forbids a conversion here and the values test pins it.
 
-- [ ] **Step 4: Implement `src/validation/rules.ts` as an empty catalogue**
+- [x] **Step 4: Implement `src/validation/rules.ts` as an empty catalogue**
 
 ```ts
 import type { ValidationRule } from './types.js'
@@ -480,7 +480,7 @@ import type { ValidationRule } from './types.js'
 export const RULES: ValidationRule[] = []
 ```
 
-- [ ] **Step 5: Implement `src/validation/index.ts`**
+- [x] **Step 5: Implement `src/validation/index.ts`**
 
 ```ts
 import { RULES } from './rules.js'
@@ -575,7 +575,7 @@ The first two lines of `evaluate` are spec 5.2's "drops rules whose subject row 
 
 `coerce` narrows with `typeof` before it calls `String`, rather than applying `String(value)` to a value it has already checked for null. Two reasons, both measured. First, `@typescript-eslint/no-base-to-string` is enabled in this repo's config, and after `if (value === null || value === undefined) return null` the residual type is `{}`, which the rule errors on: a scratch file with `String(v)` on an unchecked `unknown` lints clean, while the same call after that null check fails at the `String` line. Narrowing first leaves no residual to complain about, so neither a lint suppression in production code nor a cast that lies about the value's type is needed. Second, a plain object reaching this boundary would stringify to `[object Object]`, which every rule then reads as a present value, and a finding on it is worse than no finding; returning `null` makes an unexpected object read as absent, which constraint 5 already defines as the safe state. One object type is not a guard, and this paragraph said otherwise until it was measured: `getInvoice` and `getContract` do `SELECT *` (`src/db/documents.ts:492,508`) and their row types declare `invoice_date: string | null`, but nothing in `src/` or `scripts/` calls `setTypeParser`, so `pg`'s default applies and a `date` column arrives as a `Date`. Measured against the project's live pooler, `SELECT '2026-11-03'::date` returns a `Date` whose `String()` is `Tue Nov 03 2026 00:00:00 GMT+1100` and whose `toISOString()` is `2026-11-02T13:00:00.000Z`; the same query returns `numeric` as a string and `boolean` as a boolean. Task 9's brief says those rows feed `buildBundle`, so without the `instanceof Date` branch every date rule would read `invoice_date` as absent, and with a `toISOString()` version it would judge the day before the one stored.
 
-- [ ] **Step 6: Write the failing evaluate tests**
+- [x] **Step 6: Write the failing evaluate tests**
 
 Create `tests/validation/evaluate.test.ts`. It builds rules inline rather than importing the catalogue, so the engine contract stays independent of which rules exist.
 
@@ -779,7 +779,7 @@ describe('evaluate', () => {
 Run: `npx vitest run tests/validation/evaluate.test.ts`
 Expected: FAIL until Step 5 is complete, then PASS.
 
-- [ ] **Step 7: Typecheck, lint, commit**
+- [x] **Step 7: Typecheck, lint, commit**
 
 ```bash
 npx tsc --noEmit && npx eslint .
@@ -801,7 +801,7 @@ git commit -m "feat(validation): a pure rules engine with a total order over its
 - Consumes: `src/validation/values.js` primitives, `DocumentRecordBundle`, `ValidationContext`.
 - Produces: 13 entries in `RULES` with the exact ids in spec section 6. Task 5 appends 6 more to the same array. Task 7 asserts `RULES.length` is 19.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/validation/rules-invoice.test.ts`. Every rule gets a case that fires and a case that stays silent. `CTX.today` is always pinned, so no test reads the clock.
 
@@ -956,7 +956,7 @@ it('pins the thirteen invoice rule ids', () => {
 Run: `npx vitest run tests/validation/rules-invoice.test.ts`
 Expected: FAIL on every case, because `RULES` is empty.
 
-- [ ] **Step 2: Implement**
+- [x] **Step 2: Implement**
 
 Replace `src/validation/rules.ts` with the invoice half. Keep the shape so Task 5 appends cleanly.
 
@@ -1135,12 +1135,12 @@ A document missing its total yields `invoice.total.present` and no arithmetic co
 value rules require every operand to parse before they speak. That is why the silence tests in Step 1
 matter as much as the firing tests.
 
-- [ ] **Step 3: Run and confirm**
+- [x] **Step 3: Run and confirm**
 
 Run: `npx vitest run tests/validation/rules-invoice.test.ts tests/validation/evaluate.test.ts`
 Expected: all PASS, and `evaluate.test.ts` still passes against a non-empty `RULES` because it injects its own rules.
 
-- [ ] **Step 4: Typecheck, lint, commit**
+- [x] **Step 4: Typecheck, lint, commit**
 
 ```bash
 npx tsc --noEmit && npx eslint .
@@ -1161,7 +1161,7 @@ git commit -m "feat(validation): thirteen invoice rules, each with the case that
 - Consumes: the same helpers Task 4 introduced: `make`, `header`, `present`, the `./values.js` primitives.
 - Produces: `RULES.length === 19`. Tasks 6 to 13 import only `RULES`, `evaluate`, `buildBundle`, `RULESET_VERSION` and `localDay`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/validation/rules-contract.test.ts`:
 
@@ -1254,7 +1254,7 @@ it('pins the nineteen rule ids across both kinds', () => {
 Run: `npx vitest run tests/validation/rules-contract.test.ts`
 Expected: FAIL, `RULES.length` is 13 and no `contract.*` id exists.
 
-- [ ] **Step 2: Implement**
+- [x] **Step 2: Implement**
 
 Append to the `RULES` array in `src/validation/rules.ts`. Reuse `make`, `header`, `present`; do not add a second helper file.
 
@@ -1319,12 +1319,12 @@ Append to the `RULES` array in `src/validation/rules.ts`. Reuse `make`, `header`
   },
 ```
 
-- [ ] **Step 3: Run the whole validation suite**
+- [x] **Step 3: Run the whole validation suite**
 
 Run: `npx vitest run tests/validation`
 Expected: all PASS across the four files.
 
-- [ ] **Step 4: Typecheck, lint, commit**
+- [x] **Step 4: Typecheck, lint, commit**
 
 ```bash
 npx tsc --noEmit && npx eslint .
@@ -1347,12 +1347,12 @@ Resolved at pre-flight: `tests/db/schema-parity.test.ts` does not exist, and the
 - Consumes: `documents(id)`, and the `log_field_changes()` body shipped in `migrations/0023_crum_field_audit.sql:28-100`.
 - Produces: table `document_validation` with columns `id, document_id, tenant_id, ruleset_version, severity, rule_id, field_name, message, status, waived_by, waived_at, waiver_reason, created_at` and constraint `uq_validation_slot UNIQUE (document_id, rule_id, field_name)`. Task 7 writes it. Also produces the corrected `log_field_changes()`, which reads the actor as `NULLIF(current_setting('app.current_user_id', true), '')::uuid`, so Tasks 8 to 13 can write audited rows on a pooled backend that has already carried a correction.
 
-- [ ] **Step 1: Confirm 0024 and 0025 are free**
+- [x] **Step 1: Confirm 0024 and 0025 are free**
 
 Run: `ls migrations/ | tail -5 && grep -rl "002[45]" migrations/ | head`
 Expected: the highest existing prefix is `0023`. If another file already claims one of these numbers, take the next free number and update every reference to the filename in this plan's later tasks.
 
-- [ ] **Step 2: Write the migration**
+- [x] **Step 2: Write the migration**
 
 ```sql
 -- Phase 2: validation findings for extracted business documents.
@@ -1388,7 +1388,7 @@ CREATE INDEX IF NOT EXISTS idx_validation_tenant_rule ON document_validation (te
 CREATE INDEX IF NOT EXISTS idx_validation_tenant_field ON document_validation (tenant_id, field_name, created_at DESC);
 ```
 
-- [ ] **Step 3: Write the failing placeholder-guard test**
+- [x] **Step 3: Write the failing placeholder-guard test**
 
 Create `tests/db/audit-context-placeholder.test.ts`. Copy the `.env` header from `tests/db/field-audit.test.ts:1-12` and the session-mode connection and `seedInvoice` pattern from `tests/db/audit-context-isolation.test.ts`, which Task 2 landed. The point is a backend that has ALREADY carried a transaction-local context, because that is the state in which Postgres leaves the custom GUC holding the placeholder `''` rather than NULL.
 
@@ -1409,7 +1409,7 @@ it('still audits a contextless write on a backend that once carried a context', 
 Run: `npx vitest run tests/db/audit-context-placeholder.test.ts`
 Expected: FAIL at step 4 with `error: invalid input syntax for type uuid: ""`. Record that output in the report; it is the evidence the guard is needed. If step 3 reads NULL rather than `''`, the premise is wrong on this server version: stop and report BLOCKED with what the read returned, because then Step 4 has a different cause.
 
-- [ ] **Step 4: Write 0025 and make the test pass**
+- [x] **Step 4: Write 0025 and make the test pass**
 
 Create `migrations/0025_crum_audit_user_placeholder_guard.sql`. Copy the body of `log_field_changes()` from `migrations/0023_crum_field_audit.sql:28-100` verbatim into a `CREATE OR REPLACE FUNCTION log_field_changes() RETURNS TRIGGER AS $$ ... $$ LANGUAGE plpgsql;` statement, and change exactly one line: 0023's
 
@@ -1430,12 +1430,12 @@ Above the statement, put a header comment naming the single delta and why, and d
 Run: `npx vitest run tests/db/audit-context-placeholder.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Apply both migrations**
+- [x] **Step 5: Apply both migrations**
 
 Run: `npx tsx scripts/db-migrate.ts`
 Expected: it records versions `0024` and `0025` and prints no error. If the runner refuses because it expects a paired schema export, run `npm run db:export-schema` and include the regenerated artifact in Step 6's commit.
 
-- [ ] **Step 6: Verify the shapes with psql through the runner's own client**
+- [x] **Step 6: Verify the shapes with psql through the runner's own client**
 
 Run:
 
@@ -1453,7 +1453,7 @@ console.log(f.rows[0].prosrc.includes(\"NULLIF(current_setting('app.current_user
 
 Expected: 13 columns in the order above, the constraint list includes `uq_validation_slot`, `document_validation_severity_check`, `document_validation_status_check`, and the last line prints `true`, which proves the live server carries the guarded cast.
 
-- [ ] **Step 7: Typecheck, lint, commit**
+- [x] **Step 7: Typecheck, lint, commit**
 
 ```bash
 npx tsc --noEmit && npx eslint .
@@ -1510,7 +1510,7 @@ export function openCounts(documentIds: readonly string[], tenantId: string): Pr
 
 Ruling carried from spec section 7.2: `replaceValidation` takes the caller's connection so Task 10 can keep the field write and the finding refresh in one transaction.
 
-- [ ] **Step 1: Write the failing DB tests**
+- [x] **Step 1: Write the failing DB tests**
 
 Create `tests/db/validation.test.ts`. Copy the `.env` header, the `TENANT` and `USER` constants, and the invoice seeding helper from `tests/db/field-audit.test.ts:1-80`.
 
@@ -1604,7 +1604,7 @@ it('openCounts reports one entry per document and none for a clean one', async (
 Run: `npx vitest run tests/db/validation.test.ts`
 Expected: FAIL, the module does not exist.
 
-- [ ] **Step 2: Implement**
+- [x] **Step 2: Implement**
 
 ```ts
 import { getDbClient } from './client.js'
@@ -1759,12 +1759,12 @@ AND NOT EXISTS (
 
 Use that form, passing two parallel arrays, and confirm the replace test still passes. `COLUMN_BY_KEY` is dead once the row mapper is written; delete it rather than shipping it.
 
-- [ ] **Step 3: Run the suite**
+- [x] **Step 3: Run the suite**
 
 Run: `npx vitest run tests/db/validation.test.ts`
 Expected: all PASS.
 
-- [ ] **Step 4: Typecheck, lint, commit**
+- [x] **Step 4: Typecheck, lint, commit**
 
 ```bash
 npx tsc --noEmit && npx eslint .
@@ -1798,7 +1798,7 @@ export function isCorrectable(field: string): boolean
 here so the engine, the correction route and the queue agree on one list. Task 9 deletes the two local
 copies. `persistStructuredStep` gains `export`, so the test can drive it directly.
 
-- [ ] **Step 1: Create `src/validation/fields.ts`**
+- [x] **Step 1: Create `src/validation/fields.ts`**
 
 ```ts
 /** Columns a reviewer may correct. The audit trigger fires on each of these. */
@@ -1825,7 +1825,7 @@ export function isCorrectable(field: string): boolean {
 Run: `npx tsc --noEmit`
 Expected: exit 0. Nothing imports the new module yet.
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 `persistStructuredStep` is the unit under test, so the test drives it with a mocked `src/db/documents` and a mocked `src/db/validation`, the same mock style and the same relative depth `tests/mastra/workflows/ingest-asset-guard.test.ts:13-17` uses.
 
@@ -1906,7 +1906,7 @@ it('leaves a compliant invoice at ready', async () => {
 Run: `npx vitest run tests/mastra/workflows/intake-validation.test.ts`
 Expected: FAIL, no `validationCount` on the output and `status` is `ready` for `BAD_SUM`.
 
-- [ ] **Step 3: Extend the persisted schema**
+- [x] **Step 3: Extend the persisted schema**
 
 `persistedSchema` at `document-intake.ts:515` gains one field:
 
@@ -1924,7 +1924,7 @@ const persistedSchema = normalizedSchema.extend({
 
 Both new keys are additive, so `src/queue/intake-run.ts` and the processing dashboard keep reading the keys they know.
 
-- [ ] **Step 4: Evaluate before the insert and feed the status**
+- [x] **Step 4: Evaluate before the insert and feed the status**
 
 Inside `persistStructuredStep.execute`, after `invoicePart` and `contractPart` are derived and before `insertDocument`:
 
@@ -1946,7 +1946,7 @@ const status = inputData.needsReview || openErrors > 0 ? 'needs_review' : 'ready
 
 `isCorrectable` comes from `src/validation/fields.ts`, created in Step 1. Findings on any other field are dropped rather than stored, so a stored finding always names something the review surface can either correct or explain.
 
-- [ ] **Step 5: Write the findings after the insert**
+- [x] **Step 5: Write the findings after the insert**
 
 After `created` returns, on the same connection the step already uses:
 
@@ -1959,12 +1959,12 @@ return { ...inputData, documentId: created.id, status, validationCount: violatio
 
 `insertDocument` already runs in its own transaction, so a separate `replaceValidation` immediately after it can leave a persisted document with no findings if the second write throws. Wrap the two in one transaction using `getDbClient().connect()` and the `Q` parameter `replaceValidation` already accepts, and pass that client to `insertDocument` if it takes one; if it does not, accept the small window and record it in the report as a known gap rather than refactoring `insertDocument` in this task.
 
-- [ ] **Step 6: Run the workflow suite and the queue suite**
+- [x] **Step 6: Run the workflow suite and the queue suite**
 
 Run: `npx vitest run tests/mastra/workflows tests/queue`
 Expected: all PASS, including the pre-existing intake tests, which now assert a wider output shape.
 
-- [ ] **Step 7: Typecheck, lint, commit**
+- [x] **Step 7: Typecheck, lint, commit**
 
 ```bash
 npx tsc --noEmit && npx eslint .
@@ -1985,7 +1985,7 @@ git commit -m "feat(intake): a broken sum queues a document even at high confide
 - Consumes: `listViolations`, `waiveViolation`, `replaceValidation` from Task 7; `evaluate`, `buildBundle`, `localDay`, `RULESET_VERSION` from Task 3; `INVOICE_FIELDS`, `CONTRACT_FIELDS` from Task 8; `getInvoice`, `getContract`, `getDocument` from `src/db/documents.ts`.
 - Produces: `GET /api/documents/:id/validation`, `POST /api/documents/:id/validation`, `POST /api/documents/:id/validation/:violationId/waive`. Task 10 reuses the `runValidationForDocument` helper this task extracts.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/api/document-validation.test.ts` using `createTestServer` from `tests/helpers/test-server.ts`, which already wires the real router to the real database. Seed through `server.db` the way `tests/api/document-correction.test.ts` does.
 
@@ -2089,7 +2089,7 @@ describe('H3, the detail responses stop leaking internal join columns', () => {
 Run: `npx vitest run tests/api/document-validation.test.ts`
 Expected: FAIL, the routes do not exist and the leak is present.
 
-- [ ] **Step 2: Extract the shared evaluation**
+- [x] **Step 2: Extract the shared evaluation**
 
 Above the router factory in `src/api/documents.ts`:
 
@@ -2116,7 +2116,7 @@ async function runValidationForDocument(
 local to this module and take `null` headers, because a document with no header row must still evaluate
 and produce the presence findings.
 
-- [ ] **Step 3: The three routes**
+- [x] **Step 3: The three routes**
 
 ```ts
 app.get('/:id/validation', async (c) => {
@@ -2174,7 +2174,7 @@ app.post('/:id/validation/:violationId/waive', async (c) => {
 The waive route re-runs validation last so the response carries the count the queue will show next. That
 re-run does not reopen the row it just waived, which `replaceValidation` guarantees and Task 7 tests.
 
-- [ ] **Step 4: Delete the duplicated field lists and fix the projections**
+- [x] **Step 4: Delete the duplicated field lists and fix the projections**
 
 Replace the two local `ALLOWED_INVOICE_FIELDS` and `ALLOWED_CONTRACT_FIELDS` at
 `src/api/documents.ts:359-360` with imports of `INVOICE_FIELDS` and `CONTRACT_FIELDS` from
@@ -2189,12 +2189,12 @@ Do the same with `contract_field_confidence` in `/:id/contract`. In `GET /:id`, 
 arrives through `getDocument`, so keep `fieldConfidence` as the single camelCase key in the response and
 drop `field_confidence` from the serialised document.
 
-- [ ] **Step 5: Run the affected suites**
+- [x] **Step 5: Run the affected suites**
 
 Run: `npx vitest run tests/api/document-validation.test.ts tests/api/document-audit.test.ts tests/api/document-correction.test.ts tests/api/documents.test.ts`
 Expected: all PASS. `documents.test.ts` is the one that can catch the projection change, so read any failure there as a contract change rather than rewriting the assertion first.
 
-- [ ] **Step 6: Typecheck, lint, commit**
+- [x] **Step 6: Typecheck, lint, commit**
 
 ```bash
 npx tsc --noEmit && npx eslint .
@@ -2215,7 +2215,7 @@ git commit -m "feat(api): read, re-run and waive a validation finding, and stop 
 - Consumes: `runValidationForDocument` from Task 9, `setAuditContext` from Task 2, the dedicated `PoolClient` `handleCorrection` already opens.
 - Produces: a `PATCH` response body of `{ success: true, openErrors, openWarnings, violations }`. The console in Task 14 repaints from that body without a second request.
 
-- [ ] **Step 1: Write the failing integration test**
+- [x] **Step 1: Write the failing integration test**
 
 Create `tests/integration/correction-revalidates.test.ts`. It is integration because it needs the trigger, the pool and the validation write in one flow. Copy the `.env` header from `tests/db/field-audit.test.ts:1-12` and use `createTestServer`.
 
@@ -2272,7 +2272,7 @@ it('attributes both corrections on one pooled connection to their own actor', as
 Run: `npx vitest run tests/integration/correction-revalidates.test.ts`
 Expected: FAIL, the `PATCH` body carries no `openErrors`.
 
-- [ ] **Step 2: Fix the reason stamp (H2) and re-validate (spec section 8.3)**
+- [x] **Step 2: Fix the reason stamp (H2) and re-validate (spec section 8.3)**
 
 The Phase 1 stamp matched `changed_at = MAX(changed_at)` for the field, so two corrections landing in the
 same instant stamp the same row. A per-request watermark cannot collide, because the trigger's `now()` is
@@ -2329,7 +2329,7 @@ correction, the stamp and the finding refresh commit or roll back as one unit. A
 helper by giving `runValidationForDocument` an optional last parameter `client: Q = getDbClient()`, and
 export both names.
 
-- [ ] **Step 3: Read the transaction isolation consequence**
+- [x] **Step 3: Read the transaction isolation consequence**
 
 `setAuditContext` is now transaction-local, so the reads inside `runValidationForDocumentOn` see the
 uncommitted update on the same connection, and the fresh finding set reflects the corrected value before
@@ -2337,7 +2337,7 @@ uncommitted update on the same connection, and the fresh finding set reflects th
 different connection after the response and confirming the same rows. If a finding survives that should
 have cleared, the helper is reading a second pooled connection; fix it by passing `client` through.
 
-- [ ] **Step 4: Update the correction unit tests**
+- [x] **Step 4: Update the correction unit tests**
 
 In `tests/api/document-correction.test.ts`, the assertions on the response body now expect
 `{ success: true, openErrors, openWarnings, violations }`. Add one case proving a reason is stored on the
@@ -2359,12 +2359,12 @@ it('stamps the reason on this correction, not on an earlier one for the same fie
 })
 ```
 
-- [ ] **Step 5: Run the four affected suites**
+- [x] **Step 5: Run the four affected suites**
 
 Run: `npx vitest run --project integration tests/integration/correction-revalidates.test.ts && npx vitest run tests/api/document-correction.test.ts tests/api/document-validation.test.ts tests/db/audit-context-isolation.test.ts`
 Expected: all PASS.
 
-- [ ] **Step 6: Typecheck, lint, commit**
+- [x] **Step 6: Typecheck, lint, commit**
 
 ```bash
 npx tsc --noEmit && npx eslint .
@@ -2417,7 +2417,7 @@ Ruling R11. `limit` is clamped to `[1, 200]`, not rejected. Why: a client asking
 
 Ruling R12. `lowestFieldConfidence` is computed in the queue SQL over `documents.field_confidence` only. The per-table confidence columns (`invoices.field_confidence` and friends) are not folded in. Why: `documents.field_confidence` is the one the intake step writes for every required field (spec E6), and a `min` over five tables would need five joins for a sort key. Cost if wrong: a line-level low confidence does not by itself pull a document up the queue.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/api/review-queue.test.ts` with `createTestServer` and the `.env` header from `tests/helpers/test-server.ts:1-12`. Copy `seedInvoice` from `tests/api/document-validation.test.ts` (Task 9) and add these two helpers under it:
 
@@ -2648,7 +2648,7 @@ describe('GET /review-queue paging', () => {
 Run: `npx vitest run tests/api/review-queue.test.ts`
 Expected: FAIL. The routing case answers 400 with `{ error: 'bad_uuid' }` because `/:id` swallows the segment, and every other case fails on the missing table or the missing route.
 
-- [ ] **Step 2: Add the queue read to `src/db/validation.ts`**
+- [x] **Step 2: Add the queue read to `src/db/validation.ts`**
 
 Append to the file. `::int` and `::float8` casts on every aggregate and numeric are deliberate: `count()` is `bigint` and `pg` returns `bigint` as a string, which Global Constraint 5 says never to hand across the boundary as a string.
 
@@ -2750,7 +2750,7 @@ Both gates land in the hardening commit before Task 12, together with the `d.id 
 
 The rule cannot live in either module. `src/db/documents.ts:3` already does `import type { Q } from './validation'`, so a value import of `docVisibility` from `documents.ts` into `validation.ts` is the same cycle class R57 refused. Put `docVisibility` in a new leaf, `src/db/visibility.ts`, import it from both storage modules, and delete the private copy. Bind its parameters by derivation, the way `listDocuments:395-401` does: an `admin` call carries one parameter and a `user` call carries two, so kind, severity, limit and offset cannot be written as literal `$2` through `$5` in `QUEUE_FROM`. Two cases belong in the queue suite alongside the existing tenant-isolation one, which stays because tenant scoping and visibility are different rules: a `user` is not shown another member's unshared-customer document, and an `admin` in the same tenant is shown that same document.
 
-- [ ] **Step 3: Register the route ahead of `/:id`**
+- [x] **Step 3: Register the route ahead of `/:id`**
 
 In `src/api/documents.ts`, insert the handler immediately before the `app.get('/:id', ...)` — measured at dispatch: that handler is at line 305 of the current file, not :253 — and not after it. Hono's `SmartRouter` prefers a static segment over a named one, but relying on that for a single-segment path that competes with `/:id` is not worth a debugging session; registration order makes it unambiguous.
 
@@ -2793,12 +2793,12 @@ app.get('/review-queue', async (c) => {
 })
 ```
 
-- [ ] **Step 4: Run the suite**
+- [x] **Step 4: Run the suite**
 
 Run: `npx vitest run tests/api/review-queue.test.ts`
 Expected: PASS. If the routing case is the only one still failing, the handler was registered after `/:id`.
 
-- [ ] **Step 5: Typecheck, lint, commit**
+- [x] **Step 5: Typecheck, lint, commit**
 
 ```bash
 npx tsc --noEmit && npx eslint .
@@ -2853,7 +2853,7 @@ Ruling R14. The top-level `correctionRate` follows spec 11 literally: its numera
 
 Ruling R15. `confidenceTrend[].correctionRate` is a different number from the top-level one on purpose: it is the share of documents *created* in that ISO week that ever received a correction, ignoring the window. Why: the top-level metric compares two populations and is not attributable to a week, and a per-week version of it would put a correction in a week its document was not created in. The panel titles the column "corrected (lifetime)".
 
-- [ ] **Step 0: Commit A, the audit route's visibility predicate (ruling R67)**
+- [x] **Step 0: Commit A, the audit route's visibility predicate (ruling R67)**
 
 Do this first and commit it alone, before any analytics code, so the security fix is one reviewable change and a reverted analytics attempt cannot carry it away.
 
@@ -2863,7 +2863,7 @@ Then add the two cases to `tests/api/document-audit.test.ts`, not to a new file.
 
 `documents.owner_id` carries no foreign key (measured: `migrations/0009_crum_documents.sql:27` is a bare `owner_id uuid NOT NULL`), so the two member ids are free uuids and no `users` row has to exist for them. Seed a customer owned by one member with `team_member_ids` left at its default empty array, seed an invoice for that customer with at least one audit row (the insert audit trigger writes the `insert` row on the `invoices` INSERT, as the file's own `beforeAll` demonstrates at `:45-61`), then assert that the other member 404s on `/:id/audit` while reading the same id as an `admin` returns 200 with the rows. The second case is the control that proves the first is the rule and not a broken predicate. A one-line comment above the guard naming R67 is the only comment this step should add.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/api/analytics.test.ts` with the same `createTestServer` header, `seedInvoice`, `addFinding` and `setConfidence` helpers as Task 11, plus:
 
@@ -3049,7 +3049,7 @@ Spec 13 files analytics under a DB test. It is written here as an API test again
 Run: `npx vitest run tests/api/analytics.test.ts`
 Expected: FAIL, 404 from the missing route.
 
-- [ ] **Step 2: Add the analytics read**
+- [x] **Step 2: Add the analytics read**
 
 Append to `src/db/validation.ts`. One function, four queries, all sharing `$1` tenant, `$2` from, `$3` to-exclusive, `$4` kind.
 
@@ -3184,7 +3184,7 @@ export async function reviewAnalytics(
 
 Every aggregate that must become a JavaScript number carries an explicit `::int` or `::float8`, which is what keeps Global Constraint 5 from leaking `"2"` into a `number` field. `PERCENTILE_CONT` over an empty set is `NULL`, so an uncorrected tenant gets `null` rather than `0` — the panel prints "no corrections yet", which is not the same claim as "instant".
 
-- [ ] **Step 3: The window parser and the route**
+- [x] **Step 3: The window parser and the route**
 
 In `src/api/documents.ts`, above the routes:
 
@@ -3265,12 +3265,12 @@ app.get('/analytics/review', async (c) => {
 })
 ```
 
-- [ ] **Step 4: Run the suite**
+- [x] **Step 4: Run the suite**
 
 Run: `npx vitest run tests/api/analytics.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Typecheck, lint, commit**
+- [x] **Step 5: Typecheck, lint, commit**
 
 ```bash
 npx tsc --noEmit && npx eslint .
@@ -3334,7 +3334,7 @@ Ruling R17. The cap is enforced with `LIMIT max + 1`, not a preflight `COUNT(*)`
 
 Ruling R18. A `jsonb` audit cell is rendered with `#>> '{}'` in SQL, not re-serialized in TypeScript. Why: for the scalar values the trigger stores that yields the bare text the reviewer read on screen, and it keeps `audit-csv.ts` free of a database type it has no business knowing. Cost if wrong: an object-valued cell arrives as its JSON text, which is still lossless.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/api/audit-export.test.ts`. The pure half needs no server and runs in the `unit` project; the route half uses `createTestServer` and the `seedInvoice` plus `addAudit` helpers from Task 12.
 
@@ -3558,7 +3558,7 @@ Two of these tests depend on `addAudit` accepting a reason argument, so widen th
 Run: `npx vitest run tests/api/audit-export.test.ts`
 Expected: FAIL, the pure describe blocks first because `src/api/audit-csv.ts` does not exist.
 
-- [ ] **Step 2: The pure formatter**
+- [x] **Step 2: The pure formatter**
 
 Create `src/api/audit-csv.ts`.
 
@@ -3615,7 +3615,7 @@ The BOM is the only non-ASCII character permitted in this file, and Step 2 is wh
 
 Ruling R60, added at pre-flight because the file the plan described was open to it. Two of the eleven columns are attacker-authored text: `document_title` is copied from the document that was uploaded, and `reason` is typed by whoever corrected the field. A title of `=cmd|'/C calc'!A0` exports, opens in Excel, and runs, which is CSV injection (CWE-1236) and the reason `csvCell` prefixes a leading `=`, `+`, `@` or tab with `'` before the quoting decision. The apostrophe is what Excel itself writes when it stores such a cell, so the guard round-trips rather than corrupting. Cost if wrong: a reviewer who genuinely wants a formula in a title sees a leading apostrophe, which is the same thing Excel would have shown them anyway. The guard sits before the quoting check, so a payload containing both a trigger character and a comma is guarded and then quoted, and Step 1 has a test for exactly that ordering.
 
-- [ ] **Step 3: The read**
+- [x] **Step 3: The read**
 
 Append to `src/db/validation.ts`.
 
@@ -3675,7 +3675,7 @@ export async function exportAuditRows(
 
 `AT TIME ZONE 'UTC'` before `TO_CHAR` is not cosmetic: `to_char` on a `timestamptz` formats in the session timezone, so the same row would export different text from a machine set to Sydney and a machine set to London.
 
-- [ ] **Step 4: The route**
+- [x] **Step 4: The route**
 
 In `src/api/documents.ts`, register it after `/review-queue`. `/audit/export` is two segments so it cannot be reached by `/:id`, which is one segment; order still groups the three read routes together.
 
@@ -3725,12 +3725,12 @@ app.get('/audit/export', async (c) => {
 
 `CHANGE_SOURCES` is the five-value tuple Task 2 exported from `src/db/audit-context.ts:3`, so the export filter, the `AuditContext` type and the `CHECK` constraint in `migrations/0023_crum_field_audit.sql:18` all read one list; measured, the constraint's five values are the tuple's five values in the same order, so no legitimate row can be filtered out and no accepted filter value can name a row the database would refuse. Import it with a plain top-level `import { CHANGE_SOURCES } from '../db/audit-context'`, which is what Task 2 expects. Do not write `CHANGE_SOURCES.has(changeSource)`, which is what an earlier revision of this snippet said: `as const` produces a readonly tuple, so `has` does not exist on it, and `includes` is typed to take only the union of its literal members, which a `string` from `c.req.query` is not. Both fail `tsc`, and the second failure is the kind that tempts a reviewer into a cast. The `ReadonlySet<string>` above is the whole fix and keeps one source of truth.
 
-- [ ] **Step 5: Run the suites**
+- [x] **Step 5: Run the suites**
 
 Run: `npx vitest run tests/api/audit-export.test.ts`
 Expected: PASS. Then confirm no regression in the neighbours: `npx vitest run tests/api/review-queue.test.ts tests/api/analytics.test.ts`.
 
-- [ ] **Step 6: Typecheck, lint, commit**
+- [x] **Step 6: Typecheck, lint, commit**
 
 ```bash
 npx tsc --noEmit && npx eslint .
@@ -3860,7 +3860,7 @@ export function shortTime(iso: string): string
 
 `cellText` is the one function that keeps `jsonb` from leaking into the UI: the server returns `old_value` as a parsed JSON value, so a string arrives as a string, a number as a number, and an absent value as `null`. It renders `null` as an empty string, a string without quotes, and anything else as `JSON.stringify`.
 
-- [ ] **Step 1: Write the failing component tests**
+- [x] **Step 1: Write the failing component tests**
 
 Create `console/tests/FindingList.test.tsx`.
 
@@ -3961,7 +3961,7 @@ describe('FindingList', () => {
 Run: `cd console && npx vitest run tests/FindingList.test.tsx` (with `dir_path` `D:\Code\CRUM\console`)
 Expected: FAIL, `../components/FindingList` does not resolve.
 
-- [ ] **Step 2: Write the library and the chip**
+- [x] **Step 2: Write the library and the chip**
 
 Create `console/lib/review.ts` with the declarations listed above, importing `get`, `patch`, `post` from `./api`, and these three implementations verbatim:
 
@@ -4010,7 +4010,7 @@ export function FieldConfidenceChip({ value }: { value: number | null | undefine
 
 `data-testid="confidence-chip"` is on both branches on purpose, so a test can assert the absent case rather than infer it from the absence of a percentage.
 
-- [ ] **Step 3: Write `FindingList`**
+- [x] **Step 3: Write `FindingList`**
 
 Create `console/components/FindingList.tsx`.
 
@@ -4075,12 +4075,12 @@ export function FindingList({
 
 The reason gate exists twice, here and in `Task 9`'s route. That is deliberate and not a duplicated rule: the server's check is the one that protects the record, and this one only saves a round trip, so a reviewer who pastes a seven-character reason sees the complaint before the POST. `MIN_WAIVER_REASON` is a local constant rather than an import because the two live in different workspaces.
 
-- [ ] **Step 4: Run the suite**
+- [x] **Step 4: Run the suite**
 
 Run: `npx vitest run tests/FindingList.test.tsx` from `D:\Code\CRUM\console`
 Expected: PASS, nine cases.
 
-- [ ] **Step 5: Typecheck, lint, commit**
+- [x] **Step 5: Typecheck, lint, commit**
 
 ```bash
 cd console && npx tsc --noEmit && npx next lint
@@ -4104,7 +4104,7 @@ git commit -m "feat(console): the review client, a confidence chip, and a findin
 
 `requiredReason` is the whole point of this component. The panel sets it true when the field carries an open `error` finding, and the component refuses to send the `PATCH` without one, matching the server rule that a reason is what makes a correction auditable. The server (Task 10) is authoritative: this is the same guard, one layer earlier, for the same round-trip reason as in Task 14.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `console/tests/EditableField.test.tsx`.
 
@@ -4305,7 +4305,7 @@ describe('AuditTrail', () => {
 Run: `npx vitest run tests/EditableField.test.tsx tests/AuditTrail.test.tsx`
 Expected: FAIL, neither module resolves.
 
-- [ ] **Step 2: `EditableField`**
+- [x] **Step 2: `EditableField`**
 
 Create `console/components/EditableField.tsx`.
 
@@ -4446,7 +4446,7 @@ Two things the reviewer should check rather than assume. The `label` element wra
 
 The outcome line reads `1 error and 1 warning still open`, which the test asserts through `/1 warning still open/`. Keep that phrasing: a correction that clears the arithmetic error but leaves a currency-shape warning must not read as a full success.
 
-- [ ] **Step 3: `AuditTrail`**
+- [x] **Step 3: `AuditTrail`**
 
 Create `console/components/AuditTrail.tsx`.
 
@@ -4500,12 +4500,12 @@ export function AuditTrail({ rows, onReload }: { rows: readonly AuditRow[]; onRe
 
 The `key` includes the array index because `document_field_audit` has a primary key the route does not select, so two rows in the same transaction can otherwise share every visible field. The honest alternative, selecting `id` in `GET /:id/audit`, is a one-word change to an existing route and is not required here.
 
-- [ ] **Step 4: Run the suites**
+- [x] **Step 4: Run the suites**
 
 Run: `npx vitest run tests/EditableField.test.tsx tests/AuditTrail.test.tsx`
 Expected: PASS.
 
-- [ ] **Step 5: Typecheck, lint, commit**
+- [x] **Step 5: Typecheck, lint, commit**
 
 ```bash
 cd console && npx tsc --noEmit && npx next lint
@@ -4531,7 +4531,7 @@ Ruling R22. After a correction the panel repaints from the `violations` the `PAT
 
 Ruling R23. Review mode is a filter chip on the existing list, not a new page and not a new tab. This is spec R1 and it is also the constraint that keeps `console/app/knowledge/page.tsx` and `SidebarNav.tsx` untouched: no router change appears in this task, so the two files the async roadmap is still dirty with stay out of it.
 
-- [ ] **Step 1: Write the failing integration test**
+- [x] **Step 1: Write the failing integration test**
 
 Create `console/tests/DocumentManagerReviewMode.test.tsx`. It drives the real component against `stubFetch`, so the assertions are about what a reviewer sees and which request follows which click.
 
@@ -4730,7 +4730,7 @@ The last case is the one that protects the Knowledge tab: read-only detail means
 Run: `npx vitest run tests/DocumentManagerReviewMode.test.tsx` from `D:\Code\CRUM\console`
 Expected: FAIL, no `Needs review` chip exists yet.
 
-- [ ] **Step 2: State, the chip, and the two list sources**
+- [x] **Step 2: State, the chip, and the two list sources**
 
 Add to the component body after :61:
 
@@ -4786,7 +4786,7 @@ Render the chip beside the upload button, using the same `Button` and `variant` 
 
 The second button is what the `switching back` test clicks, and its `all invoices` / `all contracts` name comes free from `label`.
 
-- [ ] **Step 3: One table, two row shapes**
+- [x] **Step 3: One table, two row shapes**
 
 The table header at :292 stays. Replace the body so review rows render the queue's own fields and normal rows keep today's markup:
 
@@ -4811,7 +4811,7 @@ The table header at :292 stays. Replace the body so review rows render the queue
 
 Add a fifth column header `Findings` above the reasons cell so the header count matches the cells; the existing four headers plus it make five, which is what the review row renders.
 
-- [ ] **Step 4: `openDetail` takes an id, and the detail pane asks for findings**
+- [x] **Step 4: `openDetail` takes an id, and the detail pane asks for findings**
 
 Rewrite :196 as:
 
@@ -4848,7 +4848,7 @@ Rewrite :196 as:
 
 Because `openDetail` now needs a title before the fetch resolves, `setSelected` happens after it, and `DocumentDetail` already renders `detail ? detail.document.title : ''`, so nothing reads a stale selection during the load.
 
-- [ ] **Step 5: Pass `editable` down and paint the findings**
+- [x] **Step 5: Pass `editable` down and paint the findings**
 
 `DocumentDetail` (:338) gains `editable`, `violations`, `onWaive`, `onCorrected` and renders the audit panel:
 
@@ -4944,12 +4944,12 @@ function InvoiceView({ detail, editable, violations, onCorrected, onWaive }: Inv
 
 `documents.field_confidence` is keyed by the snake_case column names, which is what `normalizeAndResolveStep` writes at `src/mastra/workflows/document-intake.ts:475-479`, so the chip lookup and the finding lookup use the same key and need no mapping. `CrmDocument` in `console/lib/types.ts` does not yet declare that column: add `field_confidence?: Record<string, number> | null` to the interface, which is why the guard above reads `in` rather than trusting it.
 
-- [ ] **Step 6: Run the review-mode suite and the existing one**
+- [x] **Step 6: Run the review-mode suite and the existing one**
 
 Run: `npx vitest run tests/DocumentManagerReviewMode.test.tsx tests/DocumentManager.test.tsx`
 Expected: both PASS. The second is the regression gate: if an existing Knowledge or upload assertion breaks, `editable` leaked into the default path.
 
-- [ ] **Step 7: Typecheck, lint, commit**
+- [x] **Step 7: Typecheck, lint, commit**
 
 ```bash
 cd console && npx tsc --noEmit && npx next lint
@@ -4974,7 +4974,7 @@ Ruling R24. The panel is tables plus CSS width bars, per spec R7. Each bar is `s
 
 Ruling R25. The export button fetches with `fetch` directly rather than through `request`, because `request` parses JSON and a CSV body is not JSON. It builds an object URL and clicks a temporary anchor. In `console/tests/fetchStub.ts` every reply is `JSON.stringify`'d, so the test asserts the request the button made and that a download was triggered; it cannot assert file bytes. The byte-level assertions live in `tests/api/audit-export.test.ts` (Task 13) where a real Response exists.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `console/tests/ReviewAnalytics.test.tsx`.
 
@@ -5096,7 +5096,7 @@ describe('ReviewAnalytics', () => {
 Run: `npx vitest run tests/ReviewAnalytics.test.tsx`
 Expected: FAIL, the component does not exist.
 
-- [ ] **Step 2: The component**
+- [x] **Step 2: The component**
 
 Create `console/components/ReviewAnalytics.tsx`.
 
@@ -5273,7 +5273,7 @@ function defaultFrom(today: string): string {
 
 The `no corrections yet` string appears in both `hours` branches the test exercises, so a tenant with findings but no corrections reads as "nobody has corrected anything", which is the truthful sentence, rather than as `0.0 h`, which is a lie about speed.
 
-- [ ] **Step 3: Mount it**
+- [x] **Step 3: Mount it**
 
 In `DocumentManager`, add `const [showStats, setShowStats] = useState(false)` and one more ghost button beside the review chip:
 
@@ -5289,12 +5289,12 @@ and immediately after the list block:
 
 `kind` is the component's own prop, already `'invoice' | 'contract'`, so the panel opens filtered to the page the reviewer is standing on.
 
-- [ ] **Step 4: Run the suites**
+- [x] **Step 4: Run the suites**
 
 Run: `npx vitest run tests/ReviewAnalytics.test.tsx tests/DocumentManagerReviewMode.test.tsx tests/DocumentManager.test.tsx`
 Expected: all PASS.
 
-- [ ] **Step 5: Typecheck, lint, commit**
+- [x] **Step 5: Typecheck, lint, commit**
 
 ```bash
 cd console && npx tsc --noEmit && npx next lint
@@ -5314,7 +5314,7 @@ git commit -m "feat(console): review analytics with tables, css bars and a csv d
 - Consumes: everything above.
 - Produces: the evidence the phase is judged on. Nothing else reads it.
 
-- [ ] **Step 1: Full gate, in order, from a clean tree**
+- [x] **Step 1: Full gate, in order, from a clean tree**
 
 ```bash
 git status --porcelain
@@ -5326,7 +5326,7 @@ npx vitest run --project integration
 
 Expected: every command exits 0 except the one known baseline failure named in Global Constraint 10. Record its exact output rather than paraphrasing it. If `tests/evals/golden-gate.test.ts` is the only failure, that is the documented environmental break in `DOCUMENT_PROCESSING_STATUS.md` section 7 and the status file quotes both.
 
-- [ ] **Step 2: Console gate**
+- [x] **Step 2: Console gate**
 
 From `D:\Code\CRUM\console`:
 
@@ -5337,7 +5337,7 @@ npx vitest run
 
 Expected: exit 0, and the DocumentManager suites still green, which is the assertion that review mode did not disturb the read-only path.
 
-- [ ] **Step 3: Migration state**
+- [x] **Step 3: Migration state**
 
 Run:
 
@@ -5354,7 +5354,7 @@ console.log(t.rows)
 
 Expected: `0024` present and `n` equals 1.
 
-- [ ] **Step 4: One real document, end to end**
+- [x] **Step 4: One real document, end to end**
 
 This is the step that decides whether the phase works, and it cannot be satisfied by a green suite. With the server on `:4113` and the console on `:3100`:
 
@@ -5368,7 +5368,7 @@ This is the step that decides whether the phase works, and it cannot be satisfie
 
 If any step cannot be performed, say so in the status file with the reason. Do not describe a step as passing that was only covered by a unit test; the standing rule on this project is that a feature is complete when it has been run, not when it has been written.
 
-- [ ] **Step 5: Write `FIELD_AUDIT_PHASE2_STATUS.md`**
+- [x] **Step 5: Write `FIELD_AUDIT_PHASE2_STATUS.md`**
 
 Five sections, no prose padding:
 
@@ -5378,7 +5378,7 @@ Five sections, no prose padding:
 4. **Rulings with their cost** — R9 through R25 in one line each: the decision and what it costs if wrong. This is the section a future reader needs when a ruling stops holding.
 5. **Deferred** — the two Phase 1 candidates this phase declined (retroactive backfill, model per-field confidence), turnaround containing queue wait while the async backlog is live, offset paging in the queue, and no analytics beyond the six keys.
 
-- [ ] **Step 6: Tick the plan and commit**
+- [x] **Step 6: Tick the plan and commit**
 
 Set every `- [ ]` in this file to `- [x]` for the tasks that shipped, leave any that did not unticked, and say which in the commit body.
 
@@ -5387,7 +5387,7 @@ git add FIELD_AUDIT_PHASE2_STATUS.md docs/superpowers/plans/2026-11-03-field-aud
 git commit -m "docs(field-audit): phase 2 status records what shipped and what was only tested"
 ```
 
-- [ ] **Step 7: Report, do not merge**
+- [x] **Step 7: Report, do not merge**
 
 Summarise for the human partner: the commits on the branch, the verification evidence, the known failure, and the rulings. Stop there. Pushing, merging and opening a pull request are their decisions, not this plan's.
 
