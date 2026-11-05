@@ -16,6 +16,7 @@ import { EditableField } from './EditableField'
 import { AuditTrail } from './AuditTrail'
 import { FieldConfidenceChip } from './FieldConfidenceChip'
 import { FindingList } from './FindingList'
+import { ReviewAnalytics } from './ReviewAnalytics'
 import {
   getReviewQueue,
   getValidation,
@@ -78,6 +79,7 @@ export function DocumentManager({ kind }: { kind: 'invoice' | 'contract' }) {
   const [detail, setDetail] = useState<InvoiceDetail | ContractDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [reviewMode, setReviewMode] = useState(false)
+  const [showStats, setShowStats] = useState(false)
   const [queue, setQueue] = useState<ReviewQueueItem[]>([])
   const [violations, setViolations] = useState<StoredViolation[]>([])
   const [auditRows, setAuditRows] = useState<AuditRow[]>([])
@@ -307,6 +309,7 @@ export function DocumentManager({ kind }: { kind: 'invoice' | 'contract' }) {
         {reviewMode && documents.length === 0 && queue.length > 0 ? (
           <Button variant="ghost" size="sm" onClick={() => setReviewMode(false)}>All {label.toLowerCase()}s</Button>
         ) : null}
+        <Button variant="ghost" size="sm" onClick={() => setShowStats((s) => !s)}>Review stats</Button>
       </div>
 
       {notice ? (
@@ -421,6 +424,8 @@ export function DocumentManager({ kind }: { kind: 'invoice' | 'contract' }) {
           </table>
         </div>
       ) : null}
+
+      {showStats ? <ReviewAnalytics kind={kind} /> : null}
 
       {selected ? (
         <DocumentDetail
