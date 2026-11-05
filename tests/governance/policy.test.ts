@@ -54,8 +54,8 @@ function benign(): RiskAssessment {
 describe('loadPolicy', () => {
   it('loads the repository policy files', () => {
     expect(real.risk.version).toBe(1)
-    expect(real.tools.tools).toHaveLength(52)
-    expect(real.tools.connectors).toHaveLength(3)
+    expect(real.tools.tools).toHaveLength(62)
+    expect(real.tools.connectors).toHaveLength(5)
   })
 
   it('indexes every tool by name', () => {
@@ -65,9 +65,9 @@ describe('loadPolicy', () => {
   })
 
   it('groups tools by class', () => {
-    expect(real.toolsByClass('read-only')).toHaveLength(22)
+    expect(real.toolsByClass('read-only')).toHaveLength(28)
     expect(real.toolsByClass('auto')).toHaveLength(7)
-    expect(real.toolsByClass('approval')).toHaveLength(22)
+    expect(real.toolsByClass('approval')).toHaveLength(26)
     expect(real.toolsByClass('refuse')).toEqual(['crm.bulk_import'])
   })
 

@@ -13,7 +13,8 @@ import { createMarketingRouter } from './marketing'
 import { conversionsApiConfigFromEnv } from '../marketing/meta-conversions'
 import { createApprovalRouter, type SuspendedRunAgent } from './approvals'
 import { createKnowledgeRouter, type IngestWorkflowLike } from './knowledge'
-import { createDocumentsRouter, type DocumentIntakeWorkflowLike } from './documents'
+import { createDocumentsRouter } from './documents'
+import { createBatchRouter } from './batch'
 import { createAgentRouter } from './agent'
 import { createThreadsRouter } from './threads'
 import { createMailRouter } from './mail'
@@ -31,8 +32,6 @@ export interface ApiRouterDeps {
 const CRUM_AGENT_KEY = 'crm-assistant'
 
 const INGEST_WORKFLOW_KEY = 'knowledge-ingest'
-
-const DOCUMENT_INTAKE_WORKFLOW_KEY = 'crum-document-intake'
 
 const SPONSORSHIP_INTAKE_WORKFLOW_KEY = 'crum-sponsorship-intake'
 
@@ -54,20 +53,6 @@ function ingestGetter(getMastra?: () => Mastra | null): () => IngestWorkflowLike
     if (!mastra) return null
     try {
       return mastra.getWorkflow(INGEST_WORKFLOW_KEY)
-    } catch {
-      return null
-    }
-  }
-}
-
-function documentIntakeGetter(
-  getMastra?: () => Mastra | null,
-): () => DocumentIntakeWorkflowLike | null {
-  return () => {
-    const mastra = getMastra?.() ?? null
-    if (!mastra) return null
-    try {
-      return mastra.getWorkflow(DOCUMENT_INTAKE_WORKFLOW_KEY)
     } catch {
       return null
     }
@@ -105,7 +90,8 @@ export function createApiRouter(deps: ApiRouterDeps): Hono {
   app.route('/', createThreadsRouter({ env, getMastra: deps.getMastra }))
   app.route('/', createApprovalRouter({ env, getAgent: agentGetter(deps.getMastra) }))
   app.route('/', createKnowledgeRouter({ env, getIngestWorkflow: ingestGetter(deps.getMastra) }))
-  app.route('/', createDocumentsRouter({ env, getIntakeWorkflow: documentIntakeGetter(deps.getMastra) }))
+  app.route('/', createDocumentsRouter({ env }))
+  app.route('/', createBatchRouter({ env }))
   app.route('/', createMailRouter({ env }))
   app.route('/', createVideoChannelsRouter({ env }))
   app.route('/', createVideoOAuthRouter({ env }))

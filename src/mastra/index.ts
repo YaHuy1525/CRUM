@@ -39,7 +39,7 @@ import { createGmailConnectRoute, createGmailCallbackRoute } from '../api/gmail'
 import { registerActionAdapter } from '../marketing/outbox'
 import { makePromotePageAdapter, makePublishPageAdapter, pageHostConfigFromEnv } from '../marketing/page-host'
 import { makeCreateCampaignAdapter, makeSetCampaignStatusAdapter } from '../marketing/meta-ads'
-import { makeReplicateAdapter, registerImageAdapter, setSelectedImageProvider } from '../marketing/image-provider'
+import { listImageProviders, makeReplicateAdapter, makeSunraAdapter, registerImageAdapter, selectedImageProviderName, setSelectedImageProvider } from '../marketing/image-provider'
 
 export interface CrumMastraOptions {
   storage?: CrumStorage
@@ -134,6 +134,13 @@ function logImageLaneOnce(lane: string): void {
   )
 }
 
+// Test-only reset for the image lane log deduplication. The module-level
+// `lastImageLane` persists across test runs, so tests that verify logging
+// behaviour need a way to reset it between cases.
+export function __resetImageLaneLog(): void {
+  lastImageLane = undefined
+}
+
 export function createCrumMastra(env: CrumEnv, options: CrumMastraOptions = {}): Mastra {
   assertMcpRequestStateKey(env)
 
@@ -187,6 +194,19 @@ export function createCrumMastra(env: CrumEnv, options: CrumMastraOptions = {}):
   // re-setting the same name is expected rather than an error.
   const imageToken = env.CRUM_REPLICATE_API_TOKEN
   setSelectedImageProvider(env.CRUM_IMAGE_PROVIDER)
+
+  // Sunra CLI adapter: no token needed, auth is via `sunra login`. The CLI itself
+  // is checked at call time — if not installed, generateImage returns a clear error.
+  registerImageAdapter(
+    makeSunraAdapter({
+      model: env.CRUM_SUNRA_MODEL,
+      ceilingMinor: env.CRUM_IMAGE_SPEND_CEILING_MINOR,
+      bundleCeilingMinor: env.CRUM_IMAGE_SPEND_CEILING_MINOR_PER_BUNDLE,
+      costMinorPerImage: env.CRUM_IMAGE_COST_MINOR_PER_IMAGE,
+      maxBytes: MAX_DOCUMENT_BYTES,
+    }),
+  )
+
   if (imageToken) {
     registerImageAdapter(
       makeReplicateAdapter({
@@ -200,12 +220,19 @@ export function createCrumMastra(env: CrumEnv, options: CrumMastraOptions = {}):
         maxBytes: MAX_DOCUMENT_BYTES,
       }),
     )
-    logImageLaneOnce(env.CRUM_IMAGE_PROVIDER)
-  } else {
-    // Nothing to unregister: an install without a credential has no adapter, and
-    // selectImageAdapter() answers null for that reason rather than for a spelling.
-    logImageLaneOnce('none')
   }
+
+  // Validate the selected provider exists in the registry. If CRUM_IMAGE_PROVIDER
+  // is 'replicate' (the env default) but no token is configured, the selection
+  // points to a non-existent adapter. Log a warning so the operator notices.
+  const selected = selectedImageProviderName()
+  const registered = listImageProviders()
+  if (!registered.includes(selected)) {
+    console.warn(
+      `[CRUM] CRUM_IMAGE_PROVIDER is "${selected}" but no adapter is registered for it. Registered: ${registered.length > 0 ? registered.join(', ') : '(none)'}. Image generation will refuse at call time.`,
+    )
+  }
+  logImageLaneOnce(selected)
 
   const storage = options.storage ?? buildMastraStorage(env)
   // buildRecallDeps is lazy, returns undefined for in-memory CI (no

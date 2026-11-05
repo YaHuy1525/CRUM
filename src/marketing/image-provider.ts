@@ -17,9 +17,11 @@
  * itself. `src/marketing/replicate.ts`'s file comment says the same thing
  * about its own config for the same reason.
  */
-import { DEFAULT_REPLICATE_MODEL, generateImage } from './replicate'
+import { DEFAULT_REPLICATE_MODEL, generateImage as generateImageReplicate } from './replicate'
 import type { ImageOutcome, ImageRequest } from './replicate'
-import { REPLICATE_PROVIDER } from './image-spend'
+import { DEFAULT_SUNRA_MODEL, generateImage as generateImageSunra, resolveSunraCli } from './sunra'
+import type { SunraConfig } from './sunra'
+import { REPLICATE_PROVIDER, SUNRA_PROVIDER } from './image-spend'
 
 export interface ImageAdapter {
   provider: string
@@ -58,10 +60,52 @@ export function makeReplicateAdapter(params: ReplicateAdapterParams): ImageAdapt
     costMinorPerImage: params.costMinorPerImage,
     maxBytes: params.maxBytes,
     generate: (request) =>
-      generateImage(request, {
+      generateImageReplicate(request, {
         apiToken: params.apiToken,
         model,
         maxBytes: params.maxBytes,
+        ...(params.fetchImpl ? { fetchImpl: params.fetchImpl } : {}),
+      }),
+  }
+}
+
+export interface SunraAdapterParams {
+  model?: string
+  ceilingMinor: number
+  bundleCeilingMinor: number
+  costMinorPerImage: number
+  maxBytes: number
+  timeoutMs?: number
+  execImpl?: SunraConfig['execImpl']
+  fetchImpl?: typeof fetch
+}
+
+export function makeSunraAdapter(params: SunraAdapterParams): ImageAdapter {
+  const model = params.model ?? DEFAULT_SUNRA_MODEL
+
+  // Fail fast: check CLI presence at adapter creation, not at first call.
+  // If the CLI isn't on PATH, log a warning but still register — the generate
+  // call will return a clear "sunra CLI is not installed" error.
+  const cliPath = resolveSunraCli()
+  if (!cliPath) {
+    console.warn(
+      `[CRUM] sunra CLI not found on PATH. The Sunra image adapter is registered but will fail at call time. Install sunra and run 'sunra login'.`,
+    )
+  }
+
+  return {
+    provider: SUNRA_PROVIDER,
+    model,
+    ceilingMinor: params.ceilingMinor,
+    bundleCeilingMinor: params.bundleCeilingMinor,
+    costMinorPerImage: params.costMinorPerImage,
+    maxBytes: params.maxBytes,
+    generate: (request) =>
+      generateImageSunra(request, {
+        model,
+        maxBytes: params.maxBytes,
+        ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs } : {}),
+        ...(params.execImpl ? { execImpl: params.execImpl } : {}),
         ...(params.fetchImpl ? { fetchImpl: params.fetchImpl } : {}),
       }),
   }

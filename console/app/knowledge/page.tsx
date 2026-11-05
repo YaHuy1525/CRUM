@@ -1,6 +1,7 @@
 import { KnowledgeManager } from '../../components/KnowledgeManager'
 import { DocumentManager } from '../../components/DocumentManager'
 import { AssetManager } from '../../components/AssetManager'
+import { DocumentProcessingDashboard } from '../../components/DocumentProcessingDashboard'
 import { PageHeader } from '../../components/PageHeader'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs'
 
@@ -20,6 +21,7 @@ export default function KnowledgePage() {
               <TabsTrigger value="invoices">Invoices</TabsTrigger>
               <TabsTrigger value="contracts">Contracts</TabsTrigger>
               <TabsTrigger value="assets">Campaign images</TabsTrigger>
+              <TabsTrigger value="processing">Processing</TabsTrigger>
             </TabsList>
 
             <TabsContent value="knowledge">
@@ -36,6 +38,10 @@ export default function KnowledgePage() {
 
             <TabsContent value="assets">
               <AssetManager />
+            </TabsContent>
+
+            <TabsContent value="processing">
+              <DocumentProcessingDashboard />
             </TabsContent>
           </Tabs>
         </div>

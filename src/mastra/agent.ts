@@ -50,6 +50,22 @@ import {
   sendWhatsAppTool,
   createLinkedInPostTool,
 } from './tools/channel-writes'
+import {
+  seoKeywordResearchTool,
+  seoSiteAuditTool,
+  seoRankTrackingTool,
+  seoBacklinkAnalysisTool,
+} from './tools/seo'
+import {
+  chatwootGetConversationsTool,
+  chatwootSendMessageTool,
+  chatwootCreateContactTool,
+} from './tools/chatwoot'
+import {
+  bookingGetAvailabilityTool,
+  bookingCreateLinkTool,
+  bookingConfirmTool,
+} from './tools/booking'
 import { approvalFlow } from './workflows/approval-flow'
 import { resolveActiveTools, providerToolName } from './active-tools'
 import { CRUM_MAIN_MODEL, CRUM_LIGHT_MODEL } from './models'
@@ -113,6 +129,16 @@ export const crumToolRegistry = {
   'sms.send': sendSmsTool,
   'whatsapp.send': sendWhatsAppTool,
   'linkedin.create_post': createLinkedInPostTool,
+  'seo.keyword_research': seoKeywordResearchTool,
+  'seo.site_audit': seoSiteAuditTool,
+  'seo.rank_tracking': seoRankTrackingTool,
+  'seo.backlink_analysis': seoBacklinkAnalysisTool,
+  'chatwoot.get_conversations': chatwootGetConversationsTool,
+  'chatwoot.send_message': chatwootSendMessageTool,
+  'chatwoot.create_contact': chatwootCreateContactTool,
+  'booking.get_availability': bookingGetAvailabilityTool,
+  'booking.create_link': bookingCreateLinkTool,
+  'booking.confirm_booking': bookingConfirmTool,
 }
 
 export const crmAssistant = new Agent({

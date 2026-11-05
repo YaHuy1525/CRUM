@@ -62,6 +62,16 @@ const SPEC_TOOL_SURFACE: ReadonlyArray<readonly [name: string, klass: string, id
   ['sms.send', 'approval', 'actionHash'],
   ['whatsapp.send', 'approval', 'actionHash'],
   ['linkedin.create_post', 'approval', 'actionHash'],
+  ['seo.keyword_research', 'read-only', null],
+  ['seo.site_audit', 'read-only', null],
+  ['seo.rank_tracking', 'read-only', null],
+  ['seo.backlink_analysis', 'read-only', null],
+  ['chatwoot.get_conversations', 'read-only', null],
+  ['chatwoot.send_message', 'approval', 'actionHash'],
+  ['chatwoot.create_contact', 'approval', 'draftHash'],
+  ['booking.get_availability', 'read-only', null],
+  ['booking.create_link', 'approval', 'draftHash'],
+  ['booking.confirm_booking', 'approval', 'actionId'],
 ]
 
 /**
@@ -158,8 +168,8 @@ describe('class invariants', () => {
     expect(offenders).toEqual([])
   })
 
-  it('has exactly twenty-two read-only tools', () => {
-    expect(policy.toolsByClass('read-only')).toHaveLength(22)
+  it('has exactly twenty-eight read-only tools', () => {
+    expect(policy.toolsByClass('read-only')).toHaveLength(28)
   })
 
   it('has exactly one refuse-class tool', () => {

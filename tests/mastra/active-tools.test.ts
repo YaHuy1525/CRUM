@@ -32,6 +32,12 @@ const READ_ONLY_TOOLS = [
   'crm.list_prospects',
   'crm.get_prospect',
   'crm.list_merge_candidates',
+  'seo.keyword_research',
+  'seo.site_audit',
+  'seo.rank_tracking',
+  'seo.backlink_analysis',
+  'chatwoot.get_conversations',
+  'booking.get_availability',
 ]
 
 // Auto-class low-blast-radius writes: active for every role.
@@ -68,6 +74,10 @@ const APPROVAL_TOOLS = [
   'sms.send',
   'whatsapp.send',
   'linkedin.create_post',
+  'chatwoot.send_message',
+  'chatwoot.create_contact',
+  'booking.create_link',
+  'booking.confirm_booking',
 ]
 
 // Never callable, regardless of role:
@@ -76,19 +86,19 @@ const APPROVAL_TOOLS = [
 //  - crm.bulk_import: refuse class → routed to a human task (§4.6.1).
 const NEVER_CALLABLE = ['run.side-effect', 'crm.bulk_import']
 
-const USER_EXPECTED = [...READ_ONLY_TOOLS, ...AUTO_TOOLS] // 29
-const ADMIN_EXPECTED = [...READ_ONLY_TOOLS, ...AUTO_TOOLS, ...APPROVAL_TOOLS] // 50
+const USER_EXPECTED = [...READ_ONLY_TOOLS, ...AUTO_TOOLS] // 35
+const ADMIN_EXPECTED = [...READ_ONLY_TOOLS, ...AUTO_TOOLS, ...APPROVAL_TOOLS] // 60
 
 describe('resolveActiveTools', () => {
-  it('gives a non-admin the read-only + auto tools (29)', () => {
+  it('gives a non-admin the read-only + auto tools (35)', () => {
     const active = resolveActiveTools(baseContext)
-    expect(active).toHaveLength(29)
+    expect(active).toHaveLength(35)
     expect(active.slice().sort()).toEqual(USER_EXPECTED.slice().sort())
   })
 
-  it('gives an admin the approval-class writes too (50)', () => {
+  it('gives an admin the approval-class writes too (60)', () => {
     const active = resolveActiveTools({ ...baseContext, userRole: 'admin' })
-    expect(active).toHaveLength(50)
+    expect(active).toHaveLength(60)
     expect(active.slice().sort()).toEqual(ADMIN_EXPECTED.slice().sort())
   })
 
@@ -115,7 +125,7 @@ describe('resolveActiveTools', () => {
     const active = resolveActiveTools({ ...baseContext, userRole: 'admin' })
     for (const name of active) {
       expect(name).toMatch(
-        /^(crm|knowledge|mail|doc|revenue|marketing|notifications|billing|calendar|webhooks|sms|whatsapp|linkedin)\./,
+        /^(crm|knowledge|mail|doc|revenue|marketing|notifications|billing|calendar|webhooks|sms|whatsapp|linkedin|seo|chatwoot|booking)\./,
       )
     }
   })
@@ -152,7 +162,7 @@ describe('providerToolName', () => {
 
   it('leaves no dotted id in the list the agent hands the model', () => {
     const providerNames = resolveActiveTools({ ...baseContext, userRole: 'admin' }).map(providerToolName)
-    expect(providerNames).toHaveLength(50)
+    expect(providerNames).toHaveLength(60)
     for (const name of providerNames) {
       expect(name).not.toContain('.')
       expect(name).toMatch(/^[a-zA-Z][a-zA-Z0-9_-]{0,62}$/)

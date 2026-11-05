@@ -202,6 +202,12 @@ export const EnvSchema = z.object({
     blankAsUnset,
     z.string().trim().min(1).default('black-forest-labs/flux-1.1-pro'),
   ),
+  // Sunra CLI adapter: no API token needed (auth is via `sunra login`), but the
+  // model is configurable. gpt-image-2 is the default for strong prompt adherence.
+  CRUM_SUNRA_MODEL: z.preprocess(
+    blankAsUnset,
+    z.string().trim().min(1).default('gpt-image-2'),
+  ),
   // Which registered provider this deployment pays. One name, because a fallback
   // would make the ceiling arithmetic a lie (spec section 8.1). The value is not
   // validated against a list here: the registry is built at boot, and
@@ -287,6 +293,23 @@ export const EnvSchema = z.object({
   CRUM_WEBHOOK_SECRET: z.preprocess(blankAsUnset, z.string().trim().min(10).optional()),
   CRUM_LINKEDIN_ACCESS_TOKEN: z.preprocess(blankAsUnset, z.string().trim().min(10).optional()),
   CRUM_LINKEDIN_AUTHOR_URN: z.preprocess(blankAsUnset, z.string().trim().min(10).optional()),
+
+  // OpenSEO – open-source SEO analytics (DataForSEO backend).
+  // Blank means unset; the seo.* tools refuse at call time when absent.
+  CRUM_OPENSEO_URL: z.preprocess(blankAsUnset, z.string().trim().url().optional()),
+  DATAFORSEO_API_KEY: z.preprocess(blankAsUnset, z.string().trim().min(10).optional()),
+
+  // Chatwoot – open-source customer chat platform.
+  // Blank means unset; the chatwoot.* tools refuse at call time when absent.
+  CRUM_CHATWOOT_URL: z.preprocess(blankAsUnset, z.string().trim().url().optional()),
+  CRUM_CHATWOOT_API_TOKEN: z.preprocess(blankAsUnset, z.string().trim().min(10).optional()),
+  CRUM_CHATWOOT_ACCOUNT_ID: z.preprocess(blankAsUnset, z.coerce.number().int().min(1).optional()),
+  CRUM_CHATWOOT_INBOX_ID: z.preprocess(blankAsUnset, z.coerce.number().int().min(1).optional()),
+
+  // Cal.diy – open-source scheduling (Cal.com community fork).
+  // Blank means unset; the booking.* tools refuse at call time when absent.
+  CRUM_CAL_URL: z.preprocess(blankAsUnset, z.string().trim().url().optional()),
+  CRUM_CAL_API_KEY: z.preprocess(blankAsUnset, z.string().trim().min(10).optional()),
 })
 
 export type CrumEnv = z.infer<typeof EnvSchema>

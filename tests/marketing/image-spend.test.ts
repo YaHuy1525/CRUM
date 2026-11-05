@@ -124,7 +124,7 @@ describe('the ledger', () => {
   it('writes the bundle the money was spent on, as a named parameter', async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ id: SPEND_ID }] })
     const { recordImageSpend } = await load()
-    await recordImageSpend({ tenantId: TENANT, bundleId: BUNDLE, documentId: DOC, costMinor: 4 })
+    await recordImageSpend({ tenantId: TENANT, bundleId: BUNDLE, documentId: DOC, costMinor: 4, provider: 'replicate' })
     const [call] = calls('INSERT INTO marketing_image_spend')
     expect(call!.sql).toContain('bundle_id')
     expect(call!.params).toEqual([TENANT, BUNDLE, DOC, 'replicate', 4, null])
@@ -139,6 +139,7 @@ describe('the ledger', () => {
         bundleId: null,
         documentId: DOC,
         costMinor: 4,
+        provider: 'replicate',
         rawExtract: { predictionId: 'p1', model: 'flux-1.1-pro', costUsd: '0.04' },
       }),
     ).toBe(SPEND_ID)
@@ -157,7 +158,7 @@ describe('the ledger', () => {
   it('appends a spend with no document, because a failed prediction still cost money', async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ id: SPEND_ID }] })
     const { recordImageSpend } = await load()
-    await recordImageSpend({ tenantId: TENANT, bundleId: null, documentId: null, costMinor: 4 })
+    await recordImageSpend({ tenantId: TENANT, bundleId: null, documentId: null, costMinor: 4, provider: 'replicate' })
     const [call] = calls('INSERT INTO marketing_image_spend')
     // No rawExtract passed is a null jsonb, not the string "null": a row written
     // by a caller that never saw a prediction must not look like a row whose
@@ -173,6 +174,7 @@ describe('the ledger', () => {
       bundleId: null,
       documentId: null,
       costMinor: 2,
+      provider: 'replicate',
       rawExtract: { predictionId: 'p-f', model: 'flux-1.1-pro', costUsd: '0.02' },
     })
     const [call] = calls('INSERT INTO marketing_image_spend')
@@ -193,10 +195,10 @@ describe('the ledger', () => {
   it('refuses to under-report a negative or fractional cost before the database sees it', async () => {
     const { recordImageSpend } = await load()
     await expect(
-      recordImageSpend({ tenantId: TENANT, bundleId: null, documentId: null, costMinor: -1 }),
+      recordImageSpend({ tenantId: TENANT, bundleId: null, documentId: null, costMinor: -1, provider: 'replicate' }),
     ).rejects.toThrow(/cost_minor/)
     await expect(
-      recordImageSpend({ tenantId: TENANT, bundleId: null, documentId: null, costMinor: 1.5 }),
+      recordImageSpend({ tenantId: TENANT, bundleId: null, documentId: null, costMinor: 1.5, provider: 'replicate' }),
     ).rejects.toThrow(/cost_minor/)
     expect(calls('INSERT INTO marketing_image_spend')).toHaveLength(0)
   })

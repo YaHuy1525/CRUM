@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { InMemoryStore } from '@mastra/core/storage'
 import { parseEnv } from '../../src/config/env'
 import type { CrumEnv } from '../../src/config/env'
-import { createCrumMastra } from '../../src/mastra'
+import { createCrumMastra, __resetImageLaneLog } from '../../src/mastra'
 import { isExecutable } from '../../src/marketing/outbox'
 
 function testStore(): InMemoryStore {
@@ -144,7 +144,10 @@ describe('slice 4 image adapter registration', () => {
   })
 
   it('logs the image lane once per change, not once per construction', () => {
-    createCrumMastra(envWith(), { storage: testStore() })
+    __resetImageLaneLog()
+    // First call uses a different provider (sunra) so the lane changes when the
+    // second call switches to replicate.
+    createCrumMastra(envWith({ CRUM_IMAGE_PROVIDER: 'sunra' }), { storage: testStore() })
     const log = vi.spyOn(console, 'log').mockImplementation(() => {})
     try {
       createCrumMastra(envWith(IMAGE_ENV), { storage: testStore() })

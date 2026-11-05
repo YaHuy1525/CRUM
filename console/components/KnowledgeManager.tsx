@@ -28,6 +28,7 @@ export function KnowledgeManager() {
   const [title, setTitle] = useState('')
   const [content, setContent] = useState('')
   const [contentType, setContentType] = useState<'text' | 'markdown' | 'html'>('text')
+  const [viewingDoc, setViewingDoc] = useState<KnowledgeDocument | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -96,6 +97,18 @@ export function KnowledgeManager() {
     } catch (err) {
       const detail = err instanceof ApiError ? (err.detail ?? err.code) : describeError(err)
       setNotice({ kind: 'info', text: `Re-ingest ${doc.title}: ${detail}` })
+    }
+  }
+
+  async function handleView(doc: KnowledgeDocument) {
+    setNotice(null)
+    try {
+      const data = await get<{ document: KnowledgeDocument & { content?: string } }>(
+        `/api/knowledge/documents/${encodeURIComponent(doc.id)}`,
+      )
+      setViewingDoc(data.document)
+    } catch (err) {
+      setNotice({ kind: 'bad', text: describeError(err) })
     }
   }
 
@@ -224,7 +237,10 @@ export function KnowledgeManager() {
                   </td>
                   <td className="px-3 py-2 align-top">
                     <div className="flex flex-wrap gap-2">
-                      <Button variant="outline" size="sm" onClick={() => void handleReingest(doc)}>
+                      <Button variant="outline" size="sm" onClick={() => void handleView(doc)}>
+                        View
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => void handleReingest(doc)}>
                         Re-ingest
                       </Button>
                       <Button variant="ghost" size="sm" onClick={() => void handleDelete(doc)}>
@@ -236,6 +252,46 @@ export function KnowledgeManager() {
               ))}
             </tbody>
           </table>
+        </div>
+      ) : null}
+
+      {viewingDoc ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="max-h-[90vh] w-full max-w-3xl overflow-hidden rounded-lg border border-border bg-bg-card shadow-lg">
+            <div className="flex items-center justify-between border-b border-border px-4 py-3">
+              <h3 className="text-sm font-semibold text-text-primary">{viewingDoc.title}</h3>
+              <Button variant="ghost" size="sm" onClick={() => setViewingDoc(null)}>
+                Close
+              </Button>
+            </div>
+            <div className="overflow-y-auto p-4" style={{ maxHeight: 'calc(90vh - 60px)' }}>
+              {viewingDoc.content ? (
+                <pre className="whitespace-pre-wrap break-words rounded-md bg-bg-raised p-3 text-xs text-text-secondary font-mono">
+                  {viewingDoc.content}
+                </pre>
+              ) : (
+                <p className="text-sm text-text-muted">Content not available. This document may have been ingested without storing the raw text.</p>
+              )}
+              <div className="mt-4 grid grid-cols-2 gap-3 text-xs">
+                <div>
+                  <span className="text-text-muted">Type:</span>{' '}
+                  <span className="text-text-primary">{viewingDoc.file_type}</span>
+                </div>
+                <div>
+                  <span className="text-text-muted">Size:</span>{' '}
+                  <span className="text-text-primary">{viewingDoc.byte_size} bytes</span>
+                </div>
+                <div>
+                  <span className="text-text-muted">Status:</span>{' '}
+                  <Badge variant={statusVariant(viewingDoc.status)}>{viewingDoc.status}</Badge>
+                </div>
+                <div>
+                  <span className="text-text-muted">Updated:</span>{' '}
+                  <span className="text-text-primary">{new Date(viewingDoc.updated_at).toLocaleString()}</span>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       ) : null}
     </div>

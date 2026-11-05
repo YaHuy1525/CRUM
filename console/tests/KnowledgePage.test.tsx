@@ -58,6 +58,17 @@ describe('KnowledgePage tabs', () => {
     await waitForRead('/api/documents?kind=marketing_asset')
     expect(server.count('/api/documents?kind=invoice')).toBe(0)
   })
+
+  it('switching to Processing mounts the queue dashboard', async () => {
+    const user = userEvent.setup()
+    mountWith([route('/api/knowledge/documents', { status: 200, body: { documents: [], total: 0 } }, 'GET')])
+
+    await user.click(screen.getByRole('tab', { name: 'Processing' }))
+
+    // The dashboard was unreachable until this tab existed, so the assertion is
+    // that its own heading is on screen, not that a socket opened.
+    expect(screen.getByText('Processing queue')).toBeInTheDocument()
+  })
 })
 
 async function waitForRead(urlContains: string): Promise<void> {

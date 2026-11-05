@@ -7,6 +7,7 @@
 import { getDbClient } from '../db/client'
 
 export const REPLICATE_PROVIDER = 'replicate'
+export const SUNRA_PROVIDER = 'sunra'
 
 export function headroomMinor(params: { ceilingMinor: number; committedMinor: number }): number {
   return Math.max(0, params.ceilingMinor - params.committedMinor)
@@ -95,7 +96,9 @@ export async function recordImageSpend(params: {
   bundleId: string | null
   documentId: string | null
   costMinor: number
-  provider?: string
+  // Required: the provider name must be explicit so Sunra spend is never booked
+  // as Replicate. Every caller in this codebase passes adapter.provider.
+  provider: string
   rawExtract?: SpendRawExtract | null
 }): Promise<string> {
   if (!Number.isInteger(params.costMinor) || params.costMinor < 0) {
@@ -117,7 +120,7 @@ export async function recordImageSpend(params: {
       // tenant's day and toward no bundle's lifetime.
       params.bundleId,
       params.documentId,
-      params.provider ?? REPLICATE_PROVIDER,
+      params.provider,
       params.costMinor,
       // Stringified rather than handed over as an object: `pg` serialises a plain
       // object to a JSON string anyway, and doing it here means the unit test

@@ -57,6 +57,7 @@ describe.skipIf(!url)('the image spend ledger against real Postgres', () => {
         bundleId: null,
         documentId: doc,
         costMinor: 4,
+        provider: PROVIDER,
         rawExtract: { predictionId: 'p-int-1', model: 'flux-1.1-pro', costUsd: '0.04' },
       })
       // A single spend row for this tenant makes the arithmetic exact.
@@ -92,7 +93,7 @@ describe.skipIf(!url)('the image spend ledger against real Postgres', () => {
       // costUsdToMinor('0.004') is 0 (Task 3): a sub-half-cent charge is honest
       // arithmetic, and a row of it must still land in the append-only ledger
       // even though it moves the day's sum by nothing.
-      const spendId = await recordImageSpend({ tenantId: tenant, bundleId: null, documentId: null, costMinor: 0 })
+      const spendId = await recordImageSpend({ tenantId: tenant, bundleId: null, documentId: null, costMinor: 0, provider: PROVIDER })
       expect(await committedSpendMinor(tenant, PROVIDER)).toBe(0)
       const { rows } = await pool.query<{ id: string }>(
         `SELECT id FROM marketing_image_spend WHERE id = $1`,
@@ -108,9 +109,9 @@ describe.skipIf(!url)('the image spend ledger against real Postgres', () => {
     const mine = await uniqueTenant()
     const other = await uniqueTenant()
     try {
-      await recordImageSpend({ tenantId: mine, bundleId: null, documentId: null, costMinor: 600 })
-      await recordImageSpend({ tenantId: mine, bundleId: null, documentId: null, costMinor: 1380 })
-      await recordImageSpend({ tenantId: other, bundleId: null, documentId: null, costMinor: 500 })
+      await recordImageSpend({ tenantId: mine, bundleId: null, documentId: null, costMinor: 600, provider: PROVIDER })
+      await recordImageSpend({ tenantId: mine, bundleId: null, documentId: null, costMinor: 1380, provider: PROVIDER })
+      await recordImageSpend({ tenantId: other, bundleId: null, documentId: null, costMinor: 500, provider: PROVIDER })
       expect(await committedSpendMinor(mine, PROVIDER)).toBe(1980)
       expect(await committedSpendMinor(other, PROVIDER)).toBe(500)
     } finally {
@@ -126,7 +127,7 @@ describe.skipIf(!url)('the image spend ledger against real Postgres', () => {
   it('sums only today, so a backdated spend does not eat the new day', async () => {
     const tenant = await uniqueTenant()
     try {
-      await recordImageSpend({ tenantId: tenant, bundleId: null, documentId: null, costMinor: 40 })
+      await recordImageSpend({ tenantId: tenant, bundleId: null, documentId: null, costMinor: 40, provider: PROVIDER })
       // The module deliberately exposes no spent_on parameter — an append-only
       // ledger whose caller can rewrite history is not append-only — so the
       // backdated row goes in through raw SQL to prove the read's day scoping.
@@ -144,12 +145,12 @@ describe.skipIf(!url)('the image spend ledger against real Postgres', () => {
   it('counts a bundle across days, because the bundle ceiling is lifetime', async () => {
     const tenant = await uniqueTenant()
     const bundle = await unique()
-    await recordImageSpend({ tenantId: tenant, bundleId: bundle, documentId: null, costMinor: 7 })
+    await recordImageSpend({ tenantId: tenant, bundleId: bundle, documentId: null, costMinor: 7, provider: PROVIDER })
     await pool.query(
       `UPDATE marketing_image_spend SET spent_on = CURRENT_DATE - 30 WHERE tenant_id = $1 AND bundle_id = $2`,
       [tenant, bundle],
     )
-    await recordImageSpend({ tenantId: tenant, bundleId: bundle, documentId: null, costMinor: 5 })
+    await recordImageSpend({ tenantId: tenant, bundleId: bundle, documentId: null, costMinor: 5, provider: PROVIDER })
     // The backdated row is invisible to the day read and unavoidable for the bundle
     // read: one runaway loop on one bundle is stopped by the bundle ceiling even
     // after the day rolls over.
@@ -159,7 +160,7 @@ describe.skipIf(!url)('the image spend ledger against real Postgres', () => {
 
   it('leaves a NULL bundle out of every bundle total', async () => {
     const tenant = await uniqueTenant()
-    await recordImageSpend({ tenantId: tenant, bundleId: null, documentId: null, costMinor: 9 })
+    await recordImageSpend({ tenantId: tenant, bundleId: null, documentId: null, costMinor: 9, provider: PROVIDER })
     expect(await committedBundleSpendMinor(tenant, await unique(), PROVIDER)).toBe(0)
   })
 })

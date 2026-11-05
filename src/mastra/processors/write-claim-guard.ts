@@ -40,6 +40,12 @@ export const MUTATING_TOOL_IDS = [
   'sms.send',
   'whatsapp.send',
   'linkedin.create_post',
+  // Open-source platform integrations. Chatwoot messages and contacts reach
+  // external customers; booking links and confirmations mutate external state.
+  'chatwoot.send_message',
+  'chatwoot.create_contact',
+  'booking.create_link',
+  'booking.confirm_booking',
 ]
 
 export const MUTATING_TOOLS = new Set(MUTATING_TOOL_IDS.map(providerToolName))

@@ -55,10 +55,22 @@ export function DocumentManager({ kind }: { kind: 'invoice' | 'contract' }) {
   const [listError, setListError] = useState<string | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
   const [uploading, setUploading] = useState(false)
+  const [processingJobs, setProcessingJobs] = useState<Map<string, { fileName: string; status: string }>>(new Map())
   const [selected, setSelected] = useState<CrmDocument | null>(null)
   const [detail, setDetail] = useState<InvoiceDetail | ContractDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const aliveRef = useRef(true)
+
+  useEffect(() => {
+    aliveRef.current = true
+    return () => {
+      // The queued job outlives the page that queued it; the two-minute poll
+      // must not. Without this the loop keeps hitting the status endpoint after
+      // unmount, and the tests that follow it inherit the requests.
+      aliveRef.current = false
+    }
+  }, [])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -88,20 +100,97 @@ export function DocumentManager({ kind }: { kind: 'invoice' | 'contract' }) {
     try {
       const formData = new FormData()
       formData.append('file', file)
-      const data = await uploadMultipart<DocumentUploadResponse>('/api/documents/upload', formData)
-      setNotice({
-        kind: data.status === 'needs_review' ? 'info' : 'ok',
-        text:
-          data.status === 'needs_review'
-            ? `Processed ${data.documentId} but flagged it for review (confidence ${data.confidence ?? 'n/a'}).`
-            : `Ingested ${data.documentId} as a ${data.kind} (${data.chunkCount} chunks indexed).`,
+      const data = await uploadMultipart<{ jobId: string; fileId: string; status: string; message: string }>(
+        '/api/documents/upload',
+        formData,
+      )
+      
+      setProcessingJobs((prev) => {
+        const next = new Map(prev)
+        next.set(data.jobId, { fileName: file.name, status: 'queued' })
+        return next
       })
-      await load()
+      
+      setNotice({
+        kind: 'info',
+        text: `${file.name} queued for processing. Job ID: ${data.jobId}`,
+      })
+      
+      void pollJobStatus(data.jobId)
     } catch (err) {
       setNotice({ kind: 'bad', text: describeError(err) })
     } finally {
       setUploading(false)
     }
+  }
+
+  async function pollJobStatus(jobId: string) {
+    const maxAttempts = 60
+    const pollInterval = 2000
+    
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, pollInterval))
+      if (!aliveRef.current) return
+      
+      try {
+        const status = await get<{
+          id: string
+          state: string
+          progress: number | object
+          result?: { documentId: string; status: string; kind?: string; confidence?: number }
+          failedReason?: string
+        }>(`/api/documents/status/${jobId}`)
+        
+        setProcessingJobs((prev) => {
+          const next = new Map(prev)
+          const job = next.get(jobId)
+          if (job) {
+            next.set(jobId, { ...job, status: status.state })
+          }
+          return next
+        })
+        
+        if (status.state === 'completed') {
+          const result = status.result
+          setProcessingJobs((prev) => {
+            const next = new Map(prev)
+            next.delete(jobId)
+            return next
+          })
+          setNotice({
+            kind: 'ok',
+            text: `Document processed successfully: ${result?.documentId}`,
+          })
+          await load()
+          return
+        }
+        
+        if (status.state === 'failed') {
+          setProcessingJobs((prev) => {
+            const next = new Map(prev)
+            next.delete(jobId)
+            return next
+          })
+          setNotice({
+            kind: 'bad',
+            text: `Document processing failed: ${status.failedReason || 'Unknown error'}`,
+          })
+          return
+        }
+      } catch (err) {
+        console.error('Failed to poll job status:', err)
+      }
+    }
+    
+    setProcessingJobs((prev) => {
+      const next = new Map(prev)
+      next.delete(jobId)
+      return next
+    })
+    setNotice({
+      kind: 'info',
+      text: 'Document processing is taking longer than expected. Check the documents list for updates.',
+    })
   }
 
   async function openDetail(doc: CrmDocument) {
@@ -162,6 +251,22 @@ export function DocumentManager({ kind }: { kind: 'invoice' | 'contract' }) {
         >
           {notice.text}
         </p>
+      ) : null}
+
+      {processingJobs.size > 0 ? (
+        <div className="rounded-md border border-border bg-bg-raised px-3 py-2">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-text-muted">Processing</p>
+          <ul className="space-y-1 text-sm text-text-secondary">
+            {Array.from(processingJobs.entries()).map(([jobId, { fileName, status }]) => (
+              <li key={jobId} className="flex items-center justify-between">
+                <span>{fileName}</span>
+                <Badge variant={status === 'completed' ? 'success' : status === 'failed' ? 'danger' : 'warning'}>
+                  {status}
+                </Badge>
+              </li>
+            ))}
+          </ul>
+        </div>
       ) : null}
 
       {loading ? <p className="text-sm text-text-muted">Loading {label.toLowerCase()}s…</p> : null}
